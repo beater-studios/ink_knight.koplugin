@@ -5,6 +5,7 @@
 -- "section": text, action_text, action. "primary" and "secondary": text, callback. "stat": text, value.
 -- "toggle": text, on, on_text, off_text, callback. "text": text, center. "hero": icon, text, detail.
 -- "tiles": columns, items of { text, detail, icon, callback }, and fill to grow into the room left on the page.
+-- disabled, on a row or a tile: shown in gray, and tapping it does nothing.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -25,6 +26,7 @@ local SYMBOLS = "freefont/FreeSerif.ttf"
 local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
 local GRAY = Blitbuffer.Color8(0x55)
 local LINE = Blitbuffer.Color8(0xBB)
+local DISABLED = Blitbuffer.Color8(0x99)
 
 local HEADER_H, FOOTER_H, MARGIN = 66, 58, 16
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
@@ -47,6 +49,18 @@ local Page = InputContainer:extend{
 
 local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
+end
+
+-- The rows stay where they are, so the page keeps its shape, and none of them answers.
+function Page.disable_rows(rows)
+    for _, row in ipairs(rows) do
+        row.disabled = true
+        row.callback, row.action, row.action_text = nil, nil, nil
+        for _, item in ipairs(row.items or {}) do
+            item.disabled = true
+            item.callback = nil
+        end
+    end
 end
 
 function Page:init()
@@ -213,22 +227,23 @@ end
 function Page:paint_nav(bb, row, y, h)
     local m = self:px(MARGIN)
     local x = m
-    if row.kind == "game" and row.mine then
+    if row.kind == "game" and row.mine and not row.disabled then
         bb:paintRect(0, y, self:px(8), h, BLACK)
     end
     local chevron_w = row.callback and self:px(24) or 0
     local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
     local text_w = self.width - 2 * m - chevron_w - value_w
     local name = (row.bold or row.kind == "game") and BOLD or REGULAR
-    local color = row.dim and GRAY or BLACK
+    local color = row.disabled and DISABLED or (row.dim and GRAY or BLACK)
+    local detail_color = row.disabled and DISABLED or GRAY
     if row.detail then
         self:paint_text(bb, row.text, name, 20, x, y + self:px(10), text_w, self:px(32), "left", color)
-        self:paint_text(bb, row.detail, REGULAR, 15, x, y + self:px(41), text_w, self:px(24), "left", GRAY)
+        self:paint_text(bb, row.detail, REGULAR, 15, x, y + self:px(41), text_w, self:px(24), "left", detail_color)
     else
         self:paint_text(bb, row.text, name, 20, x, y, text_w, h, "left", color)
     end
     if value_w > 0 then
-        self:paint_text(bb, row.value, row.kind == "game" and BOLD or REGULAR, 17, self.width - m - chevron_w - value_w, y, value_w, h, "right", row.kind == "game" and BLACK or GRAY)
+        self:paint_text(bb, row.value, row.kind == "game" and BOLD or REGULAR, 17, self.width - m - chevron_w - value_w, y, value_w, h, "right", row.kind == "game" and color or detail_color)
     end
     if row.callback then
         self:paint_text(bb, "\226\128\186", BOLD, 28, self.width - m - chevron_w, y, chevron_w, h - self:px(4), "right", GRAY)
@@ -238,20 +253,21 @@ function Page:paint_nav(bb, row, y, h)
 end
 
 function Page:paint_tile(bb, item, x, y, w, h)
-    bb:paintBorder(x, y, w, h, self:px(2), BLACK)
+    local color = item.disabled and DISABLED or BLACK
+    bb:paintBorder(x, y, w, h, self:px(2), item.disabled and LINE or BLACK)
     local pad = self:px(6)
     if item.icon then
         -- The icon takes what the label leaves, and the two stay together in the middle of the tile.
         local label_h = self:px(36)
         local icon_h = math.min(h - label_h - self:px(12), self:px(96))
         local cursor_y = y + math.floor((h - icon_h - label_h) / 2)
-        self:paint_text(bb, item.icon, SYMBOLS, math.floor(icon_h * 0.8 / self.scale), x, cursor_y, w, icon_h, "center")
-        self:paint_text(bb, item.text, BOLD, 18, x + pad, cursor_y + icon_h, w - 2 * pad, label_h, "center")
+        self:paint_text(bb, item.icon, SYMBOLS, math.floor(icon_h * 0.8 / self.scale), x, cursor_y, w, icon_h, "center", color)
+        self:paint_text(bb, item.text, BOLD, 18, x + pad, cursor_y + icon_h, w - 2 * pad, label_h, "center", color)
     elseif item.detail then
-        self:paint_text(bb, item.text, BOLD, 24, x + pad, y + self:px(10), w - 2 * pad, self:px(38), "center")
-        self:paint_text(bb, item.detail, REGULAR, 15, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", GRAY)
+        self:paint_text(bb, item.text, BOLD, 24, x + pad, y + self:px(10), w - 2 * pad, self:px(38), "center", color)
+        self:paint_text(bb, item.detail, REGULAR, 15, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", item.disabled and DISABLED or GRAY)
     else
-        self:paint_text(bb, item.text, BOLD, 19, x + pad, y, w - 2 * pad, h, "center")
+        self:paint_text(bb, item.text, BOLD, 19, x + pad, y, w - 2 * pad, h, "center", color)
     end
     self:add_hit(x, y, w, h, item.callback, item.keep_open)
 end
@@ -268,12 +284,13 @@ function Page:paint_line(bb, row, y, h)
     elseif row.kind == "primary" or row.kind == "secondary" then
         local gap = self:px(8)
         local bh = h - 2 * gap
-        if row.kind == "primary" then
+        local solid = row.kind == "primary" and not row.disabled
+        if solid then
             bb:paintRect(m, y + gap, self.width - 2 * m, bh, BLACK)
         else
-            bb:paintBorder(m, y + gap, self.width - 2 * m, bh, self:px(2), BLACK)
+            bb:paintBorder(m, y + gap, self.width - 2 * m, bh, self:px(2), row.disabled and LINE or BLACK)
         end
-        self:paint_text(bb, row.text, BOLD, 20, m, y + gap, self.width - 2 * m, bh, "center", row.kind == "primary" and WHITE or BLACK)
+        self:paint_text(bb, row.text, BOLD, 20, m, y + gap, self.width - 2 * m, bh, "center", solid and WHITE or (row.disabled and DISABLED or BLACK))
         self:add_hit(m, y + gap, self.width - 2 * m, bh, row.callback, row.keep_open)
     elseif row.kind == "stat" then
         self:paint_text(bb, row.text, REGULAR, 18, m, y, self.width - 2 * m - self:px(180), h, "left")

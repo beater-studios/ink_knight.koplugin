@@ -270,6 +270,28 @@ test("requests carry the token and always ask for the certificates", function()
     assert(not spec.url:find("lip_secret", 1, true), "the token reached the address")
 end)
 
+test("only an answer that refuses the token sent reports it, before the request hears back", function()
+    local calls = {}
+    local net, record = fake_net({ on_unauthorized = function() calls[#calls + 1] = "unauthorized" end })
+    local function answer(request, code)
+        net:request(request, function(status) calls[#calls + 1] = status end)
+        net:tick()
+        local spec = record.spawned[#record.spawned]
+        write(spec.code_path, tostring(code))
+        for pid = 101, 100 + #record.spawned do record.dead[pid] = true end
+        net:tick()
+    end
+    answer(Api.account(), 200)
+    answer(Api.account(), 403)
+    eq(#calls, 2)
+    answer(Api.account(), 401)
+    eq(calls[3], "unauthorized")
+    eq(calls[4], 401)
+    answer({ method = "GET", base = Api.TABLEBASE, path = "/standard" }, 401)
+    eq(calls[5], 401)
+    eq(calls[6], nil)
+end)
+
 test("the token is never written to the folder of the requests", function()
     local net, record, dir = fake_net()
     net:request(Api.seek_days(3, false), function() end)

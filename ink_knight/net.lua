@@ -38,6 +38,7 @@ end
 -- opts: token, dir (private folder for the files), version, ca_file, and for the tests
 -- spawn(spec), is_done(pid, wait), kill(pid), file_size(path), shell(command) and clock().
 -- on_request() is called whenever a request joins the queue, so the screen can check sooner.
+-- on_unauthorized() is called before on_done when Lichess refuses the token.
 function Net.new(opts)
     return setmetatable({
         token = opts.token,
@@ -51,6 +52,7 @@ function Net.new(opts)
         shell = opts.shell or os.execute,
         clock = opts.clock or os.time,
         on_request = opts.on_request,
+        on_unauthorized = opts.on_unauthorized,
         queue = {},
         streams = {},
         finished = {},
@@ -132,14 +134,19 @@ function Net:next_prefix()
     return string.format("%s/r%d", self.dir, self.serial)
 end
 
+-- The token only ever goes to the servers of Lichess that ask for it.
+local function sends_token(request)
+    local base = request.base or Api.BASE
+    return base == Api.BASE or base == Api.EXPLORER
+end
+
 function Net:build_spec(request, prefix, accept, timeout)
     local base = request.base or Api.BASE
     local headers = {
         ["user-agent"] = "InkKnight/" .. self.version,
         accept = request.accept or accept,
     }
-    -- The token only ever goes to the servers of Lichess that ask for it.
-    if base == Api.BASE or base == Api.EXPLORER then
+    if sends_token(request) then
         headers.authorization = "Bearer " .. self.token
     end
     if request.body then
@@ -264,6 +271,9 @@ function Net:finish_request()
     end
     if code == 429 then
         self.paused_until = self.clock() + RATE_LIMIT_PAUSE
+    end
+    if code == 401 and self.on_unauthorized and sends_token(job.request) then
+        self.on_unauthorized()
     end
     if job.on_done then
         job.on_done(code, body, scopes)

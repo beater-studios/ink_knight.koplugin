@@ -133,6 +133,7 @@ end
 
 function Home:connect_account()
     self:stop_network()
+    self.token_rejected = nil
     self.token, self.token_protected = self.token_store:load()
     if not self.token then
         self:refresh_list()
@@ -141,6 +142,7 @@ function Home:connect_account()
     self.net = Net.new{
         token = self.token, dir = net_dir(), version = self.version,
         on_request = function() self:tick_soon() end,
+        on_unauthorized = function() self:on_token_rejected() end,
     }
     if not self.net:start() then
         self.net = nil
@@ -168,8 +170,7 @@ function Home:load_account()
             self:flush_puzzles()
             self:ensure_puzzles()
         elseif status == 401 then
-            self.account_problem = self.strings.bad_token
-            self:info(self.strings.bad_token, 6)
+            return
         else
             self.account_problem = self:error_text(status)
             -- Trying again in the background only redraws the page if there is something new to say.
@@ -181,8 +182,20 @@ function Home:load_account()
     end)
 end
 
+-- From any request, at any moment. The token stays until the reader goes to connect another one.
+function Home:on_token_rejected()
+    if self.token_rejected then
+        return
+    end
+    self.token_rejected = true
+    self.account_problem = nil
+    self:close_pages()
+    self:info(self.strings.bad_token, 6)
+    self:refresh_list()
+end
+
 function Home:should_retry_account()
-    return not self.my_id and self.account_problem and self.account_problem ~= self.strings.bad_token
+    return not self.my_id and self.account_problem and not self.token_rejected
         and not self.suspended and not self.net:has_pending_request()
         and os.time() - (self.account_tried_at or 0) >= ACCOUNT_RETRY
 end
@@ -227,7 +240,7 @@ end
 
 -- Lichess announces games and challenges through one stream per token.
 function Home:open_events()
-    if self.events or not self.net or self.suspended or not self:allows("events") then
+    if self.events or not self.net or self.suspended or self.token_rejected or not self:allows("events") then
         return
     end
     self.events = self.net:stream(Api.stream_events(), function(line)
@@ -275,7 +288,7 @@ function Home:on_event(event)
 end
 
 function Home:reload_games()
-    if not self.net then
+    if not self.net or self.token_rejected then
         return
     end
     self.games_at = os.time()
@@ -386,6 +399,7 @@ function Home:leave_online()
     self.account, self.my_id, self.my_name, self.scopes = nil, nil, nil, nil
     self.account_problem, self.load_problem, self.updated_at = nil, nil, nil
     self.account_tried_at, self.games_at = nil, nil
+    self.token_rejected = nil
     self.games, self.challenges = {}, {}
     self.open_on_start = false
     self.seek_attempt = nil
@@ -418,7 +432,7 @@ function Home:hub_rows()
     if #challenges > 0 then
         rows[#rows + 1] = { kind = "primary", text = string.format(s.challenges, #challenges), callback = function() self:challenges_menu() end }
     end
-    local refreshed = self.load_problem and self:short_problem(self.load_problem) or (self.updated_at and string.format(s.updated_at, self.updated_at))
+    local refreshed = not self.token_rejected and (self.load_problem and self:short_problem(self.load_problem) or (self.updated_at and string.format(s.updated_at, self.updated_at)))
     rows[#rows + 1] = { kind = "section", text = refreshed or s.your_games, action_text = s.refresh, action = function()
         if self.my_id then
             self:reload_games()
@@ -447,6 +461,10 @@ function Home:hub_rows()
         { icon = ICON_PAWN, text = s.players, callback = function() self:when_connected(function() Players.menu(self) end) end },
         { icon = ICON_BISHOP, text = s.settings_short, callback = function() self:settings_menu() end },
     } }
+    if self.token_rejected then
+        Page.disable_rows(rows)
+        table.insert(rows, 1, { text = s.bad_token_short, detail = s.tap_to_connect_again, bold = true, callback = function() self:connect_again() end })
+    end
     return rows
 end
 
@@ -1288,16 +1306,24 @@ function Home:ask_disconnect()
         title = self.strings.disconnect,
         text = self.strings.disconnect_question,
         ok_text = self.strings.disconnect,
-        on_ok = function()
-            self.token_store:clear()
-            self.token, self.token_protected = nil, nil
-            self:close_pages()
-            if self.hub then
-                UIManager:close(self.hub)
-            end
-            self:reload()
-        end,
+        on_ok = function() self:forget_token() end,
     }
+end
+
+function Home:forget_token()
+    self.token_store:clear()
+    self.token, self.token_protected = nil, nil
+    self:close_pages()
+    if self.hub then
+        UIManager:close(self.hub)
+    end
+    self:reload()
+end
+
+-- The refused token goes first, so leaving without connecting comes back to the first page asking for an account.
+function Home:connect_again()
+    self:forget_token()
+    self:connect_menu()
 end
 
 function Home:connect_menu()

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.1]
+
+- When Lichess refuses the token, the online part is blocked except for one row that goes to connecting an account, and tapping it removes the token.
+
 ## [0.1.0]
 
 First version.
