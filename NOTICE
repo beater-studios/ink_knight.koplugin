@@ -1,0 +1,15 @@
+Ink Knight
+Copyright (C) 2026 Beater Studios
+https://github.com/beater-studios/ink_knight.koplugin
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 only, as published by the Free Software Foundation. See LICENSE. It is distributed WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+NAMES: as an additional term under section 7(e) of the GNU General Public License, this license grants no rights under trademark law to the names "Ink Knight" and "Beater Studios". Modified versions must not use them in a way that suggests they are official, while keeping the attribution the license requires.
+
+Lichess is a trademark of its owners. Ink Knight is not an official Lichess product and has no ties to Lichess. It uses no Lichess logo or artwork.
+
+---
+
+THIRD PARTY
+
+The chess pieces, on the screens and in the art in docs/, are drawn from FreeSerif, part of GNU FreeFont, https://www.gnu.org/software/freefont/, which comes with KOReader and is not distributed with this plugin. GNU FreeFont is licensed under the GNU General Public License, version 3 or later, with a font exception.
