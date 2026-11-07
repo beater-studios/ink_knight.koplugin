@@ -28,11 +28,37 @@ local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
 -- The solid chess symbols give the shape of a piece, and the hollow ones draw its outline.
 local SOLID = { k = "\226\153\154", q = "\226\153\155", r = "\226\153\156", b = "\226\153\157", n = "\226\153\158", p = "\226\153\159" }
 local HOLLOW = { k = "\226\153\148", q = "\226\153\149", r = "\226\153\150", b = "\226\153\151", n = "\226\153\152", p = "\226\153\153" }
+-- Only black and white, or the plain gray, so the board stays clean on e-ink. On a pattern or a darker gray,
+-- a piece needs a white edge to stand out.
+-- spacing and thickness grow with the screen, so a pattern looks the same on a sharper one.
+local STYLES = {
+    plain = { dark = DARK_SQUARE },
+    newspaper = { halo = true, spacing = 5, ink = function(x, y, spacing, thickness)
+        return (x + y) % spacing < thickness
+    end },
+    crosshatch = { halo = true, spacing = 6, ink = function(x, y, spacing, thickness)
+        return (x + y) % spacing < thickness or (x - y) % spacing < thickness
+    end },
+    dotted = { halo = true, spacing = 6, ink = function(x, y, spacing, thickness)
+        local shift = math.floor(y / spacing) % 2 == 1 and math.floor(spacing / 2) or 0
+        return (x + shift) % spacing < 2 * thickness and y % spacing < 2 * thickness
+    end },
+    contrast = { halo = true, dark = Blitbuffer.Color8(0x55) },
+}
+local STYLE_NAMES = { "plain", "newspaper", "crosshatch", "dotted", "contrast" }
+-- "classic" is drawn from FreeSerif. The others are pictures in ink_knight/pieces, see NOTICE for their authors.
+local PIECE_SET_NAMES = { "classic", "cburnett", "merida" }
+local PLUGIN_DIR = debug.getinfo(1, "S").source:gsub("^@", ""):gsub("/ink_knight/ui/board_screen%.lua$", "")
+-- The pieces of a set at a size are the same on every screen, and drawing a picture costs time on a Kindle.
+local art_cache = {}
 
 local BoardScreen = InputContainer:extend{
     name = "ink_knight_board",
     covers_fullscreen = true,
     stop_events_propagation = true,
+    style = "plain",
+    piece_set = "classic",
+    coordinates = false,
     state = nil,
     on_square = nil,
     on_button = nil,
@@ -46,6 +72,21 @@ local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
 end
 
+-- Grows box to hold every pixel of the mask that is more than faint.
+local function scan_box(box, mask)
+    local data = ffi.cast("uint8_t*", mask.data)
+    local stride = tonumber(mask.stride)
+    for y = 0, mask:getHeight() - 1 do
+        local row = data + y * stride
+        for x = 0, mask:getWidth() - 1 do
+            if row[x] > 40 then
+                box.left, box.right = math.min(box.left or x, x), math.max(box.right or x, x)
+                box.top, box.bottom = math.min(box.top or y, y), math.max(box.bottom or y, y)
+            end
+        end
+    end
+end
+
 -- Both glyphs of a piece, cut to the same box, so the outline falls exactly over the fill.
 local function make_piece(kind, size)
     local function render(char)
@@ -57,29 +98,184 @@ local function make_piece(kind, size)
         widget:free()
         return mask, measured.w, measured.h
     end
-    local solid, sw, sh = render(SOLID[kind])
-    local hollow, hw, hh = render(HOLLOW[kind])
-    local left, top, right, bottom = math.huge, math.huge, -1, -1
-    local function scan(mask, w, h)
-        local data = ffi.cast("uint8_t*", mask.data)
-        for y = 0, h - 1 do
-            local row = data + y * mask.stride
-            for x = 0, w - 1 do
-                if row[x] > 40 then
-                    left, right = math.min(left, x), math.max(right, x)
-                    top, bottom = math.min(top, y), math.max(bottom, y)
-                end
-            end
-        end
-    end
-    scan(solid, sw, sh)
-    scan(hollow, hw, hh)
-    if right < 0 then
+    local solid = render(SOLID[kind])
+    local hollow = render(HOLLOW[kind])
+    local box = {}
+    scan_box(box, solid)
+    scan_box(box, hollow)
+    if not box.right then
         solid:free()
         hollow:free()
         return nil
     end
-    return { solid = solid, hollow = hollow, x = left, y = top, w = right - left + 1, h = bottom - top + 1 }
+    return { solid = solid, hollow = hollow, mask = solid, x = box.left, y = box.top, w = box.right - box.left + 1, h = box.bottom - box.top + 1 }
+end
+
+-- A picture with its own colors. Its transparency becomes the mask, which gives the box and the white edge.
+local function make_picture_piece(set, piece, size)
+    local color = piece == piece:upper() and "w" or "b"
+    local path = PLUGIN_DIR .. "/ink_knight/pieces/" .. set .. "/" .. color .. piece:upper() .. ".svg"
+    local RenderImage = require("ui/renderimage")
+    local ok, image = pcall(RenderImage.renderSVGImageFile, RenderImage, path, size, size)
+    if not ok or not image then
+        return nil
+    end
+    local w, h = image:getWidth(), image:getHeight()
+    local mask = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
+    local out = ffi.cast("uint8_t*", mask.data)
+    local stride = tonumber(mask.stride)
+    for y = 0, h - 1 do
+        for x = 0, w - 1 do
+            out[y * stride + x] = image:getPixel(x, y).alpha
+        end
+    end
+    local box = {}
+    scan_box(box, mask)
+    if not box.right then
+        image:free()
+        mask:free()
+        return nil
+    end
+    return { image = image, mask = mask, x = box.left, y = box.top, w = box.right - box.left + 1, h = box.bottom - box.top + 1 }
+end
+
+-- The shape of the piece grown by radius on every side, in two passes so each pixel looks at a line, not a square.
+local function make_halo(mask, art, radius)
+    local w, h = art.w + 2 * radius, art.h + 2 * radius
+    local source = ffi.cast("uint8_t*", mask.data)
+    local stride = tonumber(mask.stride)
+    local mask_w, mask_h = mask:getWidth(), mask:getHeight()
+    local widened = ffi.new("uint8_t[?]", w * h)
+    for y = 0, h - 1 do
+        local source_y = art.y + y - radius
+        if source_y >= 0 and source_y < mask_h then
+            local row = source + source_y * stride
+            for x = 0, w - 1 do
+                local center = art.x + x - radius
+                local best = 0
+                for source_x = math.max(center - radius, 0), math.min(center + radius, mask_w - 1) do
+                    if row[source_x] > best then
+                        best = row[source_x]
+                    end
+                end
+                widened[y * w + x] = best
+            end
+        end
+    end
+    local halo = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
+    local out = ffi.cast("uint8_t*", halo.data)
+    local out_stride = tonumber(halo.stride)
+    for y = 0, h - 1 do
+        for x = 0, w - 1 do
+            local best = 0
+            for near = math.max(y - radius, 0), math.min(y + radius, h - 1) do
+                local value = widened[near * w + x]
+                if value > best then
+                    best = value
+                end
+            end
+            out[y * out_stride + x] = best
+        end
+    end
+    return halo
+end
+
+-- The pattern of a dark square at a size, white with the lines or dots of the style in black.
+local function make_pattern(style, size, scale)
+    local spacing = math.max(3, math.floor(style.spacing * scale + 0.5))
+    local thickness = math.max(1, math.floor(scale + 0.5))
+    local tile = Blitbuffer.new(size, size, Blitbuffer.TYPE_BB8)
+    tile:paintRect(0, 0, size, size, WHITE)
+    local data = ffi.cast("uint8_t*", tile.data)
+    local stride = tonumber(tile.stride)
+    for y = 0, size - 1 do
+        for x = 0, size - 1 do
+            if style.ink(x, y, spacing, thickness) then
+                data[y * stride + x] = 0
+            end
+        end
+    end
+    return tile
+end
+
+-- piece is the letter of the position: upper case for white. A set whose picture fails falls back to the glyphs.
+local function piece_art(set, piece, size)
+    local picture = set ~= "classic"
+    local key = string.format("%s:%d:%s", set, size, picture and piece or piece:lower())
+    if art_cache[key] == nil then
+        if picture then
+            art_cache[key] = make_picture_piece(set, piece, size) or false
+        else
+            art_cache[key] = make_piece(piece:lower(), size * 0.86) or false
+        end
+    end
+    if not art_cache[key] and picture then
+        return piece_art("classic", piece, size)
+    end
+    return art_cache[key]
+end
+
+-- left and top are where the box of the piece goes, without the empty margin of its glyph or picture.
+local function blit_piece(bb, art, piece, left, top)
+    if art.image then
+        bb:alphablitFrom(art.image, left, top, art.x, art.y, art.w, art.h)
+    elseif piece == piece:upper() then
+        bb:colorblitFrom(art.solid, left, top, art.x, art.y, art.w, art.h, WHITE)
+        bb:colorblitFrom(art.hollow, left, top, art.x, art.y, art.w, art.h, BLACK)
+    else
+        bb:colorblitFrom(art.solid, left, top, art.x, art.y, art.w, art.h, BLACK)
+    end
+end
+
+function BoardScreen.style_names()
+    return STYLE_NAMES
+end
+
+-- Called when the plugin closes, so the pieces do not stay in memory after it. The next board draws them again.
+function BoardScreen.clear_art_cache()
+    for _, art in pairs(art_cache) do
+        if art then
+            for _, field in ipairs({ "image", "solid", "hollow", "halo" }) do
+                if art[field] then
+                    art[field]:free()
+                end
+            end
+            if art.mask and art.mask ~= art.solid then
+                art.mask:free()
+            end
+        end
+    end
+    art_cache = {}
+end
+
+-- For the list of styles: a light and a dark square side by side, framed like the board, at the size of the screen.
+function BoardScreen.paint_style_sample(bb, name, x, y, size)
+    local style = STYLES[name] or STYLES.plain
+    bb:paintRect(x, y, size, size, LIGHT_SQUARE)
+    if style.ink then
+        local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
+        local tile = make_pattern(style, size, scale)
+        bb:blitFrom(tile, x + size, y, 0, 0, size, size)
+        tile:free()
+    else
+        bb:paintRect(x + size, y, size, size, style.dark or DARK_SQUARE)
+    end
+    bb:paintBorder(x, y, 2 * size, size, 1, BLACK)
+end
+
+-- For the list of piece sets: the white and the black king side by side.
+function BoardScreen.paint_piece_sample(bb, set, x, y, size)
+    for index, piece in ipairs({ "K", "k" }) do
+        local art = piece_art(set, piece, size)
+        if art then
+            local left = x + (index - 1) * size + math.floor((size - art.w) / 2)
+            blit_piece(bb, art, piece, left, y + math.floor((size - art.h) / 2))
+        end
+    end
+end
+
+function BoardScreen.piece_set_names()
+    return PIECE_SET_NAMES
 end
 
 function BoardScreen:init()
@@ -97,7 +293,8 @@ function BoardScreen:init()
     end
     self.scale = math.min(self.width / 600, self.height / 800)
     self:layout()
-    self.pieces = {}
+    self.tiles = {}
+    self.labels = {}
     self.state = self.state or {}
     self.refreshes = 0
 end
@@ -142,11 +339,8 @@ function BoardScreen:square_at(x, y)
     return (7 - row) * 8 + file + 1
 end
 
-function BoardScreen:piece(kind)
-    if self.pieces[kind] == nil then
-        self.pieces[kind] = make_piece(kind, self.square * 0.86) or false
-    end
-    return self.pieces[kind]
+function BoardScreen:piece(piece)
+    return piece_art(self.piece_set, piece, self.square)
 end
 
 function BoardScreen:paint_text(bb, text, name, size, x, y, w, h, align, color)
@@ -191,35 +385,97 @@ function BoardScreen:paint_marker(bb, square, thickness)
     bb:paintBorder(x, y, self.square, self.square, thickness, BLACK)
 end
 
+-- The pattern of a dark square, made once for the size of a square.
+function BoardScreen:pattern_tile(name, style)
+    if not self.tiles[name] then
+        self.tiles[name] = make_pattern(style, self.square, self.scale)
+    end
+    return self.tiles[name]
+end
+
+function BoardScreen:halo_radius()
+    return math.max(1, self:px(2))
+end
+
+function BoardScreen:halo(art)
+    if not art.halo then
+        art.halo = make_halo(art.mask, art, self:halo_radius())
+    end
+    return art.halo
+end
+
+-- A coordinate in black on a white tag, made once per screen, since the whole board is painted again at each move.
+function BoardScreen:label(text)
+    if not self.labels[text] then
+        local pad = math.max(1, self:px(1))
+        local widget = TextWidget:new{ text = text, face = face(BOLD, math.max(9, math.floor(self.square * 0.17))), fgcolor = BLACK }
+        local measured = widget:getSize()
+        local tag = Blitbuffer.new(measured.w + 2 * pad, measured.h, Blitbuffer.TYPE_BB8)
+        tag:paintRect(0, 0, tag:getWidth(), tag:getHeight(), WHITE)
+        widget:paintTo(tag, pad, 0)
+        widget:free()
+        self.labels[text] = tag
+    end
+    return self.labels[text]
+end
+
+-- In the corners, as on Lichess: the rank on the left edge and the file along the bottom, whichever way the board faces.
+function BoardScreen:paint_coordinates(bb)
+    local bottom_y = self.board_y + 7 * self.square
+    for square = 1, 64 do
+        local x, y = self:square_position(square)
+        if x == self.board_x then
+            local tag = self:label(tostring(math.floor((square - 1) / 8) + 1))
+            bb:blitFrom(tag, x + 1, y + 1, 0, 0, tag:getWidth(), tag:getHeight())
+        end
+        if y == bottom_y then
+            local tag = self:label(string.char(string.byte("a") + (square - 1) % 8))
+            local w, h = tag:getWidth(), tag:getHeight()
+            bb:blitFrom(tag, x + self.square - w - 1, y + self.square - h - 1, 0, 0, w, h)
+        end
+    end
+end
+
 function BoardScreen:paint_board(bb)
     local state = self.state
     local position = state.position
+    local style = STYLES[self.style] or STYLES.plain
+    local pattern = style.ink and self:pattern_tile(self.style, style)
     for square = 1, 64 do
         local x, y = self:square_position(square)
         local file, rank = (square - 1) % 8, math.floor((square - 1) / 8)
-        bb:paintRect(x, y, self.square, self.square, (file + rank) % 2 == 0 and DARK_SQUARE or LIGHT_SQUARE)
+        local dark = (file + rank) % 2 == 0
+        if dark and pattern then
+            bb:blitFrom(pattern, x, y, 0, 0, self.square, self.square)
+        else
+            bb:paintRect(x, y, self.square, self.square, dark and (style.dark or DARK_SQUARE) or LIGHT_SQUARE)
+        end
     end
     bb:paintBorder(self.board_x, self.board_y, self.square * 8, self.square * 8, 1, BLACK)
-    if state.last_move then
-        self:paint_marker(bb, state.last_move.from, self:px(3))
-        self:paint_marker(bb, state.last_move.to, self:px(3))
-    end
     if position then
         for square, piece in pairs(position.board) do
-            local art = self:piece(piece:lower())
+            local art = self:piece(piece)
             if art then
                 local x, y = self:square_position(square)
                 local px = x + math.floor((self.square - art.w) / 2) - art.x
                 local py = y + math.floor((self.square - art.h) / 2) - art.y
                 local offset_x, offset_y = px + art.x, py + art.y
-                if piece == piece:upper() then
-                    bb:colorblitFrom(art.solid, offset_x, offset_y, art.x, art.y, art.w, art.h, WHITE)
-                    bb:colorblitFrom(art.hollow, offset_x, offset_y, art.x, art.y, art.w, art.h, BLACK)
-                else
-                    bb:colorblitFrom(art.solid, offset_x, offset_y, art.x, art.y, art.w, art.h, BLACK)
+                if style.halo then
+                    local halo = self:halo(art)
+                    local radius = self:halo_radius()
+                    bb:colorblitFrom(halo, offset_x - radius, offset_y - radius, 0, 0, halo:getWidth(), halo:getHeight(), WHITE)
                 end
+                blit_piece(bb, art, piece, offset_x, offset_y)
             end
         end
+    end
+    if self.coordinates then
+        self:paint_coordinates(bb)
+    end
+    -- After the pieces and the coordinates, so neither a white edge nor a tag covers the mark of the last move.
+    if state.last_move then
+        self:paint_marker(bb, state.last_move.from, self:px(3))
+        self:paint_marker(bb, state.last_move.to, self:px(3))
     end
     if state.selected then
         self:paint_marker(bb, state.selected, self:px(6))
@@ -378,13 +634,12 @@ function BoardScreen:onSetRotationMode()
 end
 
 function BoardScreen:onCloseWidget()
-    for _, art in pairs(self.pieces) do
-        if art then
-            art.solid:free()
-            art.hollow:free()
+    for _, list in ipairs({ self.tiles, self.labels }) do
+        for _, buffer in pairs(list) do
+            buffer:free()
         end
     end
-    self.pieces = {}
+    self.tiles, self.labels = {}, {}
     if self.on_closed then
         self.on_closed()
     end

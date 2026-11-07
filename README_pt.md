@@ -37,6 +37,7 @@
 - **Rever:** suas partidas anteriores e favoritas, lance a lance, com o que o Lichess sabe de cada posição: a avaliação, os lances mais jogados e, perto do fim, o resultado com jogo perfeito.
 - **Jogadores:** busca por nome, quem você segue e está online, perfis, gráfico de rating com estatísticas e o seu histórico contra alguém.
 - **Offline:** jogue contra um motor pequeno, que nunca trava a tela, e continue a partida depois.
+- **Seu tabuleiro:** cinco estilos de tabuleiro, incluindo as casas hachuradas dos diagramas impressos, três conjuntos de peças e coordenadas nas bordas.
 
 ## Instalação
 
@@ -103,7 +104,7 @@ O desenho, as ferramentas e o processo de publicação estão em [docs/design.md
 
 [GPL-3.0](LICENSE), somente a versão 3. Você pode usar, estudar, modificar e redistribuir, mantendo aberto sob a mesma licença.
 
-Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças são desenhadas com a fonte FreeSerif, que vem com o KOReader.
+Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças clássicas são desenhadas com a fonte FreeSerif, que vem com o KOReader, e as peças Cburnett e Merida são de Colin M.L. Burnett e Armando Hernandez Marroquin, sob a GPLv2 ou posterior.
 
 ---
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0]
+
+- Board styles: plain, newspaper (hatched dark squares like printed diagrams), crosshatch, dotted and contrast.
+- Piece sets: classic, Cburnett and Merida.
+- Optional coordinates on the edges of the board.
+- These are in the settings and in the offline menu, and each choice shows a sample before its name.
+
 ## [0.1.1]
 
 - When Lichess refuses the token, the online part is blocked except for one row that goes to connecting an account, and tapping it removes the token.

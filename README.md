@@ -45,6 +45,7 @@
 - **Review:** your past games and favorites, move by move, with what Lichess knows about each position: its evaluation, the most played moves and, near the end, the perfect result.
 - **Players:** search by name, see who you follow is online, profiles, a rating chart with statistics, and your record against someone.
 - **Without internet:** play a small engine that never freezes the screen, and continue the game later.
+- **Your board:** five board styles, including the hatched squares of printed diagrams, three piece sets and coordinates on the edges.
 
 ## Installation
 
@@ -111,7 +112,7 @@ The design, the tools and the release process are described in [docs/design.md](
 
 [GPL-3.0](LICENSE), version 3 only. You may use, study, modify and redistribute it, keeping it open under the same license.
 
-Lichess is a trademark of its owners, and this license grants no rights to it or to the names "Ink Knight" and "Beater Studios". See [NOTICE](NOTICE). Pieces are drawn from the FreeSerif font that comes with KOReader.
+Lichess is a trademark of its owners, and this license grants no rights to it or to the names "Ink Knight" and "Beater Studios". See [NOTICE](NOTICE). The classic pieces are drawn from the FreeSerif font that comes with KOReader, and the Cburnett and Merida pieces are by Colin M.L. Burnett and Armando Hernandez Marroquin, under GPLv2 or later.
 
 ---
 

@@ -57,6 +57,7 @@ The token is not encrypted, because the key would have to live on the same devic
 ## Board
 
 - **Pieces** come from the chess symbols of FreeSerif, which ships with KOReader, so there is no art to license. The solid symbol gives the shape and the hollow one the outline: a white piece is the solid one in white with the hollow one in black, and a black piece is the solid one in black. Both are cut to the same box, so they stay aligned and centered.
+- **Styles.** Five board styles: plain, with gray dark squares, and newspaper, crosshatch, dotted and contrast. The patterns are only black and white, and contrast uses the darker gray 0x55. On those four, a piece gets a white edge, its shape grown by 2 px, so it stands out. Three piece sets: classic, from FreeSerif, and Cburnett and Merida, pictures in `ink_knight/pieces` from the Lichess source (see NOTICE), drawn with KOReader's SVG renderer and kept for the session, so they are drawn once per size. A set whose picture fails to load falls back to classic. Coordinates are optional, in the corners of the edge squares. All of this is chosen in the settings and in the offline menu. A dark theme for the whole plugin was left out: KOReader's night mode already inverts it.
 - **One screen for every mode.** `ui/board_screen.lua` only draws the state it receives and reports taps. `live_game`, `offline_game`, `puzzle_screen` and `review_screen` decide what to show.
 - **Refresh.** `board_diff.lua` compares what is on screen with what comes next, and only what changed goes to the display: each square as its own region, so a move touches the squares it changed and nothing between them. A clock only touches its own bar. Every 40 changes the whole screen is redrawn, to clear what e-ink leaves behind. Tried on the Kindle 10 in 2026-11: `[partial]` looked worse than `ui`, because it is sent as a full update and redraws the gray squares, and GL16 as a partial update brought no gain worth calling the driver directly. So squares stay on `ui`. DU4, which other Kindles can use, does not exist in the driver of this model, where waveform 7 is `ZELDA_LAST`.
 - **Time and battery.** `ui/status_strip.lua` draws them centered at the bottom of every full screen. The room comes from the buttons of the board, which lost 8 px, and from the gap that was left under them, so the board keeps its size. `Home` has one timer for the whole plugin: when the minute changes, only the screen on top redraws, and only the middle of the strip goes to the display.
@@ -119,6 +120,7 @@ ink_knight.koplugin/
     token_server.lua      the server of the token page
     board_diff.lua        what changed on the board, for the refresh
     i18n.lua              texts in three languages
+    pieces/               pictures of the Cburnett and Merida sets
     ui/                   the screens
   tests/, tools/, docs/   development
 ```

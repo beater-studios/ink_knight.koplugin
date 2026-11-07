@@ -6,6 +6,7 @@
 -- "toggle": text, on, on_text, off_text, callback. "text": text, center. "hero": icon, text, detail.
 -- "tiles": columns, items of { text, detail, icon, callback }, and fill to grow into the room left on the page.
 -- disabled, on a row or a tile: shown in gray, and tapping it does nothing.
+-- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -233,6 +234,13 @@ function Page:paint_nav(bb, row, y, h)
     local chevron_w = row.callback and self:px(24) or 0
     local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
     local text_w = self.width - 2 * m - chevron_w - value_w
+    if row.preview then
+        local size = self:px(40)
+        row.preview(bb, x, y + math.floor((h - size) / 2), size)
+        local used = size * (row.preview_columns or 1) + self:px(14)
+        x = x + used
+        text_w = text_w - used
+    end
     local name = (row.bold or row.kind == "game") and BOLD or REGULAR
     local color = row.disabled and DISABLED or (row.dim and GRAY or BLACK)
     local detail_color = row.disabled and DISABLED or GRAY

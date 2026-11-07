@@ -10,6 +10,7 @@ local lfs = require("libs/libkoreader-lfs")
 local rapidjson = require("rapidjson")
 
 local Api = require("ink_knight/api")
+local BoardScreen = require("ink_knight/ui/board_screen")
 local CreateTokenScreen = require("ink_knight/ui/create_token_screen")
 local Game = require("ink_knight/game")
 local I18n = require("ink_knight/i18n")
@@ -84,6 +85,7 @@ function Home:init()
     self.decode = decode
     self.token_store = new_token_store()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/ink_knight.lua")
+    self:apply_board_look()
     self.games, self.challenges = {}, {}
     self.open_games = {}
     self.fetching_puzzles = {}
@@ -928,7 +930,74 @@ function Home:start_ai_game(request)
     end)
 end
 
+local function known_or(name, names, default)
+    for _, known in ipairs(names) do
+        if known == name then
+            return name
+        end
+    end
+    return default
+end
+
+-- Every board screen reads these when it paints, so a change shows in the next game without reopening anything.
+function Home:apply_board_look()
+    BoardScreen.style = known_or(self.settings:readSetting("board_style"), BoardScreen.style_names(), "plain")
+    BoardScreen.piece_set = known_or(self.settings:readSetting("piece_set"), BoardScreen.piece_set_names(), "classic")
+    BoardScreen.coordinates = self.settings:isTrue("board_coordinates")
+end
+
+-- sample(bb, name, x, y, size) draws each choice before its name, two sizes wide, so the drawings line up.
+function Home:look_choice_row(page, title, labels, names, key, current, sample)
+    return { text = title, value = labels[current], wide_value = true, callback = function()
+        local rows = {}
+        for _, name in ipairs(names) do
+            rows[#rows + 1] = {
+                text = labels[name], value = name == current and "✓" or nil,
+                preview = function(bb, x, y, size) sample(bb, name, x, y, size) end, preview_columns = 2,
+                callback = function()
+                    self:save_setting(key, name)
+                    self:apply_board_look()
+                    page:reload()
+                end,
+            }
+        end
+        self:choose(title, rows, { close_on_tap = true })
+    end }
+end
+
+function Home:board_look_rows(page)
+    local s = self.strings
+    return {
+        self:look_choice_row(page, s.board_style, s.board_styles, BoardScreen.style_names(), "board_style", BoardScreen.style, BoardScreen.paint_style_sample),
+        self:look_choice_row(page, s.piece_style, s.piece_styles, BoardScreen.piece_set_names(), "piece_set", BoardScreen.piece_set, BoardScreen.paint_piece_sample),
+        { kind = "toggle", text = s.show_coordinates, on = BoardScreen.coordinates, on_text = s.yes, off_text = s.no, callback = function()
+            self:save_setting("board_coordinates", not BoardScreen.coordinates)
+            self:apply_board_look()
+            page:reload()
+        end },
+    }
+end
+
+-- Rows of a page, with a list of rows spliced in where it falls.
+local function spliced(rows)
+    local out = {}
+    for _, row in ipairs(rows) do
+        if row.splice then
+            for _, inner in ipairs(row.splice) do
+                out[#out + 1] = inner
+            end
+        else
+            out[#out + 1] = row
+        end
+    end
+    return out
+end
+
 function Home:offline_menu()
+    self:open_page{ title = self.strings.offline_game, build = function(page) return self:offline_rows(page) end }
+end
+
+function Home:offline_rows(page)
     local s = self.strings
     local rows = {}
     if self.settings:readSetting("offline_game") then
@@ -955,7 +1024,11 @@ function Home:offline_menu()
             callback = function() PuzzleScreen.open(self, {}) end,
         }
     end
-    self:open_list(s.offline_game, rows)
+    rows[#rows + 1] = { kind = "section", text = s.board_section }
+    for _, row in ipairs(self:board_look_rows(page)) do
+        rows[#rows + 1] = row
+    end
+    return rows
 end
 
 -- Puzzles: a pile is kept on the device, so they work with no network. Each theme has its own.
@@ -1237,7 +1310,7 @@ end
 function Home:settings_menu()
     local s = self.strings
     self:open_page{ title = s.settings, build = function(page)
-        return {
+        return spliced({
             { kind = "section", text = s.options_section },
             self:rated_row(page),
             { kind = "toggle", text = s.confirm_moves, on = self.settings:isTrue("confirm_moves"), on_text = s.yes, off_text = s.no, callback = function()
@@ -1246,6 +1319,8 @@ function Home:settings_menu()
             end },
             { text = s.refresh_interval, value = self:refresh_label(), wide_value = true, callback = function() self:choose_refresh(function() page:reload(); self:refresh_list() end) end },
             self:margin_row(page),
+            { kind = "section", text = s.board_section },
+            { splice = self:board_look_rows(page) },
             { kind = "section", text = s.account_section },
             { text = s.token_scopes, value = self:scopes_summary(), callback = function() self:show_token_scopes() end },
             { text = s.token_status, value = self.token_protected and s.token_status_protected or s.token_status_shared, callback = function()
@@ -1253,7 +1328,7 @@ function Home:settings_menu()
             end },
             { text = s.about, callback = function() self:show_about() end },
             { text = s.disconnect, callback = function() self:ask_disconnect() end },
-        }
+        })
     end }
 end
 
@@ -1410,6 +1485,7 @@ function Home:onCloseWidget()
     self.is_closed = true
     UIManager:unschedule(self.minute_callback)
     self:stop_network()
+    BoardScreen.clear_art_cache()
     Page.onCloseWidget(self)
 end
 
