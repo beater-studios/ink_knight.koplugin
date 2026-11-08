@@ -287,6 +287,15 @@ function Api.puzzle_results(body, angle)
     return { method = "POST", path = "/api/puzzle/batch/" .. path_id(angle or "mix"), body = body, content_type = "application/json" }
 end
 
+-- The ids of the puzzles missed in the last days and not solved since, for all themes.
+function Api.puzzle_replay(days)
+    return { method = "GET", path = string.format("/api/puzzle/replay/%d/mix", days) }
+end
+
+function Api.puzzle_by_id(id)
+    return { method = "GET", path = "/api/puzzle/" .. path_id(id) }
+end
+
 function Api.puzzle_dashboard(days)
     return { method = "GET", path = string.format("/api/puzzle/dashboard/%d", days) }
 end

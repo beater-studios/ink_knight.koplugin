@@ -41,7 +41,7 @@
 - **Play:** find an opponent in rapid and classical, by correspondence, challenge a friend (blitz or no time limit too) or play the Lichess computer. In a challenge, you can pick your color. The challenges you sent wait beside the ones you received, and you can cancel them.
 - **Several games at once:** the list shows whose turn it is, with the games waiting for you on top. It refreshes at the interval you choose.
 - **During a game:** clocks, promotion, draw offers and draws by repetition, asking for a takeback, giving time, resigning and canceling. The list of moves is one tap away, here and in the other modes. When the game ends, play again. A dropped connection comes back by itself.
-- **Puzzles:** a pile stays on the device to solve without internet, and results go to Lichess when the Wi-Fi returns. Also puzzles by theme, your results and the daily puzzle.
+- **Puzzles:** a pile stays on the device to solve without internet, and results go to Lichess when the Wi-Fi returns. Also puzzles by theme, your results and the daily puzzle. You can also review the puzzles you missed in the last 30 days, including the ones missed on the site.
 - **Review:** your past games and favorites, move by move, with what Lichess knows about each position: its evaluation, the most played moves and, near the end, the perfect result.
 - **Players:** search by name, see who you follow is online, profiles, a rating chart with statistics, and your record against someone.
 - **Without internet:** play a small engine that never freezes the screen, with your choice of color, undo and hints, and continue the game later. Or play against someone else on the same device.

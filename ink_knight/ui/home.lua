@@ -424,6 +424,8 @@ function Home:leave_online()
     self.games, self.challenges, self.sent = {}, {}, {}
     self.open_on_start = false
     self.seek_attempt = nil
+    -- The requests of a review under way end with the network, so it is not left waiting for them.
+    self.fetching_review = false
 end
 
 -- A row has room for one line, and the full sentence goes in the notice.
@@ -1119,6 +1121,17 @@ function Home:offline_rows(page)
             callback = function() PuzzleScreen.open(self, {}) end,
         }
     end
+    local saved_reviews = #self:puzzle_pile(Puzzles.REVIEW)
+    if saved_reviews > 0 then
+        if saved_puzzles == 0 then
+            rows[#rows + 1] = { kind = "section", text = s.puzzles }
+        end
+        rows[#rows + 1] = {
+            text = s.puzzle_review,
+            detail = string.format(s.puzzles_saved, saved_reviews),
+            callback = function() self:open_review_pile() end,
+        }
+    end
     rows[#rows + 1] = { kind = "section", text = s.board_section }
     for _, row in ipairs(self:board_look_rows(page)) do
         rows[#rows + 1] = row
@@ -1135,6 +1148,7 @@ function Home:puzzle_pile(angle)
     return self.settings:readSetting(pile_key(angle), {})
 end
 
+-- angle: a theme, or Puzzles.REVIEW for the missed ones, which come from their own list and not from a batch.
 function Home:next_puzzle(angle)
     local pile = self:puzzle_pile(angle)
     local puzzle = table.remove(pile, 1)
@@ -1142,7 +1156,9 @@ function Home:next_puzzle(angle)
     self.settings:flush()
     -- Out of the pile while on the screen, and not yet a result, so it is remembered for the next batch.
     self.puzzle_in_play = puzzle
-    self:ensure_puzzles(angle)
+    if angle ~= Puzzles.REVIEW then
+        self:ensure_puzzles(angle)
+    end
     return puzzle
 end
 
@@ -1159,10 +1175,90 @@ function Home:known_puzzle_ids()
 end
 
 function Home:return_puzzle(puzzle)
-    local pile = self:puzzle_pile(puzzle.angle)
+    local key = puzzle.pile or puzzle.angle
+    local pile = self:puzzle_pile(key)
     table.insert(pile, 1, puzzle)
-    self.settings:saveSetting(pile_key(puzzle.angle), pile)
+    self.settings:saveSetting(pile_key(key), pile)
     self.settings:flush()
+end
+
+function Home:open_review_pile()
+    if #self:puzzle_pile(Puzzles.REVIEW) > 0 then
+        PuzzleScreen.open(self, { angle = Puzzles.REVIEW, review = true })
+    else
+        self:info(self.strings.puzzle_review_none)
+    end
+end
+
+-- Adds a fetched missed puzzle to the kept pile, once, so the screen finds it as soon as it arrives.
+function Home:add_review_puzzle(puzzle)
+    local pile = self:puzzle_pile(Puzzles.REVIEW)
+    for _, kept in ipairs(pile) do
+        if kept.id == puzzle.id then
+            return
+        end
+    end
+    puzzle.pile = Puzzles.REVIEW
+    pile[#pile + 1] = puzzle
+    self.settings:saveSetting(pile_key(Puzzles.REVIEW), pile)
+    self.settings:flush()
+end
+
+-- The puzzles missed in the last days, as Lichess counts them, so mistakes made on the site come too. Online, the
+-- pile is brought in line with that list first. Without a connection, or if Lichess does not answer, what is kept
+-- is used. Each fetch takes a second or two on a Kindle, so the review opens with the first puzzle it has, and the
+-- rest arrive while the reader solves it.
+function Home:open_review()
+    local s = self.strings
+    if not self.net or not self:allows("puzzles") then
+        self:open_review_pile()
+        return
+    end
+    if self.fetching_review then
+        self:info(s.puzzle_review_loading, 2)
+        return
+    end
+    self.fetching_review = true
+    self:info(s.puzzle_review_loading, 2)
+    self.net:request(Api.puzzle_replay(Api.PUZZLE_DAYS), function(status, body)
+        if status ~= 200 and status ~= 404 then
+            self.fetching_review = false
+            self:open_review_pile()
+            return
+        end
+        -- 404: nothing left to review.
+        local data = status == 200 and decode(body) or {}
+        local remaining = data.replay and data.replay.remaining or {}
+        local kept, missing = Puzzles.review_plan(self:puzzle_pile(Puzzles.REVIEW), remaining, self:known_puzzle_ids(), Puzzles.REVIEW_FETCH)
+        self.settings:saveSetting(pile_key(Puzzles.REVIEW), kept)
+        self.settings:flush()
+        local opened = #kept > 0 or #missing == 0
+        if opened then
+            self:open_review_pile()
+        end
+        local function fetch(index)
+            local id = missing[index]
+            if not id or self.is_closed or not self.net then
+                self.fetching_review = false
+                if not opened then
+                    self:open_review_pile()
+                end
+                return
+            end
+            self.net:request(Api.puzzle_by_id(id), function(puzzle_status, puzzle_body)
+                local puzzle = puzzle_status == 200 and Puzzles.prepare(decode(puzzle_body) or {})
+                if puzzle then
+                    self:add_review_puzzle(puzzle)
+                    if not opened then
+                        opened = true
+                        self:open_review_pile()
+                    end
+                end
+                fetch(index + 1)
+            end)
+        end
+        fetch(1)
+    end)
 end
 
 function Home:ensure_puzzles(angle, on_done)
@@ -1228,6 +1324,9 @@ function Home:puzzles_menu()
     self:open_list(s.puzzles, {
         { kind = "primary", text = s.puzzle_next, callback = function() PuzzleScreen.open(self, {}) end },
         { text = s.puzzle_daily, callback = function() self:open_daily_puzzle() end },
+        { text = s.puzzle_review, detail = string.format(s.puzzle_review_detail, Api.PUZZLE_DAYS), callback = function()
+            self:with_feature("puzzles", function() self:open_review() end)
+        end },
         { text = s.puzzle_by_theme, callback = function() self:with_feature("puzzles", function() self:puzzle_themes_menu() end) end },
         { text = s.puzzle_stats, callback = function() self:with_feature("puzzles", function() self:show_puzzle_stats() end) end },
         { kind = "text", text = string.format(s.puzzles_saved, #self:puzzle_pile()), center = true },

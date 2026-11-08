@@ -57,6 +57,38 @@ function Puzzles.add_new(pile, incoming, known)
     return added
 end
 
+-- The pile of missed puzzles to review, kept apart from the new ones. Their results go to Lichess as any other.
+Puzzles.REVIEW = "review"
+-- How many missed puzzles are fetched at a time, one request each.
+Puzzles.REVIEW_FETCH = 10
+
+-- Brings the review pile in line with what Lichess still lists as missed: what is no longer listed leaves, since it
+-- was solved, perhaps on the site, and what is missing is to be fetched, apart from known ids, such as a result still
+-- waiting to be sent. Returns the pile kept and the ids to fetch, at most limit of them.
+function Puzzles.review_plan(pile, remaining, known, limit)
+    local listed, kept, have = {}, {}, {}
+    for _, id in ipairs(remaining or {}) do
+        listed[id] = true
+    end
+    for _, puzzle in ipairs(pile or {}) do
+        if listed[puzzle.id] then
+            kept[#kept + 1] = puzzle
+            have[puzzle.id] = true
+        end
+    end
+    local fetch = {}
+    for _, id in ipairs(remaining or {}) do
+        if #fetch >= limit then
+            break
+        end
+        if not have[id] and not (known or {})[id] and tostring(id):match("^%w+$") then
+            fetch[#fetch + 1] = id
+            have[id] = true
+        end
+    end
+    return kept, fetch
+end
+
 -- A session walks through one puzzle: the reader plays, and the reply comes by itself.
 function Puzzles.new_session(puzzle)
     local position, last = Chess.from_moves(nil, puzzle.played)

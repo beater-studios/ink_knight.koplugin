@@ -13,7 +13,7 @@ local REPLY_DELAY = 0.7
 -- opts.puzzle: a prepared puzzle. Without it, the next saved one is used, of the theme in opts.angle.
 -- Daily puzzles do not report a result.
 function PuzzleScreen.open(app, opts)
-    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, angle = opts.angle }, PuzzleScreen)
+    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, angle = opts.angle, review = opts.review }, PuzzleScreen)
     self.screen = BoardScreen:new{
         state = {},
         on_square = function(square) self:on_square(square) end,
@@ -37,7 +37,7 @@ end
 function PuzzleScreen:render(what)
     local s, session = self.s, self.session
     if not session then
-        self.screen:show({ status = s.puzzle_empty, buttons = { { id = "back", label = s.back } } }, what)
+        self.screen:show({ status = self.review and s.puzzle_review_done or s.puzzle_empty, buttons = { { id = "back", label = s.back } } }, what)
         return
     end
     local buttons = { { id = "back", label = s.back } }

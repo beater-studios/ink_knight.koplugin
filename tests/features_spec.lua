@@ -111,6 +111,23 @@ local function run_search(position, level, random)
     end
 end
 
+test("the review pile follows what Lichess still lists as missed", function()
+    local pile = { { id = "aaaa1" }, { id = "bbbb2" } }
+    local kept, fetch = Puzzles.review_plan(pile, { "bbbb2", "cccc3", "dddd4", "eeee5" }, { dddd4 = true }, 10)
+    eq(#kept, 1)
+    eq(kept[1].id, "bbbb2")
+    eq(table.concat(fetch, " "), "cccc3 eeee5")
+    local _, limited = Puzzles.review_plan({}, { "a1", "b2", "c3" }, {}, 2)
+    eq(table.concat(limited, " "), "a1 b2")
+    local _, safe = Puzzles.review_plan({}, { "ok1", "../x", "a b" }, {}, 10)
+    eq(table.concat(safe, " "), "ok1")
+    kept, fetch = Puzzles.review_plan(pile, {}, {}, 10)
+    eq(#kept, 0)
+    eq(#fetch, 0)
+    eq(Api.puzzle_replay(30).path, "/api/puzzle/replay/30/mix")
+    eq(Api.puzzle_by_id("w6sQc").path, "/api/puzzle/w6sQc")
+end)
+
 test("a challenge is sent or received depending on who made it", function()
     local mine = { challenger = { id = "Reader" }, destUser = { id = "friend" } }
     local theirs = { challenger = { id = "friend" }, destUser = { id = "reader" } }

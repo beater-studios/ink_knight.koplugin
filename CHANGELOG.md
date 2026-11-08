@@ -7,6 +7,7 @@
 - The challenges you sent and nobody answered yet, rematches included, beside the ones you received, and each one can be canceled.
 - A player who is not signed in on Lichess is called anonymous instead of a question mark.
 - A game between two people on the same device, taking turns, with undo, the list of moves and a button to turn the board.
+- Review mistakes: the puzzles you missed in the last 30 days, on the plugin or on the site, kept to solve without internet too.
 
 ## [0.2.0]
 
