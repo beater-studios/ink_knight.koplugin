@@ -30,7 +30,7 @@
 </table>
 
 - **Você escolhe ao abrir:** a primeira tela pergunta se você quer jogar online ou offline, e o Lichess só é contatado se você escolher online. A hora e a bateria ficam na parte de baixo de todas as telas.
-- **Jogar:** procure adversário em rapid e clássico, por correspondência, desafie um amigo (também em blitz ou sem limite de tempo) ou jogue contra o computador do Lichess. No desafio, você pode escolher a cor.
+- **Jogar:** procure adversário em rapid e clássico, por correspondência, desafie um amigo (também em blitz ou sem limite de tempo) ou jogue contra o computador do Lichess. No desafio, você pode escolher a cor. Os desafios que você enviou ficam ao lado dos recebidos, e dá para cancelá-los.
 - **Várias partidas ao mesmo tempo:** a lista mostra de quem é a vez, com as que aguardam você no topo. Ela atualiza no intervalo que você escolher.
 - **Durante a partida:** relógios, promoção, pedidos de empate e empate por repetição, pedir para voltar lance, dar tempo, desistir e cancelar. A lista de lances fica a um toque, aqui e nos outros modos. No fim, é só jogar de novo. Uma conexão perdida volta sozinha.
 - **Táticas:** um lote fica guardado no aparelho para resolver sem internet, e os resultados vão para o Lichess quando o Wi-Fi voltar. Também tem táticas por tema, seus resultados e a tática do dia.

@@ -111,6 +111,21 @@ local function run_search(position, level, random)
     end
 end
 
+test("a challenge is sent or received depending on who made it", function()
+    local mine = { challenger = { id = "Reader" }, destUser = { id = "friend" } }
+    local theirs = { challenger = { id = "friend" }, destUser = { id = "reader" } }
+    assert(Api.is_outgoing(mine, "reader") and not Api.is_incoming(mine, "reader"))
+    assert(Api.is_incoming(theirs, "reader") and not Api.is_outgoing(theirs, "reader"))
+    assert(not Api.is_outgoing(mine, nil), "with no account loaded, nothing is the reader's")
+end)
+
+test("a player who is not signed in is called anonymous, and the computer by its level", function()
+    eq(Game.player_name({}, "Anônimo"), "Anônimo")
+    eq(Game.player_name(nil, "Anônimo"), "Anônimo")
+    eq(Game.player_name({ aiLevel = 3 }, "Anônimo"), "Stockfish 3")
+    eq(Game.player_name({ user = { name = "Friend" } }, "Anônimo"), "Friend")
+end)
+
 test("a game becomes a list in the usual notation, numbered from where it started", function()
     local list, number, turn = Chess.san_list(nil, "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 e1g1")
     eq(table.concat(list, " "), "e4 e5 Nf3 Nc6 Bb5 a6 O-O")

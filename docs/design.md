@@ -6,7 +6,7 @@ A Lichess client inside KOReader, built for e-ink. `ink_knight` is the plugin id
 
 | Part | What it has |
 |---|---|
-| Play | Seek in rapid and classical with an optional rating range, correspondence, challenges with blitz or no time limit, the Lichess computer with a clock or no time limit, choice of color in a challenge, several games at once, a list with whose turn it is |
+| Play | Seek in rapid and classical with an optional rating range, correspondence, challenges with blitz or no time limit, the Lichess computer with a clock or no time limit, choice of color in a challenge, several games at once, a list with whose turn it is, the challenges sent and still unanswered, which can be canceled |
 | During a game | Draw offers, draws by repetition, asking for a takeback, giving time, claiming when the opponent leaves, playing again |
 | Train | Puzzles with a saved pile, puzzles by theme, the results of the last 30 days, the daily puzzle, a game against a small engine with no network |
 | Review | Past games and favorites, with the evaluation, the most played moves and the tablebase result of each position |
@@ -52,7 +52,7 @@ The token is not encrypted, because the key would have to live on the same devic
 
 `ui/home.lua` opens on a first page with no network: play online, or connect an account if there is no token, play offline, about and exit. Playing online asks KOReader for the Wi-Fi, opens the online part and starts the network, and leaving that part stops it. With no connection, that part stays open, says so, and tries again every 30 seconds. When Lichess refuses the token, on any request, every row of that part is disabled except one that goes to connecting an account, and tapping it removes the token, so leaving without connecting comes back to the first page asking for an account. Saved puzzles and the offline game are also reachable from the first page.
 
-`ui/page.lua` is every screen outside the board: a title with a way back, and rows meant for a finger, such as tiles, toggles and stats. There are no popups from KOReader. A choice is a page, a question is a page with two buttons, and `ui/toast.lua` gives short notices at the bottom without taking taps. A row answers a tap by inverting, because what comes next can take a moment on e-ink. The exceptions are the keyboard, and the question that allows a phone on the token page.
+`ui/page.lua` is every screen outside the board: a title with a way back, and rows meant for a finger, such as tiles, toggles and stats. There are no popups from KOReader. A choice is a page, a question is a page with two buttons, and `ui/toast.lua` gives short notices at the bottom without taking taps. A row answers a tap by inverting, because what comes next can take a moment on e-ink. The exceptions are the keyboard, and the question that allows a phone on the token page. The challenges received and sent share one line when both exist, each a button of half the width whose text gets smaller if it does not fit, and each takes the whole line alone. The sent ones come from the event stream, which also reports the challenges the reader makes, so no other permission is needed, and canceling uses the same `board:play`. A correspondence seek cannot be listed or canceled through the API, so it is not among them. Both lists start over whenever the stream opens, after a sleep or a dropped connection, since Lichess sends everything still pending and nothing about what changed while it was closed. A player who is not signed in comes from Lichess with no name and is called anonymous.
 
 ## Board
 
@@ -135,6 +135,7 @@ ink_knight.koplugin/
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_token_page.lua` tests the token page with real connections, including attempts that must fail.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_token_rejected.lua` goes through a refused token on the real screens, with invented answers and no network.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_offline_game.lua` plays offline games on the real screens: choosing a color, undo, also while the engine thinks and after a mate, and a hint played with a tap, plus the list of moves offline and in a long review, where it opens on the right sheet and a tap goes to the move.
+  - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_challenges.lua` goes through the challenges sent, with invented answers and no network: the buttons beside the received ones in the three languages, canceling, a challenge already gone, and one declined or accepted.
   - `OUTPUT_DIR=docs/screenshots tools/koreader/run_headless.sh tools/koreader/render_readme_screens.lua` draws the README images with invented players.
 - `KOREADER_DIR=<desktop KOReader> python3 -I tools/make_brand_art.py` draws the icon, the banner and the social preview from the README images, with the knight of FreeSerif and no Lichess artwork.
 - `tools/package.sh` builds the zip and the checksum, only with what the plugin uses.

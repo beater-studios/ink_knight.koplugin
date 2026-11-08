@@ -20,14 +20,15 @@ function Game.new(id, my_id)
     }, Game)
 end
 
+-- nil for a player who is not signed in, whom Lichess sends with no name: the screens call them anonymous.
 local function name_of(player)
     if not player then
-        return "?"
+        return nil
     end
     if player.aiLevel then
         return "Stockfish " .. player.aiLevel
     end
-    return player.name or player.id or "?"
+    return player.name or player.id
 end
 
 function Game:apply_state(state, now)
@@ -225,14 +226,12 @@ function Game:rating_text(color)
     return tostring(rating) .. (player and player.provisional and "?" or "")
 end
 
-function Game.player_name(player)
-    if not player then
-        return "?"
-    end
-    if player.aiLevel then
+-- anonymous: what to call a player who is not signed in, whom Lichess sends with no name.
+function Game.player_name(player, anonymous)
+    if player and player.aiLevel then
         return "Stockfish " .. player.aiLevel
     end
-    return player.user and player.user.name or player.name or "?"
+    return player and (player.user and player.user.name or player.name) or anonymous or "?"
 end
 
 local function player_id_of(player)
@@ -244,7 +243,7 @@ end
 -- Returns the title, the detail and whether player_id had the black pieces.
 function Game.past_summary(s, game, player_id, my_id)
     local players = game.players or {}
-    local white, black = Game.player_name(players.white), Game.player_name(players.black)
+    local white, black = Game.player_name(players.white, s.anonymous), Game.player_name(players.black, s.anonymous)
     local on_white = player_id ~= nil and player_id_of(players.white) == player_id
     local on_black = player_id ~= nil and player_id_of(players.black) == player_id
     local mine = player_id ~= nil and player_id == my_id

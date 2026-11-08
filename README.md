@@ -38,7 +38,7 @@
 </table>
 
 - **Your choice on opening:** the first page asks whether to play online or offline, and Lichess is only contacted if you choose online. The time and the battery stay at the bottom of every screen.
-- **Play:** find an opponent in rapid and classical, by correspondence, challenge a friend (blitz or no time limit too) or play the Lichess computer. In a challenge, you can pick your color.
+- **Play:** find an opponent in rapid and classical, by correspondence, challenge a friend (blitz or no time limit too) or play the Lichess computer. In a challenge, you can pick your color. The challenges you sent wait beside the ones you received, and you can cancel them.
 - **Several games at once:** the list shows whose turn it is, with the games waiting for you on top. It refreshes at the interval you choose.
 - **During a game:** clocks, promotion, draw offers and draws by repetition, asking for a takeback, giving time, resigning and canceling. The list of moves is one tap away, here and in the other modes. When the game ends, play again. A dropped connection comes back by itself.
 - **Puzzles:** a pile stays on the device to solve without internet, and results go to Lichess when the Wi-Fi returns. Also puzzles by theme, your results and the daily puzzle.

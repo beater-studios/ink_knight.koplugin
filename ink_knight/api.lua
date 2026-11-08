@@ -361,6 +361,11 @@ function Api.is_incoming(challenge, my_id)
     return challenger ~= nil and my_id ~= nil and challenger:lower() ~= my_id:lower()
 end
 
+function Api.is_outgoing(challenge, my_id)
+    local challenger = challenge.challenger and challenge.challenger.id
+    return challenger ~= nil and my_id ~= nil and challenger:lower() == my_id:lower()
+end
+
 -- Lichess only sends a ready text for a clock, so the other two kinds need their own.
 function Api.time_control_text(control, no_limit, days_label)
     control = control or {}

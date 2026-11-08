@@ -9,6 +9,7 @@
 -- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide.
 -- "moves": number, white, black, white_current, black_current, white_callback, black_callback, as on a score sheet.
 -- focus, on any row: the page opens on the sheet that holds it.
+-- "buttons": items of { text, callback, primary }, side by side in equal parts, the text made smaller if it does not fit.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -34,7 +35,7 @@ local DISABLED = Blitbuffer.Color8(0x99)
 local HEADER_H, FOOTER_H, MARGIN = 66, 58, 16
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
 local MAX_FILL_EXTRA = 110
-local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48 }
+local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48, buttons = 80 }
 
 local Page = InputContainer:extend{
     name = "ink_knight_page",
@@ -215,6 +216,19 @@ function Page:paint_text(bb, text, name, size, x, y, w, h, align, color)
     widget:free()
 end
 
+-- The largest size, from size down to smallest, at which text fits in width, so a label is never cut.
+function Page:fitting_size(text, name, size, smallest, width)
+    for candidate = size, smallest + 1, -1 do
+        local widget = TextWidget:new{ text = text, face = face(name, candidate * self.scale) }
+        local fits = widget:getSize().w <= width
+        widget:free()
+        if fits then
+            return candidate
+        end
+    end
+    return smallest
+end
+
 function Page:add_hit(x, y, w, h, callback, keep_open)
     if callback then
         self.hits[#self.hits + 1] = { x = x, y = y, w = w, h = h, callback = callback, keep_open = keep_open }
@@ -309,6 +323,24 @@ function Page:paint_line(bb, row, y, h)
         end
         self:paint_text(bb, row.text, BOLD, 20, m, y + gap, self.width - 2 * m, bh, "center", solid and WHITE or (row.disabled and DISABLED or BLACK))
         self:add_hit(m, y + gap, self.width - 2 * m, bh, row.callback, row.keep_open)
+    elseif row.kind == "buttons" then
+        local gap = self:px(8)
+        local count = #row.items
+        local w = math.floor((self.width - 2 * m - gap * (count - 1)) / count)
+        local bh = h - 2 * gap
+        for index, item in ipairs(row.items) do
+            local x = m + (index - 1) * (w + gap)
+            local solid = item.primary and not item.disabled
+            if solid then
+                bb:paintRect(x, y + gap, w, bh, BLACK)
+            else
+                bb:paintBorder(x, y + gap, w, bh, self:px(2), item.disabled and LINE or BLACK)
+            end
+            local pad = self:px(10)
+            local size = self:fitting_size(item.text, BOLD, 20, 14, w - 2 * pad)
+            self:paint_text(bb, item.text, BOLD, size, x + pad, y + gap, w - 2 * pad, bh, "center", solid and WHITE or (item.disabled and DISABLED or BLACK))
+            self:add_hit(x, y + gap, w, bh, item.callback, item.keep_open)
+        end
     elseif row.kind == "moves" then
         local number_w, column_w = self:px(80), self:px(200)
         self:paint_text(bb, row.number, REGULAR, 18, m, y, number_w, h, "left", GRAY)

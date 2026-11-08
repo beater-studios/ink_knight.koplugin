@@ -132,7 +132,13 @@ function LiveGame:status_text()
 end
 
 function LiveGame:opponent_name()
-    return self.game.my_color == "b" and self.game.white_name or self.game.black_name or "?"
+    local name
+    if self.game.my_color == "b" then
+        name = self.game.white_name
+    else
+        name = self.game.black_name
+    end
+    return name or self.s.anonymous
 end
 
 function LiveGame:buttons()
@@ -213,10 +219,16 @@ end
 
 function LiveGame:player_info(color, now)
     local game = self.game
-    local name = color == "w" and game.white_name or game.black_name
+    -- Not "a and b or c": with no name for white, that would show black's name on white's bar.
+    local name
+    if color == "w" then
+        name = game.white_name
+    else
+        name = game.black_name
+    end
     local rating = game:rating_text(color)
     return {
-        name = (name or "?") .. (rating and (" (" .. rating .. ")") or ""),
+        name = (name or self.s.anonymous) .. (rating and (" (" .. rating .. ")") or ""),
         clock = game:clock_text(color, now),
         active = game:is_active() and game.position.turn == color,
     }

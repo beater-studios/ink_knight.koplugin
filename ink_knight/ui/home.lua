@@ -86,7 +86,7 @@ function Home:init()
     self.token_store = new_token_store()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/ink_knight.lua")
     self:apply_board_look()
-    self.games, self.challenges = {}, {}
+    self.games, self.challenges, self.sent = {}, {}, {}
     self.open_games = {}
     self.fetching_puzzles = {}
     self.pages = {}
@@ -245,6 +245,9 @@ function Home:open_events()
     if self.events or not self.net or self.suspended or self.token_rejected or not self:allows("events") then
         return
     end
+    -- Lichess sends every pending challenge when the stream opens, and what happened while it was closed, such as
+    -- a challenge declined during sleep, never comes. So the lists start over, and the hub redraws as they arrive.
+    self.challenges, self.sent = {}, {}
     self.events = self.net:stream(Api.stream_events(), function(line)
         local event = decode(line)
         if event then
@@ -267,6 +270,11 @@ function Home:on_event(event)
             self.open_on_start = false
             self:open_game(game.gameId)
         end
+        -- A game started from a challenge has the id of the challenge, so an accepted one leaves the list.
+        if game.gameId and self.sent[game.gameId] then
+            self.sent[game.gameId] = nil
+            self:refresh_list()
+        end
         self:reload_games()
     elseif event.type == "gameFinish" then
         self:reload_games()
@@ -274,6 +282,9 @@ function Home:on_event(event)
         local challenge = event.challenge or {}
         if challenge.id and Api.is_incoming(challenge, self.my_id) then
             self.challenges[challenge.id] = challenge
+            self:refresh_list()
+        elseif challenge.id and Api.is_outgoing(challenge, self.my_id) then
+            self.sent[challenge.id] = challenge
             self:refresh_list()
         end
     elseif event.type == "challengeCanceled" or event.type == "challengeDeclined" then
@@ -284,6 +295,13 @@ function Home:on_event(event)
                 self:refresh_list()
             elseif event.type == "challengeDeclined" then
                 self.open_on_start = false
+            end
+            if self.sent[challenge.id] then
+                self.sent[challenge.id] = nil
+                if event.type == "challengeDeclined" then
+                    self:info(string.format(self.strings.challenge_declined, self:challenge_target(challenge)), 5)
+                end
+                self:refresh_list()
             end
         end
     end
@@ -336,9 +354,10 @@ function Home:game_row(game)
     }
 end
 
-function Home:challenge_list()
+-- set: self.challenges, the ones received, by default, or self.sent.
+function Home:challenge_list(set)
     local list = {}
-    for _, challenge in pairs(self.challenges) do
+    for _, challenge in pairs(set or self.challenges) do
         list[#list + 1] = challenge
     end
     table.sort(list, function(a, b) return tostring(a.id) < tostring(b.id) end)
@@ -402,7 +421,7 @@ function Home:leave_online()
     self.account_problem, self.load_problem, self.updated_at = nil, nil, nil
     self.account_tried_at, self.games_at = nil, nil
     self.token_rejected = nil
-    self.games, self.challenges = {}, {}
+    self.games, self.challenges, self.sent = {}, {}, {}
     self.open_on_start = false
     self.seek_attempt = nil
 end
@@ -430,9 +449,17 @@ function Home:hub_rows()
     if not self:allows("play") then
         rows[#rows + 1] = { text = s.token_cannot_play, bold = true, callback = function() self:show_token_scopes() end }
     end
-    local challenges = self:challenge_list()
-    if #challenges > 0 then
-        rows[#rows + 1] = { kind = "primary", text = string.format(s.challenges, #challenges), callback = function() self:challenges_menu() end }
+    -- Received and sent share one line when both exist, so the games below keep their room.
+    local received, sent = #self:challenge_list(), #self:challenge_list(self.sent)
+    local challenge_buttons = {}
+    if received > 0 then
+        challenge_buttons[#challenge_buttons + 1] = { primary = true, text = string.format(s.challenges, received), callback = function() self:challenges_menu() end }
+    end
+    if sent > 0 then
+        challenge_buttons[#challenge_buttons + 1] = { text = string.format(s.sent_challenges, sent), callback = function() self:sent_menu() end }
+    end
+    if #challenge_buttons > 0 then
+        rows[#rows + 1] = { kind = "buttons", items = challenge_buttons }
     end
     local refreshed = not self.token_rejected and (self.load_problem and self:short_problem(self.load_problem) or (self.updated_at and string.format(s.updated_at, self.updated_at)))
     rows[#rows + 1] = { kind = "section", text = refreshed or s.your_games, action_text = s.refresh, action = function()
@@ -854,6 +881,62 @@ function Home:challenges_menu()
         end }
     end
     self:open_list(string.format(s.challenges, #rows), rows)
+end
+
+-- Who a challenge the reader sent goes to: a player, or anyone for an open challenge made on the site.
+function Home:challenge_target(challenge)
+    local dest = challenge.destUser
+    return dest and (dest.name or dest.id) or self.strings.challenge_anyone
+end
+
+-- The challenges the reader sent and nobody answered yet, including rematches, each one able to be canceled.
+-- A correspondence seek is not here: Lichess has no way to list or cancel one through the API.
+function Home:sent_menu()
+    local s = self.strings
+    local page, open = nil, true
+    page = self:open_page{ title = s.sent_challenges_title, on_closed = function() open = false end, build = function()
+        local rows = {}
+        for _, challenge in ipairs(self:challenge_list(self.sent)) do
+            local who = self:challenge_target(challenge)
+            local time = Api.time_control_text(challenge.timeControl, s.no_limit, function(days) return self:days_label(days) end)
+            rows[#rows + 1] = {
+                text = who, detail = challenge.rematchOf and string.format(s.challenge_row, time, s.rematch) or time,
+                callback = function() self:ask_cancel_challenge(challenge, who, function() if open then page:reload() end end) end,
+            }
+        end
+        if #rows == 0 then
+            rows[1] = { kind = "text", text = s.no_sent_challenges, center = true }
+        end
+        return rows
+    end }
+end
+
+-- after(): what to redraw once the challenge is gone.
+function Home:ask_cancel_challenge(challenge, who, after)
+    local s = self.strings
+    self:ask{
+        title = string.format(s.cancel_challenge_question, who),
+        ok_text = s.cancel_challenge,
+        cancel_text = s.back,
+        on_ok = function()
+            if not Api.is_safe_id(challenge.id) then
+                return
+            end
+            self:with_feature("play", function()
+                self.net:request(Api.cancel_challenge(challenge.id), function(status)
+                    -- 404: it was already answered or expired, so it is no longer pending either way.
+                    if status == 200 or status == 404 then
+                        self.sent[challenge.id] = nil
+                        self:info(status == 200 and s.challenge_canceled or s.challenge_gone)
+                        self:refresh_list()
+                        after()
+                    else
+                        self:info(self:error_text(status))
+                    end
+                end)
+            end)
+        end,
+    }
 end
 
 function Home:answer_challenge(challenge, who, time)
@@ -1281,7 +1364,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
                 local game = decode(line)
                 if game and game.moves and (game.variant == "standard" or game.variant == nil) then
                     local players = game.players or {}
-                    local white, black = Game.player_name(players.white), Game.player_name(players.black)
+                    local white, black = Game.player_name(players.white, s.anonymous), Game.player_name(players.black, s.anonymous)
                     local text, detail, on_black = Game.past_summary(s, game, player_id, self.my_id)
                     rows[#rows + 1] = {
                         kind = "game",

@@ -4,6 +4,8 @@
 
 - In a game without internet: choose your color, undo your last move and ask for a hint, which marks the best move found and plays it with a tap.
 - A list of the moves of the game, two to a row, in the offline game, in the online game and in the review, where a tap on a move goes to it.
+- The challenges you sent and nobody answered yet, rematches included, beside the ones you received, and each one can be canceled.
+- A player who is not signed in on Lichess is called anonymous instead of a question mark.
 
 ## [0.2.0]
 
