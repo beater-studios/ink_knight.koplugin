@@ -308,6 +308,41 @@ function Chess.targets_from(position, from)
     return targets
 end
 
+-- The moves of a game in the usual notation, with the number of the first move and whose move it was, read from
+-- the starting position. A move that does not fit the position ends the list there.
+-- Writing a move means listing the legal moves, slow on a Kindle, so cache, a table kept by the caller, holds what
+-- was written: a game that only grew since then costs only its new moves.
+function Chess.san_list(initial_fen, moves, cache)
+    cache = cache or {}
+    moves = tostring(moves or "")
+    local fen = (initial_fen == nil or initial_fen == "startpos") and Chess.START_FEN or initial_fen
+    local grew = cache.fen == fen and cache.position ~= nil
+        and (cache.moves == "" or moves == cache.moves or moves:sub(1, #cache.moves + 1) == cache.moves .. " ")
+    if not grew then
+        local position = Chess.parse_fen(fen)
+        if not position then
+            return {}, 1, "w"
+        end
+        cache.fen, cache.moves, cache.list, cache.position, cache.stopped = fen, "", {}, position, false
+        cache.first_number = tonumber(tostring(fen):match("%s(%d+)%s*$")) or 1
+        cache.first_turn = position.turn
+    end
+    if not cache.stopped then
+        for uci in moves:sub(#cache.moves + 1):gmatch("%S+") do
+            local position = cache.position
+            local move = Chess.parse_uci(position, uci)
+            if not move or not position.board[move.from] then
+                cache.stopped = true
+                break
+            end
+            cache.list[#cache.list + 1] = Chess.to_san(position, move)
+            cache.position = Chess.play(position, move)
+        end
+    end
+    cache.moves = moves
+    return cache.list, cache.first_number, cache.first_turn
+end
+
 -- The moves of a game from the start, without the last move color played and those after it, so it is color's
 -- turn again. nil when color has not played yet.
 function Chess.take_back(moves, color)

@@ -6,6 +6,7 @@ local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local Engine = require("ink_knight/engine")
 local Game = require("ink_knight/game")
+local MoveList = require("ink_knight/ui/move_list")
 
 local OfflineGame = {}
 OfflineGame.__index = OfflineGame
@@ -106,12 +107,15 @@ function OfflineGame:render(what)
     if self:can_undo() then
         buttons[#buttons + 1] = { id = "undo", label = s.undo }
     end
+    if not self:is_over() and self:can_hint() then
+        buttons[#buttons + 1] = { id = "hint", label = s.hint }
+    end
+    if self.moves ~= "" then
+        buttons[#buttons + 1] = { id = "moves", label = s.moves }
+    end
     if self:is_over() then
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
     else
-        if self:can_hint() then
-            buttons[#buttons + 1] = { id = "hint", label = s.hint }
-        end
         buttons[#buttons + 1] = { id = "resign", label = s.resign }
     end
     self.screen:show({
@@ -285,6 +289,9 @@ function OfflineGame:on_button(button)
         self:undo()
     elseif button == "hint" then
         self:hint()
+    elseif button == "moves" then
+        self.san_cache = self.san_cache or {}
+        MoveList.show(self.app, Chess.san_list(nil, self.moves, self.san_cache))
     elseif button == "again" then
         UIManager:close(self.screen)
         OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })

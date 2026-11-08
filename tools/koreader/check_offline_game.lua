@@ -1,4 +1,5 @@
--- Plays games against the offline engine on the real screens: choosing a color, taking back and asking for a hint.
+-- Plays games against the offline engine on the real screens: choosing a color, taking back, asking for a hint and
+-- the list of moves, also in a review.
 -- Usage: OUTPUT_DIR=<folder> KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_offline_game.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -79,7 +80,7 @@ do
     check(game.thinking, "the engine should think after the move")
     run_scheduled()
     check(count(game.moves) == 2, "the engine should answer, moves: " .. game.moves)
-    check(buttons(game) == "back undo hint resign", "after a move: " .. buttons(game))
+    check(buttons(game) == "back undo hint moves resign", "after a move: " .. buttons(game))
     game:on_button("undo")
     check(game.moves == "", "undo should take back the move and the answer, moves: " .. game.moves)
     check(game.position.turn == "w", "it should be white's turn again")
@@ -145,12 +146,77 @@ do
     local game = OfflineGame.open(home, { resume = true })
     check(game.color_choice == "white", "a saved game should keep the choice")
     check(game.ending == "mate", "the saved game should be over by mate")
-    check(buttons(game) == "back undo again", "after mate: " .. buttons(game))
+    check(buttons(game) == "back undo moves again", "after mate: " .. buttons(game))
     game:on_button("undo")
     check(game.moves == "f2f3 e7e5", "undo after mate should go back to white's last move, moves: " .. game.moves)
     check(game.ending == nil, "the game should go on after undo")
     UIManager:close(game.screen)
 end
+
+-- The move list: in an offline game it opens on the last move, and in a review a tap on a move goes to it.
+do
+    home.settings:delSetting("offline_game")
+    local game = OfflineGame.open(home, { level = 1, color_choice = "white" })
+    check(not buttons(game):find("moves", 1, true), "no list before the first move: " .. buttons(game))
+    play(game, "e2", "e4")
+    run_scheduled()
+    check(buttons(game):find("moves", 1, true), "the list should be offered after a move: " .. buttons(game))
+    game:on_button("moves")
+    local page = home.pages[#home.pages]
+    check(page and page.title == s.move_list_title, "the list should open")
+    check(page and page.lines[1].white == "e4" and page.lines[1].black ~= nil, "the first row should hold both moves")
+    page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/move_list_offline.png")
+    UIManager:close(page)
+    UIManager:close(game.screen)
+    home.settings:delSetting("offline_game")
+end
+
+do
+    local ReviewScreen = require("ink_knight/ui/review_screen")
+    math.randomseed(3)
+    local position = Chess.parse_fen(Chess.START_FEN)
+    local moves = {}
+    while #moves < 70 do
+        local legal = Chess.legal_moves(position)
+        if #legal == 0 then
+            break
+        end
+        local move = legal[math.random(#legal)]
+        moves[#moves + 1] = { uci = Chess.move_to_uci(move), san = Chess.to_san(position, move) }
+        position = Chess.play(position, move)
+        if Chess.ending(position) then
+            break
+        end
+    end
+    local review = ReviewScreen.open(home, { moves = moves, white = "A", black = "B" })
+    review:go(40)
+    review:show_moves()
+    local page = home.pages[#home.pages]
+    check(page and #page.sheets > 1, "a long game should take more than one sheet")
+    local current_sheet
+    for index, sheet in ipairs(page.sheets) do
+        for _, line in ipairs(sheet) do
+            if line.white_current or line.black_current then
+                current_sheet = index
+            end
+        end
+    end
+    check(current_sheet and page.sheet == current_sheet, "the list should open on the sheet of the move shown")
+    page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/move_list_review.png")
+    local target
+    for _, hit in ipairs(page.hits) do
+        if hit.y > 100 and not target then
+            target = hit
+        end
+    end
+    page:press(target)
+    check(review.index ~= 40, "a tap on a move should go to it, still at " .. review.index)
+    check(home.pages[#home.pages] ~= page, "the list should close after the tap")
+    UIManager:close(review.screen)
+end
+
 
 home.settings:delSetting("offline_game")
 UIManager:close(home)

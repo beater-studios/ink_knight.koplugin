@@ -5,6 +5,7 @@ local Analysis = require("ink_knight/analysis")
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
+local MoveList = require("ink_knight/ui/move_list")
 
 local ReviewScreen = {}
 ReviewScreen.__index = ReviewScreen
@@ -111,7 +112,10 @@ end
 
 function ReviewScreen:more_menu()
     local s, opts = self.s, self.opts
-    local rows = { { text = s.analysis, callback = function() self:show_analysis() end } }
+    local rows = {
+        { text = s.analysis, callback = function() self:show_analysis() end },
+        { text = s.moves, callback = function() self:show_moves() end },
+    }
     if opts.game_id then
         rows[#rows + 1] = {
             text = opts.bookmarked and s.bookmark_remove or s.bookmark_add,
@@ -119,6 +123,16 @@ function ReviewScreen:more_menu()
         }
     end
     self.app:choose(s.more, rows, { close_on_tap = true })
+end
+
+-- The moves already read for the board, with the one shown marked. A tap on a move goes to it. The notation comes
+-- with the game from Lichess, and is only written here for a move that lacks it.
+function ReviewScreen:show_moves()
+    local sans = {}
+    for index = 1, self.available do
+        sans[index] = self.game.moves[index].san or Chess.to_san(self.positions[index - 1], self.last_moves[index])
+    end
+    MoveList.show(self.app, sans, 1, "w", { current = self.index, on_pick = function(index) self:go(index) end })
 end
 
 function ReviewScreen:toggle_bookmark()

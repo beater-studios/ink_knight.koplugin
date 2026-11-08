@@ -7,6 +7,7 @@ local Awake = require("ink_knight/ui/awake")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
+local MoveList = require("ink_knight/ui/move_list")
 local Players = require("ink_knight/ui/players")
 
 local LiveGame = {}
@@ -150,6 +151,9 @@ function LiveGame:buttons()
         if game.opponent_id then
             list[#list + 1] = { id = "profile", label = s.view_profile }
         end
+        if game:move_count() > 0 then
+            list[#list + 1] = { id = "moves", label = s.moves }
+        end
         return list
     end
     if game:opponent_offers_draw() then
@@ -197,6 +201,9 @@ function LiveGame:actions()
     local opponent = game:opponent()
     if game:is_live() and opponent and not opponent.aiLevel then
         list[#list + 1] = { id = "give_time", label = string.format(s.give_time, Api.GIVE_TIME_SECONDS) }
+    end
+    if game:move_count() > 0 then
+        list[#list + 1] = { id = "moves", label = s.moves }
     end
     if game.opponent_id then
         list[#list + 1] = { id = "profile", label = s.view_profile }
@@ -369,6 +376,9 @@ function LiveGame:on_button(button)
         local game = self.game
         UIManager:close(self.screen)
         self.app:send_rematch(game, self:opponent_name())
+    elseif button == "moves" then
+        self.san_cache = self.san_cache or {}
+        MoveList.show(self.app, Chess.san_list(self.game.initial_fen, self.game.moves, self.san_cache))
     elseif button == "profile" then
         Players.show(self.app, self.game.opponent_id)
     elseif button == "draw_yes" then

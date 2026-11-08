@@ -7,6 +7,8 @@
 -- "tiles": columns, items of { text, detail, icon, callback }, and fill to grow into the room left on the page.
 -- disabled, on a row or a tile: shown in gray, and tapping it does nothing.
 -- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide.
+-- "moves": number, white, black, white_current, black_current, white_callback, black_callback, as on a score sheet.
+-- focus, on any row: the page opens on the sheet that holds it.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -32,7 +34,7 @@ local DISABLED = Blitbuffer.Color8(0x99)
 local HEADER_H, FOOTER_H, MARGIN = 66, 58, 16
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
 local MAX_FILL_EXTRA = 110
-local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190 }
+local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48 }
 
 local Page = InputContainer:extend{
     name = "ink_knight_page",
@@ -77,6 +79,13 @@ function Page:init()
     end
     self.sheet = 1
     self:reload(true)
+    for index, sheet in ipairs(self.sheets) do
+        for _, line in ipairs(sheet) do
+            if line.focus then
+                self.sheet = index
+            end
+        end
+    end
 end
 
 function Page:px(value)
@@ -300,6 +309,22 @@ function Page:paint_line(bb, row, y, h)
         end
         self:paint_text(bb, row.text, BOLD, 20, m, y + gap, self.width - 2 * m, bh, "center", solid and WHITE or (row.disabled and DISABLED or BLACK))
         self:add_hit(m, y + gap, self.width - 2 * m, bh, row.callback, row.keep_open)
+    elseif row.kind == "moves" then
+        local number_w, column_w = self:px(80), self:px(200)
+        self:paint_text(bb, row.number, REGULAR, 18, m, y, number_w, h, "left", GRAY)
+        for index, side in ipairs({ "white", "black" }) do
+            local x = m + number_w + (index - 1) * column_w
+            local text = row[side]
+            if text then
+                local current = row[side .. "_current"]
+                if current then
+                    bb:paintRect(x, y + self:px(6), column_w - self:px(12), h - self:px(12), BLACK)
+                end
+                self:paint_text(bb, text, BOLD, 20, x + self:px(10), y, column_w - self:px(32), h, "left", current and WHITE or BLACK)
+                self:add_hit(x, y, column_w, h, row[side .. "_callback"])
+            end
+        end
+        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
     elseif row.kind == "stat" then
         self:paint_text(bb, row.text, REGULAR, 18, m, y, self.width - 2 * m - self:px(180), h, "left")
         self:paint_text(bb, row.value, BOLD, 18, self.width - m - self:px(180), y, self:px(180), h, "right")
