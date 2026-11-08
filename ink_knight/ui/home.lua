@@ -1089,6 +1089,12 @@ function Home:offline_rows(page)
             OfflineGame.open(self, { resume = true })
         end }
     end
+    if self.settings:readSetting("two_player_game") then
+        rows[#rows + 1] = { kind = "secondary", text = s.resume_two_players, callback = function()
+            self:close_pages()
+            OfflineGame.open(self, { resume = true, two_players = true })
+        end }
+    end
     rows[#rows + 1] = { kind = "section", text = s.new_game }
     local items = {}
     for level = 1, 4 do
@@ -1100,6 +1106,10 @@ function Home:offline_rows(page)
         end }
     end
     rows[#rows + 1] = { kind = "tiles", columns = 4, items = items }
+    rows[#rows + 1] = { text = s.two_players, detail = s.two_players_detail, callback = function()
+        self:close_pages()
+        OfflineGame.open(self, { two_players = true })
+    end }
     local saved_puzzles = #self:puzzle_pile()
     if saved_puzzles > 0 then
         rows[#rows + 1] = { kind = "section", text = s.puzzles }

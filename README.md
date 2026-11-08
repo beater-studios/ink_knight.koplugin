@@ -44,7 +44,7 @@
 - **Puzzles:** a pile stays on the device to solve without internet, and results go to Lichess when the Wi-Fi returns. Also puzzles by theme, your results and the daily puzzle.
 - **Review:** your past games and favorites, move by move, with what Lichess knows about each position: its evaluation, the most played moves and, near the end, the perfect result.
 - **Players:** search by name, see who you follow is online, profiles, a rating chart with statistics, and your record against someone.
-- **Without internet:** play a small engine that never freezes the screen, with your choice of color, undo and hints, and continue the game later.
+- **Without internet:** play a small engine that never freezes the screen, with your choice of color, undo and hints, and continue the game later. Or play against someone else on the same device.
 - **Your board:** five board styles, including the hatched squares of printed diagrams, three piece sets and coordinates on the edges.
 
 ## Installation

@@ -1,5 +1,5 @@
--- Plays games against the offline engine on the real screens: choosing a color, taking back, asking for a hint and
--- the list of moves, also in a review.
+-- Plays games without internet on the real screens: against the engine, choosing a color, taking back and asking for
+-- a hint; between two people on the same device; and the list of moves, also in a review.
 -- Usage: OUTPUT_DIR=<folder> KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_offline_game.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -151,6 +151,69 @@ do
     check(game.moves == "f2f3 e7e5", "undo after mate should go back to white's last move, moves: " .. game.moves)
     check(game.ending == nil, "the game should go on after undo")
     UIManager:close(game.screen)
+end
+
+-- Two people on the same device: whoever is to move plays, undo takes back one move, the board turns when asked, and
+-- the game is kept apart from the one against the engine.
+do
+    home.settings:delSetting("two_player_game")
+    home.settings:saveSetting("offline_game", { level = 3, my_color = "w", color_choice = "white", moves = "e2e4" })
+    local game = OfflineGame.open(home, { two_players = true })
+    run_scheduled()
+    check(game.screen.state.status == s.local_turn_w, "white should start: " .. tostring(game.screen.state.status))
+    check(buttons(game) == "back flip resign", "two players at the start: " .. buttons(game))
+    check(game.screen.state.bottom.name == s.color_white and game.screen.state.top.name == s.color_black, "white below, black above")
+    play(game, "e2", "e4")
+    run_scheduled()
+    check(game.moves == "e2e4" and not game.thinking, "no engine should answer, moves: " .. game.moves)
+    check(game.screen.state.status == s.local_turn_b, "then black: " .. tostring(game.screen.state.status))
+    play(game, "e7", "e5")
+    check(game.moves == "e2e4 e7e5", "black should play from the same device, moves: " .. game.moves)
+    check(buttons(game) == "back undo moves flip resign", "two players after moves: " .. buttons(game))
+    game:on_button("undo")
+    check(game.moves == "e2e4", "undo should take back one move, moves: " .. game.moves)
+    game:on_button("flip")
+    check(game.flipped and game.screen.state.flipped, "flip should turn the board")
+    check(game.screen.state.bottom.name == s.color_black, "after flipping, black is below")
+    local saved = home.settings:readSetting("two_player_game")
+    check(saved and saved.flipped == true and saved.moves == "e2e4", "the game and the way it faces should be saved")
+    local engine_game = home.settings:readSetting("offline_game")
+    check(engine_game and engine_game.level == 3 and engine_game.moves == "e2e4", "the game against the engine should be untouched")
+    UIManager:close(game.screen)
+
+    game = OfflineGame.open(home, { two_players = true, resume = true })
+    check(game.flipped and game.moves == "e2e4", "resuming should keep the moves and the way it faces")
+    UIManager:close(game.screen)
+
+    -- A mate names the winner, and the finished game is no longer kept.
+    game = OfflineGame.open(home, { two_players = true })
+    play(game, "f2", "f3")
+    play(game, "e7", "e5")
+    play(game, "g2", "g4")
+    play(game, "d8", "h4")
+    check(game.ending == "mate" and game.screen.state.status == s.local_mate_b, "black should win by mate: " .. tostring(game.screen.state.status))
+    check(buttons(game) == "back undo moves flip again", "after mate: " .. buttons(game))
+    check(home.settings:readSetting("two_player_game") == nil, "a finished game should not be kept")
+    game.screen:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/two_players_mate.png")
+    UIManager:close(game.screen)
+
+    -- Resigning is for the side to move, and names the other one as the winner.
+    game = OfflineGame.open(home, { two_players = true })
+    play(game, "d2", "d4")
+    game:on_button("resign")
+    local question = home.pages[#home.pages]
+    check(question and question.title == s.local_resign_question_b, "it should ask black, the side to move")
+    for _, line in ipairs(question.lines) do
+        if line.kind == "primary" then
+            UIManager:close(question)
+            line.callback()
+        end
+    end
+    check(game.screen.state.status == s.local_resigned_b, "black resigned: " .. tostring(game.screen.state.status))
+    check(not buttons(game):find("undo", 1, true), "no undo after resigning: " .. buttons(game))
+    UIManager:close(game.screen)
+    home.settings:delSetting("offline_game")
 end
 
 -- The move list: in an offline game it opens on the last move, and in a review a tap on a move goes to it.

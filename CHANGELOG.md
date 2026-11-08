@@ -6,6 +6,7 @@
 - A list of the moves of the game, two to a row, in the offline game, in the online game and in the review, where a tap on a move goes to it.
 - The challenges you sent and nobody answered yet, rematches included, beside the ones you received, and each one can be canceled.
 - A player who is not signed in on Lichess is called anonymous instead of a question mark.
+- A game between two people on the same device, taking turns, with undo, the list of moves and a button to turn the board.
 
 ## [0.2.0]
 

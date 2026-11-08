@@ -1,4 +1,5 @@
--- A game against the small engine, with no network. It is saved after each move, so it can be continued later.
+-- A game with no network, against the small engine or between two people taking turns on the same device. It is
+-- saved after each move, each kind under its own key, so it can be continued later.
 local UIManager = require("ui/uimanager")
 local socket = require("socket")
 
@@ -17,18 +18,26 @@ local SLICE_PAUSE = 0.02
 
 function OfflineGame.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings }, OfflineGame)
-    local saved = opts.resume and app.settings:readSetting("offline_game")
-    self.level = saved and saved.level or opts.level or 1
-    -- "random", "white" or "black": kept for the next game, so playing again keeps the choice.
-    self.color_choice = saved and saved.color_choice or opts.color_choice or "random"
-    local chosen = self.color_choice == "white" and "w" or self.color_choice == "black" and "b" or nil
-    self.my_color = saved and saved.my_color or chosen or (math.random(2) == 1 and "w" or "b")
+    self.two_players = opts.two_players == true
+    self.save_key = self.two_players and "two_player_game" or "offline_game"
+    local saved = opts.resume and app.settings:readSetting(self.save_key)
+    if self.two_players then
+        -- No side is the reader's: whoever is to move plays, and the board turns only when asked.
+        self.flipped = saved and saved.flipped or false
+    else
+        self.level = saved and saved.level or opts.level or 1
+        -- "random", "white" or "black": kept for the next game, so playing again keeps the choice.
+        self.color_choice = saved and saved.color_choice or opts.color_choice or "random"
+        local chosen = self.color_choice == "white" and "w" or self.color_choice == "black" and "b" or nil
+        self.my_color = saved and saved.my_color or chosen or (math.random(2) == 1 and "w" or "b")
+        self.flipped = self.my_color == "b"
+    end
     self.moves = saved and saved.moves or ""
     self.position, self.last_move = Chess.from_moves(nil, self.moves)
     self.seen = {}
     self:count_positions()
     self.screen = BoardScreen:new{
-        state = { flipped = self.my_color == "b" },
+        state = { flipped = self.flipped },
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() self:closed() end,
@@ -53,9 +62,11 @@ end
 
 function OfflineGame:save()
     if self:is_over() then
-        self.app.settings:delSetting("offline_game")
+        self.app.settings:delSetting(self.save_key)
+    elseif self.two_players then
+        self.app.settings:saveSetting(self.save_key, { flipped = self.flipped, moves = self.moves })
     else
-        self.app.settings:saveSetting("offline_game", { level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
+        self.app.settings:saveSetting(self.save_key, { level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
     end
     self.app.settings:flush()
 end
@@ -70,13 +81,20 @@ end
 
 function OfflineGame:status_text()
     local s = self.s
+    local turn = self.position.turn
     if self.resigned then
-        return s.ending_loss_resign
+        return self.two_players and s["local_resigned_" .. self.resigned_color] or s.ending_loss_resign
     end
     if self.ending == "mate" then
-        return self.position.turn == self.my_color and s.ending_loss_mate or s.ending_win_mate
+        if self.two_players then
+            return s["local_mate_" .. (turn == "w" and "b" or "w")]
+        end
+        return turn == self.my_color and s.ending_loss_mate or s.ending_win_mate
     elseif self.ending then
         return s[Game.ending_key("draw", self.ending)]
+    end
+    if self.two_players then
+        return s[(Chess.in_check(self.position) and "local_check_" or "local_turn_") .. turn]
     end
     if self.thinking then
         return s.status_thinking
@@ -93,12 +111,24 @@ function OfflineGame:status_text()
     return s.status_your_turn
 end
 
+-- The moves after undo: the last one alone between two people, or back to the reader's last move against the engine.
+function OfflineGame:moves_after_undo()
+    if self.resigned then
+        return nil
+    end
+    if self.two_players then
+        return self.moves ~= "" and (self.moves:match("^(.*)%s+%S+$") or "") or nil
+    end
+    return Chess.take_back(self.moves, self.my_color)
+end
+
 function OfflineGame:can_undo()
-    return not self.resigned and Chess.take_back(self.moves, self.my_color) ~= nil
+    return self:moves_after_undo() ~= nil
 end
 
 function OfflineGame:can_hint()
-    return not self:is_over() and not self.thinking and not self.hinting and self.position.turn == self.my_color
+    return not self.two_players and not self:is_over() and not self.thinking and not self.hinting
+        and self.position.turn == self.my_color
 end
 
 function OfflineGame:render(what)
@@ -113,19 +143,29 @@ function OfflineGame:render(what)
     if self.moves ~= "" then
         buttons[#buttons + 1] = { id = "moves", label = s.moves }
     end
+    if self.two_players then
+        buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
+    end
     if self:is_over() then
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
     else
         buttons[#buttons + 1] = { id = "resign", label = s.resign }
     end
+    local top, bottom = { name = string.format(s.offline_level, self.level or 1) }, { name = s.you }
+    if self.two_players then
+        top, bottom = { name = s.color_black }, { name = s.color_white }
+        if self.flipped then
+            top, bottom = bottom, top
+        end
+    end
     self.screen:show({
-        flipped = self.my_color == "b",
+        flipped = self.flipped,
         position = self.position,
         last_move = self.last_move,
         selected = self.selected,
         targets = self.targets,
-        top = { name = string.format(s.offline_level, self.level) },
-        bottom = { name = s.you },
+        top = top,
+        bottom = bottom,
         status = self:status_text(),
         buttons = buttons,
     }, what)
@@ -185,7 +225,7 @@ function OfflineGame:stop_search()
 end
 
 function OfflineGame:maybe_think()
-    if self:is_over() or self.position.turn == self.my_color or self.thinking then
+    if self.two_players or self:is_over() or self.position.turn == self.my_color or self.thinking then
         return
     end
     self.thinking = true
@@ -221,8 +261,8 @@ end
 
 -- Back to the reader's last move: the computer's answer to it goes too, and so does a search under way.
 function OfflineGame:undo()
-    local moves = Chess.take_back(self.moves, self.my_color)
-    if not moves or self.resigned then
+    local moves = self:moves_after_undo()
+    if not moves then
         return
     end
     self:stop_search()
@@ -236,7 +276,9 @@ function OfflineGame:undo()
 end
 
 function OfflineGame:on_square(square)
-    if self:is_over() or self.thinking or self.hinting or self.position.turn ~= self.my_color then
+    -- Between two people, whoever is to move plays.
+    local mover = self.two_players and self.position.turn or self.my_color
+    if self:is_over() or self.thinking or self.hinting or self.position.turn ~= mover then
         return
     end
     self.hint_text = nil
@@ -253,7 +295,7 @@ function OfflineGame:on_square(square)
         return
     end
     local piece = self.position.board[square]
-    if piece and (piece == piece:upper()) == (self.my_color == "w") then
+    if piece and (piece == piece:upper()) == (mover == "w") then
         self.selected = square
         self.targets = Chess.targets_from(self.position, square)
     else
@@ -274,11 +316,13 @@ function OfflineGame:on_button(button)
     if button == "back" then
         UIManager:close(self.screen)
     elseif button == "resign" then
+        local turn = self.position.turn
         self.app:ask{
-            title = self.s.resign_question,
+            title = self.two_players and self.s["local_resign_question_" .. turn] or self.s.resign_question,
             ok_text = self.s.resign,
             on_ok = function()
                 self.resigned = true
+                self.resigned_color = turn
                 self:stop_search()
                 self.selected, self.targets, self.hint_text = nil, nil, nil
                 self:save()
@@ -289,12 +333,21 @@ function OfflineGame:on_button(button)
         self:undo()
     elseif button == "hint" then
         self:hint()
+    elseif button == "flip" then
+        self.flipped = not self.flipped
+        self.selected, self.targets = nil, nil
+        self:save()
+        self:render()
     elseif button == "moves" then
         self.san_cache = self.san_cache or {}
         MoveList.show(self.app, Chess.san_list(nil, self.moves, self.san_cache))
     elseif button == "again" then
         UIManager:close(self.screen)
-        OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })
+        if self.two_players then
+            OfflineGame.open(self.app, { two_players = true })
+        else
+            OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })
+        end
     end
 end
 
