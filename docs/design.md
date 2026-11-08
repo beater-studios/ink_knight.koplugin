@@ -137,7 +137,7 @@ ink_knight.koplugin/
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_offline_game.lua` plays offline games on the real screens: choosing a color, undo, also while the engine thinks and after a mate, and a hint played with a tap, plus the list of moves offline and in a long review, where it opens on the right sheet and a tap goes to the move.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_challenges.lua` goes through the challenges sent, with invented answers and no network: the buttons beside the received ones in the three languages, canceling, a challenge already gone, and one declined or accepted.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_puzzle_review.lua` goes through reviewing missed puzzles with invented answers and no network: the list, fetching what is missing, solving one, a puzzle Lichess no longer lists, and the pile kept for when there is no connection.
-  - `OUTPUT_DIR=docs/screenshots tools/koreader/run_headless.sh tools/koreader/render_readme_screens.lua` draws the README images with invented players.
+  - `OUTPUT_DIR=docs/screenshots tools/koreader/run_headless.sh tools/koreader/render_readme_screens.lua` draws the README images with invented players: the first page, your games with challenges, a game on the newspaper board, a puzzle, the board styles, the list of moves, a hint offline and two players, in English and Portuguese.
 - `KOREADER_DIR=<desktop KOReader> python3 -I tools/make_brand_art.py` draws the icon, the banner and the social preview from the README images, with the knight of FreeSerif and no Lichess artwork.
 - `tools/package.sh` builds the zip and the checksum, only with what the plugin uses.
 

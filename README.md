@@ -31,9 +31,15 @@
 <table>
   <tr>
     <td width="25%" align="center"><img src="docs/screenshots/start.png" alt="First page, with play online and play offline"><br><sub><b>First page</b></sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/games.png" alt="List of games, with those waiting for you on top"><br><sub><b>Your games</b></sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/game.png" alt="A game in progress, with clocks and a selected piece"><br><sub><b>Playing</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/games.png" alt="Your games, with the challenges received and sent above them"><br><sub><b>Your games</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/game.png" alt="A game in progress on the newspaper board, with Merida pieces, coordinates and clocks"><br><sub><b>Playing</b></sub></td>
     <td width="25%" align="center"><img src="docs/screenshots/puzzle.png" alt="A puzzle waiting for the best move"><br><sub><b>Puzzles</b></sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center"><img src="docs/screenshots/styles.png" alt="Choosing a board style, with a sample of each one"><br><sub><b>Board styles</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/moves.png" alt="The moves of a game, two to a row, with the one shown marked"><br><sub><b>List of moves</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/hint.png" alt="A game against the offline engine, with a suggested move marked"><br><sub><b>Hint, offline</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/two_players.png" alt="A game between two people on the same device"><br><sub><b>Two players</b></sub></td>
   </tr>
 </table>
 

@@ -23,9 +23,15 @@
 <table>
   <tr>
     <td width="25%" align="center"><img src="docs/screenshots/pt/start.png" alt="Primeira tela, com jogar online e jogar offline"><br><sub><b>Primeira tela</b></sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/pt/games.png" alt="Lista de partidas, com as que aguardam você no topo"><br><sub><b>Suas partidas</b></sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/pt/game.png" alt="Uma partida em andamento, com relógios e uma peça selecionada"><br><sub><b>Jogando</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/games.png" alt="Suas partidas, com os desafios recebidos e enviados acima delas"><br><sub><b>Suas partidas</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/game.png" alt="Uma partida em andamento no tabuleiro Jornal, com peças Merida, coordenadas e relógios"><br><sub><b>Jogando</b></sub></td>
     <td width="25%" align="center"><img src="docs/screenshots/pt/puzzle.png" alt="Uma tática aguardando o melhor lance"><br><sub><b>Táticas</b></sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/styles.png" alt="Escolha do estilo do tabuleiro, com uma amostra de cada um"><br><sub><b>Estilos</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/moves.png" alt="Os lances de uma partida, dois por linha, com o mostrado em destaque"><br><sub><b>Lista de lances</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/hint.png" alt="Uma partida contra o motor offline, com um lance sugerido marcado"><br><sub><b>Dica offline</b></sub></td>
+    <td width="25%" align="center"><img src="docs/screenshots/pt/two_players.png" alt="Uma partida entre duas pessoas no mesmo aparelho"><br><sub><b>Duas pessoas</b></sub></td>
   </tr>
 </table>
 
