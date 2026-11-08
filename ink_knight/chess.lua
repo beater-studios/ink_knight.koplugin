@@ -308,6 +308,22 @@ function Chess.targets_from(position, from)
     return targets
 end
 
+-- The moves of a game from the start, without the last move color played and those after it, so it is color's
+-- turn again. nil when color has not played yet.
+function Chess.take_back(moves, color)
+    local list = {}
+    for uci in moves:gmatch("%S+") do
+        list[#list + 1] = uci
+    end
+    local parity = color == "w" and 1 or 0
+    for index = #list, 1, -1 do
+        if index % 2 == parity then
+            return table.concat(list, " ", 1, index - 1)
+        end
+    end
+    return nil
+end
+
 function Chess.move_to_uci(move)
     return Chess.square_name(move.from) .. Chess.square_name(move.to) .. (move.promotion or "")
 end

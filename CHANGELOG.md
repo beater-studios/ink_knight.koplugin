@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- In a game without internet: choose your color, undo your last move and ask for a hint, which marks the best move found and plays it with a tap.
+
 ## [0.2.0]
 
 - Board styles: plain, newspaper (hatched dark squares like printed diagrams), crosshatch, dotted and contrast.

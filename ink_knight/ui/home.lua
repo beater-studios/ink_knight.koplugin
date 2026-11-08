@@ -1010,8 +1010,10 @@ function Home:offline_rows(page)
     local items = {}
     for level = 1, 4 do
         items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
-            self:close_pages()
-            OfflineGame.open(self, { level = level })
+            self:ask_color(function(color)
+                self:close_pages()
+                OfflineGame.open(self, { level = level, color_choice = color })
+            end)
         end }
     end
     rows[#rows + 1] = { kind = "tiles", columns = 4, items = items }

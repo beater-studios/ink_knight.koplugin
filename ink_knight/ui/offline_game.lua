@@ -18,7 +18,10 @@ function OfflineGame.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings }, OfflineGame)
     local saved = opts.resume and app.settings:readSetting("offline_game")
     self.level = saved and saved.level or opts.level or 1
-    self.my_color = saved and saved.my_color or opts.my_color or (math.random(2) == 1 and "w" or "b")
+    -- "random", "white" or "black": kept for the next game, so playing again keeps the choice.
+    self.color_choice = saved and saved.color_choice or opts.color_choice or "random"
+    local chosen = self.color_choice == "white" and "w" or self.color_choice == "black" and "b" or nil
+    self.my_color = saved and saved.my_color or chosen or (math.random(2) == 1 and "w" or "b")
     self.moves = saved and saved.moves or ""
     self.position, self.last_move = Chess.from_moves(nil, self.moves)
     self.seen = {}
@@ -51,7 +54,7 @@ function OfflineGame:save()
     if self:is_over() then
         self.app.settings:delSetting("offline_game")
     else
-        self.app.settings:saveSetting("offline_game", { level = self.level, my_color = self.my_color, moves = self.moves })
+        self.app.settings:saveSetting("offline_game", { level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
     end
     self.app.settings:flush()
 end
@@ -77,18 +80,38 @@ function OfflineGame:status_text()
     if self.thinking then
         return s.status_thinking
     end
+    if self.hinting then
+        return s.hint_thinking
+    end
+    if self.hint_text then
+        return self.hint_text
+    end
     if Chess.in_check(self.position) then
         return s.status_check
     end
     return s.status_your_turn
 end
 
+function OfflineGame:can_undo()
+    return not self.resigned and Chess.take_back(self.moves, self.my_color) ~= nil
+end
+
+function OfflineGame:can_hint()
+    return not self:is_over() and not self.thinking and not self.hinting and self.position.turn == self.my_color
+end
+
 function OfflineGame:render(what)
     local s = self.s
     local buttons = { { id = "back", label = s.back } }
+    if self:can_undo() then
+        buttons[#buttons + 1] = { id = "undo", label = s.undo }
+    end
     if self:is_over() then
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
     else
+        if self:can_hint() then
+            buttons[#buttons + 1] = { id = "hint", label = s.hint }
+        end
         buttons[#buttons + 1] = { id = "resign", label = s.resign }
     end
     self.screen:show({
@@ -119,21 +142,20 @@ function OfflineGame:apply(move)
     self:save()
 end
 
-function OfflineGame:maybe_think()
-    if self:is_over() or self.position.turn == self.my_color or self.thinking then
-        return
-    end
-    self.thinking = true
-    self:render()
+-- Runs a search a slice at a time, so the screen keeps answering. Whoever replaces or clears self.search cancels
+-- it, and then on_done is not called. A game that ended meanwhile gets on_done(nil).
+function OfflineGame:run_search(opts, on_done)
     -- os.time() only counts whole seconds, which would cut up to a second from each level's time to think.
-    local search = Engine.search(self.position, { level = self.level, now = socket.gettime })
+    opts.now = socket.gettime
+    local search = Engine.search(self.position, opts)
     self.search = search
     local function work()
-        -- A resignation or a new game ends this search, and its move must not land on the board.
-        if self.is_closed or self.search ~= search or self:is_over() then
-            if self.search == search then
-                self.search, self.thinking = nil, false
-            end
+        if self.is_closed or self.search ~= search then
+            return
+        end
+        if self:is_over() then
+            self.search = nil
+            on_done(nil)
             return
         end
         local until_time = os.clock() + SLICE_SECONDS
@@ -143,11 +165,8 @@ function OfflineGame:maybe_think()
                 error(result)
             end
             if coroutine.status(search) == "dead" then
-                self.search, self.thinking = nil, false
-                if result then
-                    self:apply(result)
-                end
-                self:render()
+                self.search = nil
+                on_done(result)
                 return
             end
         end
@@ -156,10 +175,67 @@ function OfflineGame:maybe_think()
     UIManager:scheduleIn(SLICE_PAUSE, work)
 end
 
-function OfflineGame:on_square(square)
-    if self:is_over() or self.thinking or self.position.turn ~= self.my_color then
+-- Stops the computer or a hint, so nothing found for a position that is gone lands on the board.
+function OfflineGame:stop_search()
+    self.search, self.thinking, self.hinting = nil, false, false
+end
+
+function OfflineGame:maybe_think()
+    if self:is_over() or self.position.turn == self.my_color or self.thinking then
         return
     end
+    self.thinking = true
+    self:render()
+    self:run_search({ level = self.level }, function(move)
+        self.thinking = false
+        if move then
+            self:apply(move)
+        end
+        self:render()
+    end)
+end
+
+-- Marks the piece and its square, so a tap on the square plays it, and names the move below the board.
+function OfflineGame:hint()
+    if not self:can_hint() then
+        return
+    end
+    local position = self.position
+    self.hinting = true
+    self.selected, self.targets, self.hint_text = nil, nil, nil
+    self:render()
+    self:run_search({ limits = Engine.HINT }, function(move)
+        self.hinting = false
+        if move and self.position == position then
+            self.selected = move.from
+            self.targets = { [move.to] = Chess.targets_from(position, move.from)[move.to] }
+            self.hint_text = string.format(self.s.hint_status, Chess.to_san(position, move))
+        end
+        self:render()
+    end)
+end
+
+-- Back to the reader's last move: the computer's answer to it goes too, and so does a search under way.
+function OfflineGame:undo()
+    local moves = Chess.take_back(self.moves, self.my_color)
+    if not moves or self.resigned then
+        return
+    end
+    self:stop_search()
+    self.moves = moves
+    self.position, self.last_move = Chess.from_moves(nil, moves)
+    self:count_positions()
+    self:check_end()
+    self.selected, self.targets, self.hint_text = nil, nil, nil
+    self:save()
+    self:render()
+end
+
+function OfflineGame:on_square(square)
+    if self:is_over() or self.thinking or self.hinting or self.position.turn ~= self.my_color then
+        return
+    end
+    self.hint_text = nil
     if self.targets and self.targets[square] then
         local moves = self.targets[square]
         self.selected, self.targets = nil, nil
@@ -199,15 +275,19 @@ function OfflineGame:on_button(button)
             ok_text = self.s.resign,
             on_ok = function()
                 self.resigned = true
-                self.search, self.thinking = nil, false
-                self.selected, self.targets = nil, nil
+                self:stop_search()
+                self.selected, self.targets, self.hint_text = nil, nil, nil
                 self:save()
                 self:render()
             end,
         }
+    elseif button == "undo" then
+        self:undo()
+    elseif button == "hint" then
+        self:hint()
     elseif button == "again" then
         UIManager:close(self.screen)
-        OfflineGame.open(self.app, { level = self.level })
+        OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })
     end
 end
 

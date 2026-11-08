@@ -13,6 +13,8 @@ Engine.LEVELS = {
     { seconds = 4, depth = 3, noise = 10 },
     { seconds = 8, depth = 4, noise = 0 },
 }
+-- A suggestion for the reader: no noise, so it is the best move found, and short enough to wait for.
+Engine.HINT = { seconds = 3, depth = 3, noise = 0 }
 
 local function file_rank(square)
     return (square - 1) % 8 + 1, math.floor((square - 1) / 8) + 1
@@ -57,9 +59,10 @@ local function ordered(position, moves)
 end
 
 -- Returns a search that advances a little at each resume, and gives the move at the end.
--- opts: level (1 to 4), now() for the time, random(n) for the noise, nodes_per_slice.
+-- opts: level (1 to 4) or limits (a table like those in LEVELS), now() for the time, random(n) for the noise,
+-- nodes_per_slice.
 function Engine.search(position, opts)
-    local level = Engine.LEVELS[opts.level] or Engine.LEVELS[1]
+    local level = opts.limits or Engine.LEVELS[opts.level] or Engine.LEVELS[1]
     local now = opts.now or os.time
     local random = opts.random or math.random
     local per_slice = opts.nodes_per_slice or 60

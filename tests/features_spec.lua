@@ -111,6 +111,31 @@ local function run_search(position, level, random)
     end
 end
 
+test("taking back goes to the last move of a color, with what came after it", function()
+    eq(Chess.take_back("e2e4 e7e5 g1f3 b8c6", "w"), "e2e4 e7e5")
+    eq(Chess.take_back("e2e4 e7e5 g1f3", "w"), "e2e4 e7e5")
+    eq(Chess.take_back("e2e4 e7e5 g1f3 b8c6", "b"), "e2e4 e7e5 g1f3")
+    eq(Chess.take_back("e2e4", "w"), "")
+    eq(Chess.take_back("e2e4", "b"), nil)
+    eq(Chess.take_back("", "w"), nil)
+end)
+
+test("a hint is the best move found, with no noise", function()
+    local function hint(fen)
+        local search = Engine.search(pos(fen), { limits = Engine.HINT, now = function() return 0 end, random = function(n) return n end })
+        while true do
+            local ok, result = coroutine.resume(search)
+            assert(ok, result)
+            if coroutine.status(search) == "dead" then
+                return result
+            end
+        end
+    end
+    eq(Engine.HINT.noise, 0)
+    eq(Chess.move_to_uci(hint("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1")), "a1a8")
+    eq(Chess.move_to_uci(hint("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1")), "e4d5")
+end)
+
 test("the engine works in slices", function()
     local move, slices = run_search(pos(Chess.START_FEN), 3, function() return 1 end)
     assert(move)

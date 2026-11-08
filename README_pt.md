@@ -36,7 +36,7 @@
 - **Táticas:** um lote fica guardado no aparelho para resolver sem internet, e os resultados vão para o Lichess quando o Wi-Fi voltar. Também tem táticas por tema, seus resultados e a tática do dia.
 - **Rever:** suas partidas anteriores e favoritas, lance a lance, com o que o Lichess sabe de cada posição: a avaliação, os lances mais jogados e, perto do fim, o resultado com jogo perfeito.
 - **Jogadores:** busca por nome, quem você segue e está online, perfis, gráfico de rating com estatísticas e o seu histórico contra alguém.
-- **Offline:** jogue contra um motor pequeno, que nunca trava a tela, e continue a partida depois.
+- **Offline:** jogue contra um motor pequeno, que nunca trava a tela, com escolha de cor, desfazer lance e dicas, e continue a partida depois.
 - **Seu tabuleiro:** cinco estilos de tabuleiro, incluindo as casas hachuradas dos diagramas impressos, três conjuntos de peças e coordenadas nas bordas.
 
 ## Instalação

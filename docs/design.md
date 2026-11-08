@@ -77,7 +77,7 @@ A batch of 15 is saved in `settings/ink_knight.lua`, and another is asked for wh
 
 ## Offline engine
 
-`engine.lua` is a negamax with alpha-beta and iterative deepening, valued by material with small rewards for the center and for advancing pawns. It is a coroutine: `offline_game` runs it for 40 ms at a time and gives the screen its turn, which is what froze the screen in earlier clients. Each of the 4 levels has a time limit, a depth and an amount of noise, and noise never throws away a forced mate. The game is saved after each move, and draws by repetition, the fifty-move rule and insufficient material are checked here, since no server does it.
+`engine.lua` is a negamax with alpha-beta and iterative deepening, valued by material with small rewards for the center and for advancing pawns. It is a coroutine: `offline_game` runs it for 40 ms at a time and gives the screen its turn, which is what froze the screen in earlier clients. Each of the 4 levels has a time limit, a depth and an amount of noise, and noise never throws away a forced mate. The game is saved after each move, and draws by repetition, the fifty-move rule and insufficient material are checked here, since no server does it. The reader picks a color, or lets it be drawn, and playing again keeps that choice. Undo goes back to the reader's last move, taking the computer's answer with it and stopping a search under way, and works after a mate too, but not after resigning. A hint runs the same search with `Engine.HINT` (3 seconds, depth 3, no noise), so it is the best move found and not a weaker one, marks the piece and its square, so a tap there plays it, and names the move below the board. Here it is not cheating, since no server is involved.
 
 ## Token page
 
@@ -133,6 +133,7 @@ ink_knight.koplugin/
   - `tools/koreader/run_headless.sh tools/koreader/check_tls.lua` confirms that bad certificates are refused. It needs internet and sends no token.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_token_page.lua` tests the token page with real connections, including attempts that must fail.
   - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_token_rejected.lua` goes through a refused token on the real screens, with invented answers and no network.
+  - `OUTPUT_DIR=<folder> tools/koreader/run_headless.sh tools/koreader/check_offline_game.lua` plays offline games on the real screens: choosing a color, undo, also while the engine thinks and after a mate, and a hint played with a tap.
   - `OUTPUT_DIR=docs/screenshots tools/koreader/run_headless.sh tools/koreader/render_readme_screens.lua` draws the README images with invented players.
 - `KOREADER_DIR=<desktop KOReader> python3 -I tools/make_brand_art.py` draws the icon, the banner and the social preview from the README images, with the knight of FreeSerif and no Lichess artwork.
 - `tools/package.sh` builds the zip and the checksum, only with what the plugin uses.
