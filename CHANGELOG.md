@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0]
 
 - In a game without internet: choose your color, undo your last move and ask for a hint, which marks the best move found and plays it with a tap.
 - A list of the moves of the game, two to a row, in the offline game, in the online game and in the review, where a tap on a move goes to it.
@@ -8,6 +8,8 @@
 - A player who is not signed in on Lichess is called anonymous instead of a question mark.
 - A game between two people on the same device, taking turns, with undo, the list of moves and a button to turn the board.
 - Review mistakes: the puzzles you missed in the last 30 days, on the plugin or on the site, kept to solve without internet too.
+- Challenges answered while the device slept no longer stay in the list after it wakes up.
+- On the bar of a game, a white player without a name no longer shows the name of black.
 
 ## [0.2.0]
 
