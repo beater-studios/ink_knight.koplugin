@@ -35,6 +35,7 @@ function ReviewScreen.open(app, game, opts)
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() if opts.on_closed then opts.on_closed() end end,
+        broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
     self:render("full")

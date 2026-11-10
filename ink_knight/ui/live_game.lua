@@ -3,12 +3,13 @@ local UIManager = require("ui/uimanager")
 local logger = require("logger")
 
 local Api = require("ink_knight/api")
-local Awake = require("ink_knight/ui/awake")
+local Awake = require("ink_knight/awake")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
 local MoveList = require("ink_knight/ui/move_list")
 local Players = require("ink_knight/ui/players")
+local Sleep = require("ink_knight/sleep")
 
 local LiveGame = {}
 LiveGame.__index = LiveGame
@@ -25,6 +26,7 @@ function LiveGame.open(app, id)
         on_closed = function() self:closed() end,
         on_suspend = function() self:suspend() end,
         on_resume = function() self:resume() end,
+        broken_text = app.strings.unexpected_error,
     }
     self.clock_tick = function() self:tick_clock() end
     UIManager:show(self.screen)
@@ -80,7 +82,7 @@ function LiveGame:connection_ended()
     end
     self.connected = false
     self:render()
-    UIManager:scheduleIn(self.backoff, function()
+    Sleep.schedule(self.screen, self.backoff, function()
         if not self.is_closed and not self.suspended then
             self:connect()
         end
@@ -258,13 +260,13 @@ end
 
 -- The clock only needs seconds when it is short, which saves refreshes and battery.
 function LiveGame:schedule_clock()
-    UIManager:unschedule(self.clock_tick)
+    Sleep.unschedule(self.screen, self.clock_tick)
     local game = self.game
     if self.is_closed or not game:is_active() or not game:is_live() or game:move_count() < 2 then
         return
     end
     local left = game:time_left(game.position.turn, os.time()) or 0
-    UIManager:scheduleIn(left < 60000 and 1 or 10, self.clock_tick)
+    Sleep.schedule(self.screen, left < 60000 and 1 or 10, self.clock_tick)
 end
 
 function LiveGame:tick_clock()
@@ -310,7 +312,7 @@ function LiveGame:prepare_move(move)
     self.selected, self.targets = nil, nil
     self.optimistic = Chess.play(self.game.position, move)
     self.optimistic_move = move
-    if self.app.settings:isTrue("confirm_moves") then
+    if self.app:option("confirm_moves") then
         self.pending = move
         self:render()
     else
@@ -435,7 +437,7 @@ end
 function LiveGame:suspend()
     self.suspended = true
     self:disconnect()
-    UIManager:unschedule(self.clock_tick)
+    Sleep.unschedule(self.screen, self.clock_tick)
 end
 
 function LiveGame:resume()
@@ -446,7 +448,6 @@ end
 
 function LiveGame:closed()
     self.is_closed = true
-    UIManager:unschedule(self.clock_tick)
     self:disconnect()
     Awake.set(false)
     self.app:game_closed(self.id)

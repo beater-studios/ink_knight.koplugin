@@ -7,6 +7,8 @@ local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 
+local Sleep = require("ink_knight/sleep")
+
 local Screen = Device.screen
 
 local Toast = WidgetContainer:extend{
@@ -37,11 +39,30 @@ function Toast:paintTo(bb)
     self.box:paintTo(bb, self.pad, self.dimen.y + self.pad)
 end
 
-function Toast.show(text, timeout)
+-- window: the full screen of the plugin that owns the notice. While the device sleeps, the notice waits for it
+-- to wake up, and so does its leaving, so neither is drawn over the sleep screen.
+function Toast.show(window, text, timeout)
     local toast = Toast:new{ text = text, timeout = timeout or 3 }
-    UIManager:show(toast, "ui", toast.dimen)
-    UIManager:scheduleIn(toast.timeout, function() UIManager:close(toast, "ui", toast.dimen) end)
+    window._toasts = window._toasts or {}
+    window._toasts[toast] = true
+    Sleep.show(window, toast, "ui", toast.dimen)
+    Sleep.schedule(window, toast.timeout, function()
+        window._toasts[toast] = nil
+        if UIManager:isWidgetShown(toast) then
+            UIManager:close(toast, "ui", toast.dimen)
+        end
+    end)
     return toast
+end
+
+-- The window is closing, and with it the timers that would close its notices.
+function Toast.close_all(window)
+    for toast in pairs(window._toasts or {}) do
+        if UIManager:isWidgetShown(toast) then
+            UIManager:close(toast)
+        end
+    end
+    window._toasts = {}
 end
 
 function Toast:onCloseWidget()

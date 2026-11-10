@@ -4,6 +4,7 @@ local UIManager = require("ui/uimanager")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local Puzzles = require("ink_knight/puzzles")
+local Sleep = require("ink_knight/sleep")
 
 local PuzzleScreen = {}
 PuzzleScreen.__index = PuzzleScreen
@@ -19,6 +20,7 @@ function PuzzleScreen.open(app, opts)
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() self:closed() end,
+        broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
     self:start(opts.puzzle or app:next_puzzle(opts.angle))
@@ -83,7 +85,7 @@ function PuzzleScreen:play(uci)
         self.message = self.s.puzzle_correct
         self:render()
         self.waiting = true
-        UIManager:scheduleIn(REPLY_DELAY, function()
+        Sleep.schedule(self.screen, REPLY_DELAY, function()
             self.waiting = false
             if self.is_closed or self.session ~= session then
                 return

@@ -1,3 +1,9 @@
+# Pattern "ci". This file is copied unchanged into every plugin as
+# .github/workflows/release.yml: change the pattern first, then copy it again.
+# Runs when a release is published: checks the tag against _meta.lua, runs tools/check.sh release, builds
+# the packages with tools/package.sh and attaches every dist/*.zip with its checksum. Only the two steps that
+# call gh get the token, so tools/check.sh and tools/package.sh, which may run third-party data generators,
+# cannot write to the repository.
 name: Release
 
 on:
@@ -12,12 +18,13 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TAG: ${{ github.event.release.tag_name }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y luajit zip
+        with:
+          persist-credentials: false
+      - name: Install LuaJIT, LuaFileSystem and zip
+        run: sudo apt-get update && sudo apt-get install -y luajit lua-filesystem zip
       - name: Check tag against _meta.lua
         run: |
           version="$(luajit -e 'print(dofile("_meta.lua").version)')"
@@ -33,13 +40,29 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $VERSION"
             exit 1
           fi
-      - name: Tests
-        run: for spec in tests/*_spec.lua; do luajit "$spec" || exit 1; done
-      - name: Build package
-        run: tools/package.sh
-      - name: Attach package to the release
-        run: gh release upload "$TAG" dist/ink_knight.koplugin.zip dist/ink_knight.koplugin.zip.sha256 --clobber
+      - name: Checks
+        run: sh tools/check.sh release
+      - name: Build packages
+        run: sh tools/package.sh
+      - name: Attach packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -- dist/*.zip
+          if [ ! -f "$1" ]; then
+            echo "::error::tools/package.sh built no zip in dist/"
+            exit 1
+          fi
+          for zip in "$@"; do
+            if [ ! -f "$zip.sha256" ]; then
+              echo "::error::$zip has no $zip.sha256"
+              exit 1
+            fi
+          done
+          gh release upload "$TAG" dist/*.zip dist/*.sha256 --clobber
       - name: Fill empty release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(gh release view "$TAG" --json body --jq .body)" ]; then
             gh release edit "$TAG" --notes-file notes.md

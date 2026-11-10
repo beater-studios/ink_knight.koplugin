@@ -10,6 +10,20 @@
 - Review mistakes: the puzzles you missed in the last 30 days, on the plugin or on the site, kept to solve without internet too.
 - Challenges answered while the device slept no longer stay in the list after it wakes up.
 - On the bar of a game, a white player without a name no longer shows the name of black.
+- The Ink Knight cover on the sleep screen while the plugin is open.
+- The token page in Portuguese no longer names the Kindle, like the other languages, since the plugin runs on other e-readers too.
+- The screen with the QR code for the token says the address can also be typed in any browser, and the buttons no longer assume a phone: **Paste from another device** and **Done: paste the token**.
+- During a game with a clock, the power button puts the device to sleep again. Before, it did nothing until the game screen closed, and a crash in the middle of a game could leave the device unable to sleep.
+- Nothing is drawn over the sleep screen: the clocks, notices, the network and the engine wait until the device wakes up.
+- Every screen opens in portrait and ignores rotation, including the online part, the rating chart and the token screens, and the previous rotation comes back on closing, also when a screen fails to open.
+- After a few changes without one, the pages flash once to clear what e-ink leaves behind, and the board and the plugin itself open with a flash.
+- The Back key, on devices with keys, goes back one step, and in a game with a clock it asks first, as the back button does.
+- The token page opens its port only for private networks, and a crash with the page open no longer leaves the port open. If the device sleeps, the page stops and says so.
+- Requests to Lichess use TLS 1.2 or newer.
+- An option, a game or a puzzle saved by an earlier version that no longer makes sense is left out instead of stopping the plugin from opening.
+- A page or the board that cannot be drawn shows a short message, and the way back still works.
+- Following a player whose profile came incomplete no longer closes KOReader.
+- In Spanish, the rating range option fits on larger screens.
 
 ## [0.2.0]
 

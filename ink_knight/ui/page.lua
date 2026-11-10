@@ -19,7 +19,11 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
+local logger = require("logger")
 
+local Portrait = require("ink_knight/portrait")
+local Refresh = require("ink_knight/refresh")
+local Sleep = require("ink_knight/sleep")
 local StatusStrip = require("ink_knight/ui/status_strip")
 
 local Screen = Device.screen
@@ -49,7 +53,20 @@ local Page = InputContainer:extend{
     build = nil,
     close_on_tap = false,
     on_closed = nil,
+    -- Where the Back key goes: closing the page by default, one step back.
+    on_back = nil,
+    -- Shown in place of the rows when they cannot be drawn.
+    broken_text = nil,
 }
+
+-- One count for every page of the plugin, since they open and close over each other with the same layout:
+-- a change of a page, a page on top or a page that closes gets "ui", and the update after eight of them
+-- flashes the whole screen, which KOReader would never do for "ui" by itself.
+Page.refresh = Refresh.new(8)
+
+function Page.refresh_mode()
+    return Page.refresh:mode("page")
+end
 
 local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
@@ -68,6 +85,11 @@ function Page.disable_rows(rows)
 end
 
 function Page:init()
+    Portrait.open(self, self.setup)
+end
+
+-- Everything init does, after the screen is in portrait. A failure here gives the rotation back.
+function Page:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.scale = math.min(self.width / 600, self.height / 800)
@@ -76,8 +98,9 @@ function Page:init()
         Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
     }
     if Device:hasKeys() then
-        self.key_events = { Close = { { Device.input.group.Back } } }
+        self.key_events.Back = { { Device.input.group.Back } }
     end
+    Sleep.watch(self)
     self.sheet = 1
     self:reload(true)
     for index, sheet in ipairs(self.sheets) do
@@ -196,7 +219,29 @@ function Page:reload(first_time)
     self.sheets = sheets
     self.sheet = math.min(self.sheet, #sheets)
     if not first_time then
-        UIManager:setDirty(self, function() return "ui", self.dimen end)
+        self:redraw()
+    end
+end
+
+-- Whether the page is shown and no other full screen covers it.
+function Page:is_visible()
+    local stack = UIManager._window_stack
+    for index = #stack, 1, -1 do
+        local widget = stack[index].widget
+        if widget == self then
+            return true
+        elseif widget.covers_fullscreen then
+            return false
+        end
+    end
+    return false
+end
+
+-- The whole page, as the shared count says. Asleep, it waits for the device to wake up. A page under another
+-- full screen is drawn again when that one closes, so it asks for nothing now.
+function Page:redraw()
+    if self:is_visible() then
+        Sleep.dirty(self, function() return Page.refresh_mode(), self.dimen end)
     end
 end
 
@@ -410,13 +455,7 @@ function Page:paint_footer(bb)
     end
 end
 
-function Page:paintTo(bb, x, y)
-    self.dimen.x, self.dimen.y = x, y
-    self.hits = {}
-    bb:paintRect(0, 0, self.width, self.height, WHITE)
-    if self.header then
-        self:paint_header(bb)
-    end
+function Page:paint_rows(bb)
     local cursor = self:content_top()
     for _, line in ipairs(self.sheets[self.sheet] or {}) do
         local height = self.heights_of[line]
@@ -425,6 +464,31 @@ function Page:paintTo(bb, x, y)
     end
     if #self.sheets > 1 then
         self:paint_footer(bb)
+    end
+end
+
+function Page:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    self.hits = {}
+    bb:paintRect(0, 0, self.width, self.height, WHITE)
+    if self.header then
+        self:paint_header(bb)
+    end
+    -- The rows carry what came from Lichess. If one cannot be drawn, a short message takes their place, and
+    -- the way back in the header still works.
+    local ok, err = pcall(self.paint_rows, self, bb)
+    if not ok then
+        logger.warn("Ink Knight: could not draw a page", err)
+        local top = self:content_top()
+        bb:paintRect(0, top, self.width, self.height - top, WHITE)
+        local hits = {}
+        for _, hit in ipairs(self.hits) do
+            if hit.y < top then
+                hits[#hits + 1] = hit
+            end
+        end
+        self.hits = hits
+        self:paint_text(bb, self.broken_text or "", REGULAR, 18, self:px(MARGIN), top, self.width - 2 * self:px(MARGIN), self:px(80), "center", GRAY)
     end
     StatusStrip.paint(bb, self.width, self.height)
     if self.pressed then
@@ -440,7 +504,7 @@ function Page:turn(step)
     local target = self.sheet + step
     if target >= 1 and target <= #self.sheets then
         self.sheet = target
-        UIManager:setDirty(self, function() return "ui", self.dimen end)
+        self:redraw()
     end
 end
 
@@ -480,20 +544,40 @@ end
 
 -- UIManager paints a new window but leaves it to the window to ask for the screen to show it.
 function Page:onShow()
-    UIManager:setDirty(self, function() return "ui", self.dimen end)
+    self:redraw()
     return true
 end
 
-function Page:onClose()
-    UIManager:close(self)
+function Page:onBack()
+    if self.on_back then
+        self.on_back(self)
+    else
+        UIManager:close(self)
+    end
     return true
+end
+
+Page.onSetRotationMode = Portrait.ignore_rotation
+
+-- KOReader sends Close to every window before it quits (USB mode on a Kobo, closing the window on a computer),
+-- and before powering off, with keep_screensaver, when the window stays so the sleep screen is left alone.
+function Page:onClose(arg)
+    if not (arg and arg.keep_screensaver) then
+        UIManager:close(self)
+    end
+end
+
+-- What is underneath shows again, as one more update of the pages.
+function Page:close_refresh()
+    UIManager:setDirty(nil, Page.refresh_mode())
 end
 
 function Page:onCloseWidget()
     if self.on_closed then
         self.on_closed(self)
     end
-    UIManager:setDirty(nil, "ui")
+    Portrait.close(self)
+    self:close_refresh()
 end
 
 return Page

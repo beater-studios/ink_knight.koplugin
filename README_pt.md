@@ -44,6 +44,7 @@
 - **Jogadores:** busca por nome, quem você segue e está online, perfis, gráfico de rating com estatísticas e o seu histórico contra alguém.
 - **Offline:** jogue contra um motor pequeno, que nunca trava a tela, com escolha de cor, desfazer lance e dicas, e continue a partida depois. Ou jogue contra outra pessoa no mesmo aparelho.
 - **Seu tabuleiro:** cinco estilos de tabuleiro, incluindo as casas hachuradas dos diagramas impressos, três conjuntos de peças e coordenadas nas bordas.
+- **Tela de descanso:** se o aparelho dorme com o Ink Knight aberto, aparece a capa do Ink Knight no lugar da capa do livro. Vale quando a tela de descanso do KOReader mostra a capa do livro.
 
 ## Instalação
 
@@ -52,6 +53,8 @@
 3. Reinicie o KOReader. O plugin fica no menu Ferramentas, como **Ink Knight**.
 
 O idioma segue o do KOReader: português, inglês ou espanhol. Em qualquer outro idioma, usa inglês.
+
+As suas opções, as partidas sem internet e os problemas salvos ficam em `koreader/settings/ink_knight.lua`, e o token em `koreader/settings/ink_knight_token` ou, num Kindle, em `/var/local/ink_knight`. Para desinstalar, apague a pasta do plugin e esses arquivos, e revogue o token no Lichess.
 
 ## Conecte sua conta
 
@@ -63,8 +66,8 @@ O Ink Knight usa um token pessoal, que só você pode criar e revogar.
    - Problemas: `puzzle:read` e `puzzle:write`
    - Jogar partidas: `challenge:write`, só para dar tempo ao adversário
    - Só para adicionar ou remover favoritos: `preference:write`. Ela vem desmarcada, porque também permite mudar as preferências da conta, o que o Ink Knight nunca faz.
-2. Crie o token, copie e toque em **Já criei: colar pelo celular**.
-3. Aponte o celular para o QR code na mesma rede Wi-Fi, toque em **Permitir** no leitor e cole o token.
+2. Crie o token, copie e toque em **Já criei: colar o token**.
+3. Na mesma rede Wi-Fi, aponte o celular para o QR code ou digite em qualquer navegador o endereço que aparece embaixo dele, toque em **Permitir** no leitor e cole o token.
 
 Sem uma permissão, o resto continua funcionando, e o que depende dela avisa o que falta. Em **Configurações > Permissões do token** você vê o que o seu token permite. O Lichess não altera um token existente, então para adicionar uma permissão é preciso criar outro.
 
@@ -94,14 +97,14 @@ A lista completa está em [docs/design.md](docs/design.md), em inglês.
 
 - Feito para o KOReader 2026.07 e para telas sensíveis ao toque, sempre em retrato. Desenvolvido para um Kindle básico da 10ª geração (firmware 5.18.1).
 - Usa só o que vem com o KOReader, sem nada mais para instalar.
-- Em uma partida ao vivo, o relógio continua correndo se você sair da tela, então o Ink Knight pergunta antes. Durante uma partida com relógio, o aparelho fica acordado, o que gasta bateria.
+- Em uma partida ao vivo, o relógio continua correndo se você sair da tela, então o Ink Knight pergunta antes. Durante uma partida com relógio, o aparelho fica acordado, o que gasta bateria. O botão de ligar continua fazendo ele dormir.
 
 ## Desenvolvimento
 
-Com o [LuaJIT](https://luajit.org) instalado, a partir da raiz do repositório:
+Com o [LuaJIT](https://luajit.org) e o `zip` instalados, a partir da raiz do repositório, isto roda os testes, confere os textos dos três idiomas e gera o pacote:
 
 ```sh
-for spec in tests/*_spec.lua; do luajit "$spec"; done
+sh tools/check.sh
 ```
 
 O desenho, as ferramentas e o processo de publicação estão em [docs/design.md](docs/design.md), em inglês. Contribuições são aceitas sob a licença do projeto.

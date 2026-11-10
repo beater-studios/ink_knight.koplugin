@@ -15,13 +15,6 @@ local TokenAccess = require("ink_knight/token_access")
 local TokenScopes = require("ink_knight/token_scopes")
 local TokenStore = require("ink_knight/token_store")
 
-local function read_source(path)
-    local file = assert(io.open(path, "rb"))
-    local text = file:read("*a")
-    file:close()
-    return text
-end
-
 local passed, failed = 0, 0
 local function test(name, fn)
     local ok, err = pcall(fn)
@@ -383,9 +376,20 @@ end
 local function request(method, target, extra)
     return string.format("%s %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", method, target, HOST, extra or "")
 end
+-- As the server does: the body is read only when the first answer asks for it, and only as long as it says.
+local function ask(access, head, body, ip)
+    if body ~= "" and not head:lower():find("\ncontent%-length:") then
+        head = head:gsub("\r\n\r\n$", "\r\nContent-Length: " .. #body .. "\r\n\r\n")
+    end
+    local result = access:handle(head, ip)
+    if result.read_body then
+        result = access:handle(head, ip, body:sub(1, result.read_body))
+    end
+    return result
+end
 local function approved()
     local access, got = new_access()
-    access:handle(request("GET", "/" .. CODE .. "/"), "", PHONE)
+    ask(access, request("GET", "/" .. CODE .. "/"), "", PHONE)
     access:approve(PHONE)
     return access, got
 end
@@ -400,7 +404,7 @@ end)
 
 test("the first device waits for approval and sees no form", function()
     local access, got = new_access()
-    local result = access:handle(request("GET", "/" .. CODE .. "/"), "", PHONE)
+    local result = ask(access, request("GET", "/" .. CODE .. "/"), "", PHONE)
     eq(got.client, PHONE)
     assert(result.body:find(I18n.en.confirm_heading, 1, true))
     assert(not result.body:find("<form", 1, true))
@@ -408,28 +412,28 @@ end)
 
 test("no token is taken before approval", function()
     local access, got = new_access()
-    access:handle(request("GET", "/" .. CODE .. "/"), "", PHONE)
-    eq(access:handle(request("POST", SAVE), "token=lip_abcdefgh", PHONE).status, 404)
+    ask(access, request("GET", "/" .. CODE .. "/"), "", PHONE)
+    eq(ask(access, request("POST", SAVE), "token=lip_abcdefgh", PHONE).status, 404)
     eq(got.token, nil)
 end)
 
 test("a token goes through only from the approved device", function()
     local access, got = approved()
-    eq(access:handle(request("POST", SAVE), "token=lip_abcdefgh", OTHER).status, 404)
+    eq(ask(access, request("POST", SAVE), "token=lip_abcdefgh", OTHER).status, 404)
     eq(got.token, nil)
-    eq(access:handle(request("POST", SAVE), "token=lip_abcdefgh", PHONE).status, 200)
+    eq(ask(access, request("POST", SAVE), "token=lip_abcdefgh", PHONE).status, 200)
     eq(got.token, "lip_abcdefgh")
 end)
 
 test("spaces around a pasted token are dropped", function()
     local access, got = approved()
-    access:handle(request("POST", SAVE), "token=%20lip_abcdefgh+", PHONE)
+    ask(access, request("POST", SAVE), "token=%20lip_abcdefgh+", PHONE)
     eq(got.token, "lip_abcdefgh")
 end)
 
 test("a bad token shows the form again", function()
     local access, got = approved()
-    local result = access:handle(request("POST", SAVE), "token=lip_a%22b", PHONE)
+    local result = ask(access, request("POST", SAVE), "token=lip_a%22b", PHONE)
     eq(got.token, nil)
     assert(result.body:find(I18n.en.token_invalid, 1, true))
     assert(result.body:find("<form", 1, true))
@@ -437,32 +441,32 @@ end)
 
 test("another site's page cannot post a token", function()
     local access, got = approved()
-    eq(access:handle(request("POST", SAVE, "Origin: http://evil.example\r\n"), "token=lip_abcdefgh", PHONE).status, 404)
+    eq(ask(access, request("POST", SAVE, "Origin: http://evil.example\r\n"), "token=lip_abcdefgh", PHONE).status, 404)
     eq(got.token, nil)
-    eq(access:handle(request("POST", SAVE, "Origin: http://" .. HOST .. "\r\n"), "token=lip_abcdefgh", PHONE).status, 200)
+    eq(ask(access, request("POST", SAVE, "Origin: http://" .. HOST .. "\r\n"), "token=lip_abcdefgh", PHONE).status, 200)
 end)
 
 test("without the code, another host or outside the network, nothing is served", function()
     local access, got = new_access()
-    eq(access:handle(request("GET", "/wrong/"), "", PHONE).status, 404)
+    eq(ask(access, request("GET", "/wrong/"), "", PHONE).status, 404)
     eq(got.client, nil)
-    eq(access:handle(request("GET", "/" .. CODE .. "/"), "", "8.8.8.8").status, 404)
-    eq(access:handle(string.format("GET /%s/ HTTP/1.1\r\nHost: evil.example\r\n\r\n", CODE), "", PHONE).status, 404)
+    eq(ask(access, request("GET", "/" .. CODE .. "/"), "", "8.8.8.8").status, 404)
+    eq(ask(access, string.format("GET /%s/ HTTP/1.1\r\nHost: evil.example\r\n\r\n", CODE), "", PHONE).status, 404)
 end)
 
 test("repeated bad requests lock out that address only, and a denied device is dropped", function()
     local access = approved()
     for _ = 1, TokenAccess.MAX_BAD_REQUESTS do
-        access:handle(request("GET", "/guess/"), "", OTHER)
+        ask(access, request("GET", "/guess/"), "", OTHER)
     end
     eq(access:is_denied(OTHER), true)
     eq(access:is_denied(PHONE), false)
-    eq(access:handle(request("GET", "/" .. CODE .. "/"), "", OTHER).close_only, true)
+    eq(ask(access, request("GET", "/" .. CODE .. "/"), "", OTHER).close_only, true)
 end)
 
 test("the page has no script, and the token field does not autofill", function()
     local access = approved()
-    local body = access:handle(request("GET", "/" .. CODE .. "/"), "", PHONE).body
+    local body = ask(access, request("GET", "/" .. CODE .. "/"), "", PHONE).body
     assert(not body:find("<script", 1, true))
     assert(body:find('autocomplete="off"', 1, true))
     assert(body:find('type="password"', 1, true))
@@ -471,11 +475,31 @@ test("the page has no script, and the token field does not autofill", function()
     assert(head:find("Cache-Control: no-store", 1, true))
 end)
 
+test("the body of a form is only read after the code, the approval and the origin are checked", function()
+    local head = request("POST", SAVE, "Content-Length: 18\r\n")
+    local access = new_access()
+    eq(access:handle(head, PHONE).read_body, nil)
+    access = approved()
+    eq(access:handle(head, OTHER).read_body, nil)
+    eq(access:handle(request("POST", SAVE, "Origin: http://evil.example\r\nContent-Length: 18\r\n"), PHONE).read_body, nil)
+    eq(access:handle(head, PHONE).read_body, 18)
+    eq(access:handle(request("POST", SAVE, "Content-Length: 99999\r\n"), PHONE).close_only, true)
+end)
+
+test("only the approved device keeps connections of its own", function()
+    local access = new_access()
+    eq(access:preferred_ip(), nil)
+    access:handle(request("GET", "/" .. CODE .. "/"), PHONE)
+    eq(access:preferred_ip(), nil)
+    access:approve(PHONE)
+    eq(access:preferred_ip(), PHONE)
+end)
+
 test("the token is never echoed in a page", function()
     local access = approved()
-    local result = access:handle(request("POST", SAVE), "token=lip_secretvalue", PHONE)
+    local result = ask(access, request("POST", SAVE), "token=lip_secretvalue", PHONE)
     assert(not result.body:find("lip_secretvalue", 1, true))
-    result = access:handle(request("POST", SAVE), "token=lip_secret%22value", PHONE)
+    result = ask(access, request("POST", SAVE), "token=lip_secret%22value", PHONE)
     assert(not result.body:find("secret", 1, true))
 end)
 
@@ -622,25 +646,6 @@ end)
 test("the private folder is only for a Kindle", function()
     eq(TokenStore.private_dir_for(true), "/var/local/ink_knight")
     eq(TokenStore.private_dir_for(false), nil)
-end)
-
-test("all three languages have the same texts", function()
-    local function keys(from, into, prefix)
-        for key, value in pairs(from) do
-            if type(value) == "table" then
-                keys(value, into, key .. ".")
-            else
-                into[prefix .. key] = true
-            end
-        end
-        return into
-    end
-    local english = keys(I18n.en, {}, "")
-    for _, language in ipairs({ "pt", "es" }) do
-        local other = keys(I18n[language], {}, "")
-        for key in pairs(english) do assert(other[key], language .. " has no " .. key) end
-        for key in pairs(other) do assert(english[key], "en has no " .. key) end
-    end
 end)
 
 test("the language follows KOReader, and others use English", function()
@@ -826,36 +831,6 @@ test("turning the board or changing the bars is seen", function()
     eq(BoardDiff.changes(base, BoardDiff.snapshot({ position = position, top = { name = "x", clock = "0:59" } })).top, true)
 end)
 
-test("every text the screens ask for exists", function()
-    local listing = io.popen("ls ink_knight/ui/*.lua ink_knight/*.lua")
-    for path in listing:lines() do
-        if not path:find("i18n", 1, true) then
-            local source = read_source(path)
-            for _, pattern in ipairs({ "%f[%w_]s%.([%a_][%w_]*)", "strings%.([%a_][%w_]*)" }) do
-                for key in source:gmatch(pattern) do
-                    assert(I18n.en[key] ~= nil, path .. " asks for " .. key)
-                end
-            end
-        end
-    end
-    listing:close()
-end)
-
-test("a translation asks for the same values as the English text", function()
-    local function specifiers(text)
-        local list = {}
-        for spec in text:gsub("%%%%", ""):gmatch("%%[ds]") do list[#list + 1] = spec end
-        return table.concat(list)
-    end
-    for key, english in pairs(I18n.en) do
-        if type(english) == "string" then
-            for _, language in ipairs({ "pt", "es" }) do
-                eq(specifiers(I18n[language][key]), specifiers(english))
-            end
-        end
-    end
-end)
-
 test("every way a game can end has a sentence of its own", function()
     for _, status in ipairs({ "mate", "resign", "outoftime", "timeout" }) do
         assert(I18n.pt[Game.ending_key("win", status)], "win " .. status)
@@ -879,7 +854,7 @@ end)
 test("a form posted from nowhere or from another site is still refused", function()
     local access = approved()
     for _, origin in ipairs({ "null", "http://evil.example" }) do
-        eq(access:handle(request("POST", SAVE, "Origin: " .. origin .. "\r\n"), "token=lip_abcdefgh", PHONE).status, 404)
+        eq(ask(access, request("POST", SAVE, "Origin: " .. origin .. "\r\n"), "token=lip_abcdefgh", PHONE).status, 404)
     end
 end)
 

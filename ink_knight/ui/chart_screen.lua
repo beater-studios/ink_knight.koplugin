@@ -7,7 +7,10 @@ local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
+local logger = require("logger")
 
+local Page = require("ink_knight/ui/page")
+local Portrait = require("ink_knight/portrait")
 local RatingChart = require("ink_knight/rating_chart")
 local StatusStrip = require("ink_knight/ui/status_strip")
 
@@ -33,11 +36,15 @@ local function face(name, size)
 end
 
 function ChartScreen:init()
+    Portrait.open(self, self.setup)
+end
+
+function ChartScreen:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.ges_events = { Tap = { GestureRange:new{ ges = "tap", range = self.dimen } } }
     if Device:hasKeys() then
-        self.key_events = { Close = { { Device.input.group.Back } } }
+        self.key_events.Back = { { Device.input.group.Back } }
     end
     self.scale = math.min(self.width / 600, self.height / 800)
     local px = function(value) return math.floor(value * self.scale + 0.5) end
@@ -119,6 +126,19 @@ function ChartScreen:paintTo(bb, x, y)
     self:paint_text(bb, "\226\128\185", BOLD, 40, 0, 0, px(60), self.title_h - px(6), "center")
     self:paint_text(bb, self.title, BOLD, 24, px(60), 0, self.width - px(76), self.title_h, "left")
     bb:paintRect(0, self.title_h - px(2), self.width, px(2), BLACK)
+    -- The history comes from Lichess. If it cannot be drawn, a short message takes its place, and the way back
+    -- in the title still works.
+    local ok, err = pcall(self.paint_content, self, bb)
+    if not ok then
+        logger.warn("Ink Knight: could not draw the chart", err)
+        bb:paintRect(0, self.title_h, self.width, self.height - self.title_h, WHITE)
+        self:paint_text(bb, self.strings and self.strings.unexpected_error or "", REGULAR, 18, px(10), self.plot.y, self.width - px(20), self.plot.h, "center")
+    end
+    StatusStrip.paint(bb, self.width, self.height)
+end
+
+function ChartScreen:paint_content(bb)
+    local px = self.px
     local lines_y
     if self.layout then
         self:paint_chart(bb)
@@ -130,7 +150,6 @@ function ChartScreen:paintTo(bb, x, y)
     for index, line in ipairs(self.lines) do
         self:paint_text(bb, line, REGULAR, 18, px(14), lines_y + (index - 1) * self.line_h, self.width - px(28), self.line_h, "left")
     end
-    StatusStrip.paint(bb, self.width, self.height)
 end
 
 function ChartScreen:strip_region()
@@ -144,17 +163,30 @@ function ChartScreen:onTap(_, ges)
     return true
 end
 
-function ChartScreen:onClose()
+function ChartScreen:onBack()
     UIManager:close(self)
     return true
 end
 
-function ChartScreen:onCloseWidget()
-    UIManager:setDirty(nil, "ui")
+-- KOReader sends Close to every window before it quits, and with keep_screensaver before powering off, when the
+-- window stays so the sleep screen is left alone.
+function ChartScreen:onClose(arg)
+    if not (arg and arg.keep_screensaver) then
+        UIManager:close(self)
+    end
 end
 
+ChartScreen.onSetRotationMode = Portrait.ignore_rotation
+
+-- The page underneath shows again, counted with the pages. Coming after the chart, it flashes.
+function ChartScreen:onCloseWidget()
+    Portrait.close(self)
+    UIManager:setDirty(nil, Page.refresh_mode())
+end
+
+-- A chart is a layout of its own among the pages, so it opens with a flash.
 function ChartScreen:onShow()
-    UIManager:setDirty(self, "full")
+    UIManager:setDirty(self, Page.refresh:mode("chart"))
     return true
 end
 

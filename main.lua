@@ -3,10 +3,17 @@ local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local logger = require("logger")
 
-local Awake = require("ink_knight/ui/awake")
+local Awake = require("ink_knight/awake")
 local I18n = require("ink_knight/i18n")
+local Lan = require("ink_knight/lan")
+local PluginScreensaver = require("ink_knight/screensaver")
 
 local PLUGIN_DIR = debug.getinfo(1, "S").source:gsub("^@", ""):gsub("/main%.lua$", "")
+
+PluginScreensaver.install(PLUGIN_DIR, "ink_knight")
+-- Both undo, once per run, what a crash with the plugin open may have left on the system.
+Awake.install("ink_knight")
+Lan.install("ink_knight")
 
 local function meta_version()
     local chunk = loadfile(PLUGIN_DIR .. "/_meta.lua")
@@ -25,14 +32,8 @@ local InkKnight = WidgetContainer:extend{
     is_doc_only = false,
 }
 
-local recovered = false
-
 function InkKnight:init()
     self.ui.menu:registerToMainMenu(self)
-    if not recovered then
-        recovered = true
-        Awake.recover()
-    end
 end
 
 function InkKnight:addToMainMenu(menu_items)

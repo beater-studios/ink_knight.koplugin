@@ -1,6 +1,9 @@
+-- Pattern "https". This file is copied unchanged into every
+-- plugin that makes requests to the internet, as <id>/tls.lua: change the pattern first, then copy it again.
+--
 -- The secure connection of every request. KOReader's own HTTPS module only checks the name of the server in
--- recent versions, and without that any valid certificate, for any site, would be accepted and get the token.
--- So the check lives here, the same on every version.
+-- recent versions, and without that any valid certificate, for any site, would be accepted. So the check lives
+-- here, the same on every version.
 local Tls = {}
 
 local function name_matches(pattern, host)
@@ -44,7 +47,7 @@ function Tls.create(opts)
     local params = {
         mode = "client",
         protocol = "any",
-        options = { "all", "no_sslv2", "no_sslv3", "no_tlsv1" },
+        options = { "all", "no_sslv2", "no_sslv3", "no_tlsv1", "no_tlsv1_1" },
         verify = "peer",
         cafile = opts.ca_file,
     }

@@ -1,4 +1,5 @@
--- Receives the Lichess token from a phone, so nobody has to type it on an e-ink keyboard.
+-- Receives the Lichess token from another device on the same network, so nobody has to type it on an e-ink
+-- keyboard. The session (code, address, firewall) is the one of lan.lua, and the server the one of http_server.lua.
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -13,19 +14,22 @@ local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
-local socket = require("socket")
+local logger = require("logger")
 
-local TokenAccess = require("ink_knight/token_access")
-local TokenServer = require("ink_knight/token_server")
+local Lan = require("ink_knight/lan")
+local Portrait = require("ink_knight/portrait")
+local Refresh = require("ink_knight/refresh")
+local Server = require("ink_knight/http_server")
+local Sleep = require("ink_knight/sleep")
 local StatusStrip = require("ink_knight/ui/status_strip")
+local TokenAccess = require("ink_knight/token_access")
 
 local Screen = Device.screen
 
 local PORT = 8644
-local TICK = 0.25
+-- Quick while a browser is connected, calm while it waits.
+local TICK_BUSY, TICK_IDLE = 0.05, 0.25
 local IDLE_LIMIT = 300
-local CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
-local CODE_LENGTH = 16
 local SERIF = "noto/NotoSerif-Regular.ttf"
 local SERIF_BOLD = "noto/NotoSerif-Bold.ttf"
 
@@ -39,58 +43,32 @@ local TokenScreen = InputContainer:extend{
     local_ip = nil,
 }
 
-local function random_code()
-    local source = io.open("/dev/urandom", "rb")
-    if not source then
-        return nil
-    end
-    local bytes = source:read(CODE_LENGTH)
-    source:close()
-    if not bytes or #bytes < CODE_LENGTH then
-        return nil
-    end
-    local out = {}
-    for i = 1, CODE_LENGTH do
-        local index = bytes:byte(i) % #CODE_ALPHABET + 1
-        out[i] = CODE_ALPHABET:sub(index, index)
-    end
-    return table.concat(out)
-end
-
-local function detect_local_ip()
-    local udp = socket.udp()
-    if not udp then
-        return nil
-    end
-    udp:setpeername("10.255.255.255", 9)
-    local ip = udp:getsockname()
-    udp:close()
-    return ip
-end
-
-local function firewall(action, port)
-    if Device:isKindle() then
-        os.execute(string.format("iptables -%s INPUT -p tcp --dport %d -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT 2>/dev/null", action, port))
-        os.execute(string.format("iptables -%s OUTPUT -p tcp --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT 2>/dev/null", action, port))
-    end
-end
-
 function TokenScreen:init()
+    Portrait.open(self, self.setup)
+end
+
+function TokenScreen:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.text_width = self.width - 2 * Screen:scaleBySize(30)
+    if Device:hasKeys() then
+        self.key_events.Back = { { Device.input.group.Back } }
+    end
+    -- Waiting, connected and each message are layouts of their own: a change inside one does not flash.
+    self.refresh = Refresh.new(8)
     self.tick_callback = function() self:tick() end
+    Sleep.watch(self)
     self:start()
 end
 
 function TokenScreen:start()
     local s = self.strings
-    local ip = self.local_ip or detect_local_ip()
-    if not ip or not TokenAccess.is_private_ip(ip) then
+    local ip = self.local_ip or Lan.local_ip()
+    if not ip or not Lan.is_private_ip(ip) then
         self:show_message(s.no_local_network)
         return
     end
-    local code = random_code()
+    local code = Lan.random_token()
     if not code then
         self:show_message(s.start_failed)
         return
@@ -103,42 +81,73 @@ function TokenScreen:start()
         on_new_client = function(client) self:ask_permission(client) end,
         on_token = function(token) self:got_token(token) end,
     }
-    self.server = TokenServer.new{ access = self.access, ip = ip, port = self.port }
-    firewall("D", self.port)
+    -- It listens on the address of the Wi-Fi only, so nothing reaches it through the USB network.
+    self.server = Server.new{ access = self.access, ip = ip, port = self.port, name = "Ink Knight" }
     local ok, err = self.server:start()
     if not ok then
         self.server = nil
         self:show_message(tostring(err))
         return
     end
-    firewall("A", self.port)
+    -- Only once the server is up, so a port is never left open with nobody behind it.
+    if not Lan.open_firewall(self.port) then
+        self.server:stop()
+        self.server = nil
+        self:show_message(s.start_failed)
+        return
+    end
     self.firewall_open = true
     self:show_waiting()
-    UIManager:scheduleIn(TICK, self.tick_callback)
+    Sleep.schedule(self, TICK_IDLE, self.tick_callback)
 end
 
+-- Ends the session, in this order: no more ticks, no more connections, the port closed. The screen stays.
+function TokenScreen:stop_session()
+    Sleep.unschedule(self, self.tick_callback)
+    if self.confirm then
+        UIManager:close(self.confirm)
+        self.confirm = nil
+    end
+    if self.server then
+        self.server:stop()
+        self.server = nil
+    end
+    if self.firewall_open then
+        self.firewall_open = false
+        -- The port stays listed, and the next start of KOReader closes it.
+        if not Lan.close_firewall(self.port) then
+            logger.warn("Ink Knight: the port of the token page could not be closed")
+        end
+    end
+    self.access = nil
+end
+
+-- The question can outlast the session (the device sleeps, the page times out), so each answer checks that the
+-- session is still the one that asked.
 function TokenScreen:ask_permission(client)
     local s = self.strings
+    local access = self.access
     self.confirm = ConfirmBox:new{
         text = string.format(s.allow_question, client),
         ok_text = s.allow_button,
         cancel_text = s.deny_button,
+        -- A tap outside would count as a refusal.
         dismissable = false,
         ok_callback = function()
             self.confirm = nil
-            if self.server then
-                self.access:approve(client)
+            if self.server and self.access == access then
+                access:approve(client)
                 self:show_message(s.connected_phone)
             end
         end,
         cancel_callback = function()
             self.confirm = nil
-            if self.server then
-                self.access:deny(client)
+            if self.server and self.access == access then
+                access:deny(client)
             end
         end,
     }
-    UIManager:show(self.confirm)
+    Sleep.show(self, self.confirm)
 end
 
 -- The answer to the browser still has to go out, so the screen closes on a later tick.
@@ -151,7 +160,7 @@ function TokenScreen:tick()
     if not self.server then
         return
     end
-    self.server:tick()
+    local busy = self.server:tick()
     if self.close_at and os.time() >= self.close_at then
         local token = self.received
         UIManager:close(self)
@@ -164,7 +173,7 @@ function TokenScreen:tick()
         UIManager:close(self)
         return
     end
-    UIManager:scheduleIn(TICK, self.tick_callback)
+    Sleep.schedule(self, busy and TICK_BUSY or TICK_IDLE, self.tick_callback)
 end
 
 function TokenScreen:paragraph(text, face, size)
@@ -184,7 +193,8 @@ function TokenScreen:button(text)
     }
 end
 
-function TokenScreen:set_group(group)
+-- kind: the layout now on the screen. The same one again is a change inside it.
+function TokenScreen:set_group(group, kind)
     if self[1] then
         self[1]:free()
     end
@@ -197,8 +207,8 @@ function TokenScreen:set_group(group)
         height = self.height,
         CenterContainer:new{ dimen = Geom:new{ w = self.width, h = self.height - StatusStrip.height() }, group },
     }
-    UIManager:setDirty(self, function()
-        return "full", self.dimen
+    Sleep.dirty(self, function()
+        return self.refresh:mode(kind), self.dimen
     end)
 end
 
@@ -221,7 +231,7 @@ function TokenScreen:show_waiting()
         self:paragraph(s.privacy_note, SERIF, 14),
         VerticalSpan:new{ width = gap },
         self:button(s.stop_button),
-    })
+    }, "waiting")
 end
 
 function TokenScreen:show_message(message)
@@ -233,7 +243,7 @@ function TokenScreen:show_message(message)
         self:paragraph(message, SERIF, 18),
         VerticalSpan:new{ width = gap * 2 },
         self:button(self.strings.stop_button),
-    })
+    }, "message")
 end
 
 function TokenScreen:paintTo(bb, x, y)
@@ -245,24 +255,32 @@ function TokenScreen:strip_region()
     return StatusStrip.region(self.width, self.height)
 end
 
-function TokenScreen:onSuspend()
+function TokenScreen:onBack()
     UIManager:close(self)
+    return true
+end
+
+-- KOReader sends Close to every window before it quits, and with keep_screensaver before powering off, when the
+-- window stays so the sleep screen is left alone.
+function TokenScreen:onClose(arg)
+    if not (arg and arg.keep_screensaver) then
+        UIManager:close(self)
+    end
+end
+
+TokenScreen.onSetRotationMode = Portrait.ignore_rotation
+
+-- Asleep, the Wi-Fi goes, so the session ends at once. What it says is drawn when the device wakes up.
+function TokenScreen:onSuspend()
+    if self.server then
+        self:stop_session()
+        self:show_message(self.strings.token_page_slept)
+    end
 end
 
 function TokenScreen:onCloseWidget()
-    UIManager:unschedule(self.tick_callback)
-    if self.confirm then
-        UIManager:close(self.confirm)
-        self.confirm = nil
-    end
-    if self.server then
-        self.server:stop()
-        self.server = nil
-    end
-    if self.firewall_open then
-        firewall("D", self.port)
-        self.firewall_open = false
-    end
+    self:stop_session()
+    Portrait.close(self)
     UIManager:setDirty(nil, "full")
 end
 

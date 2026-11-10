@@ -23,6 +23,9 @@ local Players = require("ink_knight/ui/players")
 local PuzzleScreen = require("ink_knight/ui/puzzle_screen")
 local Puzzles = require("ink_knight/puzzles")
 local ReviewScreen = require("ink_knight/ui/review_screen")
+local SavedState = require("ink_knight/saved_state")
+local Sleep = require("ink_knight/sleep")
+local State = require("ink_knight/state")
 local TokenAccess = require("ink_knight/token_access")
 local TokenScreen = require("ink_knight/ui/token_screen")
 local TokenScopes = require("ink_knight/token_scopes")
@@ -32,7 +35,7 @@ local Toast = require("ink_knight/ui/toast")
 local TICK_BUSY, TICK_IDLE = 0.3, 1
 -- A new request does not wait for the next check, and the screen still paints the tap before the child starts.
 local TICK_SOON = 0.05
-local REFRESH_CHOICES = { 1, 5, 15, 0 }
+local REFRESH_CHOICES = State.OPTIONS.refresh_minutes[1]
 local EVENT_RECONNECT = 10
 -- Lichess also closes a seek when it finds an opponent, and the start of the game comes on the other stream,
 -- so an ended seek only counts as refused if no game started in this time.
@@ -79,9 +82,11 @@ local function net_dir()
     return DataStorage:getDataDir() .. "/cache/ink_knight"
 end
 
-function Home:init()
+-- Runs inside Page:init, with the screen already in portrait.
+function Home:setup()
     self.strings = I18n[I18n.language_from(G_reader_settings:readSetting("language"))]
     self.title = self.strings.games_title
+    self.broken_text = self.strings.unexpected_error
     self.decode = decode
     self.token_store = new_token_store()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/ink_knight.lua")
@@ -94,15 +99,17 @@ function Home:init()
     self.minute_callback = function() self:on_minute() end
     self.token, self.token_protected = self.token_store:load()
     self.build = function() return self:build_rows() end
-    Page.init(self)
+    -- The plugin opens over KOReader, so its first page flashes whatever the count of an earlier visit.
+    Page.refresh:reset()
+    Page.setup(self)
     self:schedule_minute()
 end
 
--- One clock for all the screens: only the one on top shows the new minute.
+-- One clock for all the screens: only the one on top shows the new minute. Its timers, like every timer of the
+-- plugin, wait while the device sleeps, so nothing is drawn over the sleep screen.
 function Home:schedule_minute()
-    UIManager:unschedule(self.minute_callback)
     if not self.is_closed then
-        UIManager:scheduleIn(60 - os.date("*t").sec, self.minute_callback)
+        Sleep.schedule(self, 60 - os.date("*t").sec, self.minute_callback)
     end
 end
 
@@ -116,7 +123,7 @@ function Home:on_minute()
 end
 
 function Home:info(text, timeout)
-    Toast.show(text, timeout)
+    Toast.show(self, text, timeout)
 end
 
 function Home:error_text(status)
@@ -203,17 +210,18 @@ function Home:should_retry_account()
 end
 
 function Home:schedule_tick()
-    UIManager:unschedule(self.tick_callback)
     if self.is_closed or not self.net then
+        Sleep.unschedule(self, self.tick_callback)
         return
     end
-    UIManager:scheduleIn(self.net:has_pending_request() and TICK_BUSY or TICK_IDLE, self.tick_callback)
+    Sleep.schedule(self, self.net:has_pending_request() and TICK_BUSY or TICK_IDLE, self.tick_callback)
 end
 
 function Home:tick_soon()
-    UIManager:unschedule(self.tick_callback)
     if not self.is_closed and self.net then
-        UIManager:scheduleIn(TICK_SOON, self.tick_callback)
+        Sleep.schedule(self, TICK_SOON, self.tick_callback)
+    else
+        Sleep.unschedule(self, self.tick_callback)
     end
 end
 
@@ -226,7 +234,7 @@ function Home:tick()
         logger.warn("Ink Knight: network tick failed", err)
         self:info(self.strings.unexpected_error)
     end
-    local minutes = self.settings:readSetting("refresh_minutes", 5)
+    local minutes = self:option("refresh_minutes")
     if minutes > 0 and self.my_id and not self.suspended and os.time() - (self.games_at or 0) >= minutes * 60 and not self:has_game_open() then
         self:reload_games()
     end
@@ -256,7 +264,7 @@ function Home:open_events()
     end, function()
         self.events = nil
         if not self.is_closed and not self.suspended then
-            UIManager:scheduleIn(EVENT_RECONNECT, function() self:open_events() end)
+            Sleep.schedule(self, EVENT_RECONNECT, function() self:open_events() end)
         end
     end)
 end
@@ -402,6 +410,7 @@ function Home:open_hub()
     end
     self.hub = Page:new{
         title = self.strings.games_title,
+        broken_text = self.strings.unexpected_error,
         build = function(page)
             page.subtitle = self.my_name
             return self:hub_rows()
@@ -527,6 +536,7 @@ function Home:open_page(args)
             closed(page)
         end
     end
+    args.broken_text = args.broken_text or self.strings.unexpected_error
     local page = Page:new(args)
     self.pages[#self.pages + 1] = page
     UIManager:show(page)
@@ -580,8 +590,27 @@ function Home:choose_promotion(moves, on_move)
     } } }, { close_on_tap = true })
 end
 
+-- An option as saved, or its default when the save has a value that no longer exists.
+function Home:option(key)
+    return State.option(key, self.settings:readSetting(key))
+end
+
+-- A game without internet that can be continued, or nil. A save that cannot be played any more is removed, so
+-- the menu stops offering it.
+function Home:saved_game(key)
+    local saved = self.settings:readSetting(key)
+    local game = saved ~= nil and SavedState.restore(function(data)
+        return State.read_game(data, key == "two_player_game")
+    end, saved, logger.warn)
+    if saved ~= nil and not game then
+        self.settings:delSetting(key)
+        self.settings:flush()
+    end
+    return game or nil
+end
+
 function Home:is_rated()
-    return self.settings:readSetting("rated", false) == true
+    return self:option("rated")
 end
 
 function Home:allows(feature)
@@ -613,7 +642,7 @@ end
 
 function Home:margin_label(margin)
     local s = self.strings
-    margin = margin or self.settings:readSetting("rating_margin", 0)
+    margin = margin or self:option("rating_margin")
     return margin == 0 and s.margin_any or string.format(s.margin_value, margin)
 end
 
@@ -637,7 +666,7 @@ end
 
 function Home:refresh_label(minutes)
     local s = self.strings
-    minutes = minutes or self.settings:readSetting("refresh_minutes", 5)
+    minutes = minutes or self:option("refresh_minutes")
     return minutes == 0 and s.manual or string.format(s.every_minutes, minutes)
 end
 
@@ -702,7 +731,7 @@ end
 -- The rating range of a seek, when the reader set a margin.
 function Home:seek_range(perf)
     local account_perf = self.account and self.account.perfs and self.account.perfs[perf]
-    return Api.rating_range(account_perf and account_perf.rating, self.settings:readSetting("rating_margin", 0))
+    return Api.rating_range(account_perf and account_perf.rating, self:option("rating_margin"))
 end
 
 function Home:seek_menu()
@@ -730,7 +759,7 @@ function Home:start_seek(minutes, increment)
         -- or it refused the seek, or the network dropped. Only the absence of a game tells them apart.
         self.seek = nil
         self:end_seek()
-        UIManager:scheduleIn(SEEK_GRACE, function()
+        Sleep.schedule(self, SEEK_GRACE, function()
             if self.seek_attempt == attempt and not self.is_closed then
                 self.seek_attempt = nil
                 self.open_on_start = false
@@ -1015,20 +1044,11 @@ function Home:start_ai_game(request)
     end)
 end
 
-local function known_or(name, names, default)
-    for _, known in ipairs(names) do
-        if known == name then
-            return name
-        end
-    end
-    return default
-end
-
 -- Every board screen reads these when it paints, so a change shows in the next game without reopening anything.
 function Home:apply_board_look()
-    BoardScreen.style = known_or(self.settings:readSetting("board_style"), BoardScreen.style_names(), "plain")
-    BoardScreen.piece_set = known_or(self.settings:readSetting("piece_set"), BoardScreen.piece_set_names(), "classic")
-    BoardScreen.coordinates = self.settings:isTrue("board_coordinates")
+    BoardScreen.style = self:option("board_style")
+    BoardScreen.piece_set = self:option("piece_set")
+    BoardScreen.coordinates = self:option("board_coordinates")
 end
 
 -- sample(bb, name, x, y, size) draws each choice before its name, two sizes wide, so the drawings line up.
@@ -1085,13 +1105,13 @@ end
 function Home:offline_rows(page)
     local s = self.strings
     local rows = {}
-    if self.settings:readSetting("offline_game") then
+    if self:saved_game("offline_game") then
         rows[#rows + 1] = { kind = "primary", text = s.resume_offline, callback = function()
             self:close_pages()
             OfflineGame.open(self, { resume = true })
         end }
     end
-    if self.settings:readSetting("two_player_game") then
+    if self:saved_game("two_player_game") then
         rows[#rows + 1] = { kind = "secondary", text = s.resume_two_players, callback = function()
             self:close_pages()
             OfflineGame.open(self, { resume = true, two_players = true })
@@ -1145,7 +1165,11 @@ local function pile_key(angle)
 end
 
 function Home:puzzle_pile(angle)
-    return self.settings:readSetting(pile_key(angle), {})
+    return State.read_pile(self.settings:readSetting(pile_key(angle)))
+end
+
+function Home:puzzle_results()
+    return State.read_results(self.settings:readSetting("puzzle_results"))
 end
 
 -- angle: a theme, or Puzzles.REVIEW for the missed ones, which come from their own list and not from a batch.
@@ -1165,7 +1189,7 @@ end
 -- The puzzles a new batch must not bring again: the one on the screen and those whose result waits to be sent.
 function Home:known_puzzle_ids()
     local known = {}
-    for _, result in ipairs(self.settings:readSetting("puzzle_results", {})) do
+    for _, result in ipairs(self:puzzle_results()) do
         known[result.id] = true
     end
     if self.puzzle_in_play then
@@ -1290,7 +1314,7 @@ function Home:ensure_puzzles(angle, on_done)
 end
 
 function Home:add_puzzle_result(result)
-    local results = self.settings:readSetting("puzzle_results", {})
+    local results = self:puzzle_results()
     results[#results + 1] = result
     self.settings:saveSetting("puzzle_results", results)
     self.settings:flush()
@@ -1299,7 +1323,7 @@ end
 
 -- Results wait on the device until they get through. A result lost to the network is sent again next time.
 function Home:flush_puzzles()
-    local results = self.settings:readSetting("puzzle_results", {})
+    local results = self:puzzle_results()
     if not self.net or not self:allows("puzzle_results") or self.sending_results or #results == 0 then
         return
     end
@@ -1308,7 +1332,7 @@ function Home:flush_puzzles()
     self.net:request(Api.puzzle_results(Puzzles.results_body(results, count), angle), function(status)
         self.sending_results = false
         if status == 200 then
-            local current = self.settings:readSetting("puzzle_results", {})
+            local current = self:puzzle_results()
             for _ = 1, count do
                 table.remove(current, 1)
             end
@@ -1507,8 +1531,8 @@ function Home:settings_menu()
         return spliced({
             { kind = "section", text = s.options_section },
             self:rated_row(page),
-            { kind = "toggle", text = s.confirm_moves, on = self.settings:isTrue("confirm_moves"), on_text = s.yes, off_text = s.no, callback = function()
-                self:save_setting("confirm_moves", not self.settings:isTrue("confirm_moves"))
+            { kind = "toggle", text = s.confirm_moves, on = self:option("confirm_moves"), on_text = s.yes, off_text = s.no, callback = function()
+                self:save_setting("confirm_moves", not self:option("confirm_moves"))
                 page:reload()
             end },
             { text = s.refresh_interval, value = self:refresh_label(), wide_value = true, callback = function() self:choose_refresh(function() page:reload(); self:refresh_list() end) end },
@@ -1648,7 +1672,7 @@ function Home:accept_token(token)
 end
 
 function Home:stop_network()
-    UIManager:unschedule(self.tick_callback)
+    Sleep.unschedule(self, self.tick_callback)
     self.events, self.seek = nil, nil
     if self.net then
         self.net:stop()
@@ -1669,6 +1693,8 @@ end
 
 function Home:onResume()
     self.suspended = false
+    -- The sleep screen covered everything, so the next update of the pages flashes.
+    Page.refresh:reset()
     if self.net and self.my_id then
         self:open_events()
         self:reload_games()
@@ -1677,10 +1703,15 @@ end
 
 function Home:onCloseWidget()
     self.is_closed = true
-    UIManager:unschedule(self.minute_callback)
+    Toast.close_all(self)
     self:stop_network()
     BoardScreen.clear_art_cache()
     Page.onCloseWidget(self)
+end
+
+-- The plugin closes and KOReader shows again, so nothing of its screens may stay behind.
+function Home:close_refresh()
+    UIManager:setDirty(nil, "full")
 end
 
 return Home

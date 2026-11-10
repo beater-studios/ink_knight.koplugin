@@ -142,6 +142,11 @@ function Players.show(app, username)
         end
         app:report_or(status, function()
             local user = app.decode(body) or {}
+            -- Every button of the profile puts the id in a path, so an answer without a usable one keeps the id
+            -- that was asked for, which Lichess writes in lower case.
+            if not Api.is_safe_id(user.id) then
+                user.id = username:lower()
+            end
             Players.open_profile(app, user)
         end)
     end)

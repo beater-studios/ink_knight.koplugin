@@ -39,7 +39,7 @@ local real_new = Net.new
 Net.new = function(opts)
     local next_pid = 0
     opts.ca_file = ca_file
-    opts.is_done = function() return true end
+    opts.done = function() return true end
     opts.kill = function() end
     opts.spawn = function(spec)
         local path = spec.url:gsub("^https://[^/]+", ""):gsub("%?.*$", "")
@@ -62,6 +62,12 @@ UIManager.scheduleIn = function(_, _, callback)
     queue[#queue + 1] = callback
 end
 local home
+-- The timers of a window go through sleep.lua, which schedules a stand-in for each function: this tells whether
+-- the stand-in is the one of fn on the window.
+local function stands_for(callback, window, fn)
+    local state = window and window._sleep
+    return state ~= nil and state.tasks[fn] == callback
+end
 local function run_all()
     for _ = 1, 40 do
         if home.net then
@@ -69,7 +75,7 @@ local function run_all()
         end
         while #queue > 0 do
             local callback = table.remove(queue, 1)
-            if callback ~= home.minute_callback and callback ~= home.tick_callback then
+            if not stands_for(callback, home, home.minute_callback) and not stands_for(callback, home, home.tick_callback) then
                 callback()
             end
         end

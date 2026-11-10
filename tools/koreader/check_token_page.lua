@@ -22,6 +22,8 @@ local function check(ok, text)
         print("PROBLEM: " .. text)
     end
 end
+-- What main.lua does when KOReader loads the plugin.
+require("ink_knight/lan").install("ink_knight")
 local received
 local screen = TokenScreen:new{ strings = I18n.pt, port = tonumber(os.getenv("TOKEN_PORT")) or 8644, on_token = function(token) received = token end }
 assert(screen.url, "the page did not start")

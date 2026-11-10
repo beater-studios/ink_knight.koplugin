@@ -13,6 +13,7 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 
+local Portrait = require("ink_knight/portrait")
 local StatusStrip = require("ink_knight/ui/status_strip")
 local TokenScopes = require("ink_knight/token_scopes")
 
@@ -30,11 +31,15 @@ local CreateTokenScreen = InputContainer:extend{
 }
 
 function CreateTokenScreen:init()
+    Portrait.open(self, self.setup)
+end
+
+function CreateTokenScreen:setup()
     local s = self.strings
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     if Device:hasKeys() then
-        self.key_events = { Close = { { Device.input.group.Back } } }
+        self.key_events.Back = { { Device.input.group.Back } }
     end
     local text_width = self.width - 2 * Screen:scaleBySize(24)
     local gap = Screen:scaleBySize(10)
@@ -94,17 +99,29 @@ function CreateTokenScreen:strip_region()
     return StatusStrip.region(self.width, self.height)
 end
 
-function CreateTokenScreen:onClose()
+function CreateTokenScreen:onBack()
     UIManager:close(self)
     return true
 end
 
+-- KOReader sends Close to every window before it quits, and with keep_screensaver before powering off, when the
+-- window stays so the sleep screen is left alone.
+function CreateTokenScreen:onClose(arg)
+    if not (arg and arg.keep_screensaver) then
+        UIManager:close(self)
+    end
+end
+
+CreateTokenScreen.onSetRotationMode = Portrait.ignore_rotation
+
+-- A QR code over a page: it opens and closes with a flash, so no trace of it is left behind.
 function CreateTokenScreen:onShow()
     UIManager:setDirty(self, "full")
     return true
 end
 
 function CreateTokenScreen:onCloseWidget()
+    Portrait.close(self)
     UIManager:setDirty(nil, "full")
 end
 

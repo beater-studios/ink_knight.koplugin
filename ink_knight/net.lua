@@ -1,6 +1,8 @@
 -- Talks to Lichess through child processes, so a TLS handshake or a slow network never freezes the screen.
--- Each request writes to its own files, which tick() reads without waiting.
+-- Each request writes to its own files, which tick() reads without waiting. The child processes, the
+-- connection and the files are the ones of https_request.lua.
 local Api = require("ink_knight/api")
+local Request = require("ink_knight/https_request")
 
 local Net = {}
 Net.__index = Net
@@ -12,15 +14,11 @@ local STREAM_BLOCK_TIMEOUT = 600
 -- What Lichess asks for after a 429.
 local RATE_LIMIT_PAUSE = 60
 
-local function read_file(path)
-    local file = io.open(path, "rb")
-    if not file then
-        return nil
-    end
-    local data = file:read("*a")
-    file:close()
-    return data
-end
+-- The servers of Lichess that ask for the token. The one for endgames does not, so it never gets it.
+local TOKEN_HOSTS = {
+    [Request.host(Api.BASE)] = true,
+    [Request.host(Api.EXPLORER)] = true,
+}
 
 local function exists(path)
     local file = io.open(path, "rb")
@@ -36,7 +34,7 @@ local function quote(text)
 end
 
 -- opts: token, dir (private folder for the files), version, ca_file, and for the tests
--- spawn(spec), is_done(pid, wait), kill(pid), file_size(path), shell(command) and clock().
+-- spawn(spec), done(pid, wait), kill(pid), file_size(path), shell(command) and clock().
 -- on_request() is called whenever a request joins the queue, so the screen can check sooner.
 -- on_unauthorized() is called before on_done when Lichess refuses the token.
 function Net.new(opts)
@@ -44,10 +42,10 @@ function Net.new(opts)
         token = opts.token,
         dir = opts.dir,
         version = opts.version or "0",
-        ca_file = opts.ca_file or "data/ca-bundle.crt",
-        spawn = opts.spawn or Net.spawn_process,
-        is_done = opts.is_done or Net.process_done,
-        kill = opts.kill or Net.kill_process,
+        ca_file = opts.ca_file or Request.CA_FILE,
+        spawn = opts.spawn or Request.spawn,
+        done = opts.done or Request.done,
+        kill = opts.kill or Request.kill,
         file_size = opts.file_size or Net.file_size,
         shell = opts.shell or os.execute,
         clock = opts.clock or os.time,
@@ -58,56 +56,6 @@ function Net.new(opts)
         finished = {},
         serial = 0,
     }, Net)
-end
-
-local PLUGIN_DIR = debug.getinfo(1, "S").source:gsub("^@", ""):gsub("/ink_knight/net%.lua$", "")
-
--- macOS kills a forked child that touches the network, so there each request is a new program. The file with
--- the request goes in the private folder, and the program deletes it as soon as it reads it. Devices run Linux
--- and use a forked child, where the token never reaches a file.
-function Net.spawn_as_program(spec)
-    local spec_path = spec.out_path .. ".spec"
-    local pid_path = spec.out_path .. ".pid"
-    local file = io.open(spec_path, "wb")
-    if not file then
-        return false
-    end
-    file:write(require("rapidjson").encode(spec))
-    file:close()
-    os.execute(string.format("chmod 600 %s; ./luajit %s %s %s >/dev/null 2>&1 & echo $! > %s",
-        quote(spec_path), quote(PLUGIN_DIR .. "/ink_knight/worker_main.lua"), quote(PLUGIN_DIR), quote(spec_path), quote(pid_path)))
-    local pid = tonumber(read_file(pid_path) or "")
-    os.remove(pid_path)
-    return pid or false
-end
-
-local function is_macos()
-    return jit and jit.os == "OSX"
-end
-
-function Net.spawn_process(spec)
-    if is_macos() then
-        return Net.spawn_as_program(spec)
-    end
-    local util = require("ffi/util")
-    local Worker = require("ink_knight/https_worker")
-    return util.runInSubProcess(function() Worker.run(spec) end)
-end
-
-function Net.process_done(pid, wait)
-    if is_macos() then
-        local result = os.execute(string.format("kill -0 %d 2>/dev/null", pid))
-        return not (result == 0 or result == true)
-    end
-    return require("ffi/util").isSubProcessDone(pid, wait)
-end
-
-function Net.kill_process(pid)
-    if is_macos() then
-        os.execute(string.format("kill -9 %d 2>/dev/null", pid))
-        return
-    end
-    require("ffi/util").terminateSubProcess(pid)
 end
 
 function Net.file_size(path)
@@ -134,14 +82,18 @@ function Net:next_prefix()
     return string.format("%s/r%d", self.dir, self.serial)
 end
 
--- The token only ever goes to the servers of Lichess that ask for it.
+local function url_of(request)
+    return (request.base or Api.BASE) .. request.path
+end
+
+-- The token only ever goes to the servers of Lichess that ask for it. The server is the one LuaSocket will
+-- connect to, read by Request.host, never by a pattern of this file.
 local function sends_token(request)
-    local base = request.base or Api.BASE
-    return base == Api.BASE or base == Api.EXPLORER
+    local host = Request.host(url_of(request))
+    return host ~= nil and TOKEN_HOSTS[host] == true
 end
 
 function Net:build_spec(request, prefix, accept, timeout)
-    local base = request.base or Api.BASE
     local headers = {
         ["user-agent"] = "InkKnight/" .. self.version,
         accept = request.accept or accept,
@@ -155,30 +107,32 @@ function Net:build_spec(request, prefix, accept, timeout)
     elseif request.method == "POST" then
         headers["content-length"] = "0"
     end
+    local paths = Request.paths(prefix)
     return {
-        url = base .. request.path,
+        url = url_of(request),
         method = request.method,
         headers = headers,
         body = request.body,
         timeout = timeout,
         ca_file = self.ca_file,
-        out_path = prefix .. ".out",
-        code_path = prefix .. ".code",
-        scopes_path = request.want_scopes and (prefix .. ".scopes") or nil,
+        out_path = paths.out_path,
+        code_path = paths.code_path,
+        -- Lichess states what the token may do in a header of the answer about the account.
+        headers_path = request.want_scopes and paths.headers_path or nil,
     }
 end
 
 function Net:launch_request(job)
     job.prefix = self:next_prefix()
     job.deadline = self.clock() + REQUEST_DEADLINE
-    local pid = self.spawn(self:build_spec(job.request, job.prefix, "application/json", REQUEST_BLOCK_TIMEOUT))
+    job.spec = self:build_spec(job.request, job.prefix, "application/json", REQUEST_BLOCK_TIMEOUT)
+    local pid = self.spawn(job.spec)
     job.pid = pid or nil
 end
 
+-- Every file a request may leave, also the headers of one that did not ask for them.
 function Net:cleanup(prefix)
-    for _, suffix in ipairs({ ".out", ".code", ".scopes", ".out.spec", ".out.pid" }) do
-        os.remove(prefix .. suffix)
-    end
+    Request.remove(Request.paths(prefix))
 end
 
 -- A child that ended still has to be collected, or it stays listed as a zombie.
@@ -190,14 +144,14 @@ end
 
 function Net:reap()
     for index = #self.finished, 1, -1 do
-        if self.is_done(self.finished[index]) then
+        if self.done(self.finished[index]) then
             table.remove(self.finished, index)
         end
     end
 end
 
 -- on_done(status, body, scopes): status is the HTTP code, or nil when the request did not get an answer.
--- scopes is the list Lichess states for the token, only for a request with want_scopes.
+-- scopes is the list Lichess states for the token (the x-oauth-scopes header), only for a request with want_scopes.
 function Net:request(request, on_done)
     table.insert(self.queue, { request = request, on_done = on_done })
     if self.on_request then
@@ -231,7 +185,7 @@ end
 -- This runs for each stream on every tick, and on a Kindle waking up to open a file costs about 30 ms,
 -- so the file is only opened after its size says there is something new.
 function Net:read_stream(stream)
-    local path = stream.prefix .. ".out"
+    local path = Request.paths(stream.prefix).out_path
     if (self.file_size(path) or 0) <= stream.offset then
         return
     end
@@ -261,14 +215,10 @@ end
 function Net:finish_request()
     local job = self.current
     self.current = nil
-    local code = tonumber(read_file(job.prefix .. ".code") or "")
-    local body = read_file(job.prefix .. ".out") or ""
-    local scopes = job.request.want_scopes and read_file(job.prefix .. ".scopes") or nil
+    local code, body, headers = Request.result(job.spec)
+    local scopes = job.request.want_scopes and headers and headers["x-oauth-scopes"] or nil
     self:collect(job.pid)
     self:cleanup(job.prefix)
-    if code == 0 then
-        code = nil
-    end
     if code == 429 then
         self.paused_until = self.clock() + RATE_LIMIT_PAUSE
     end
@@ -282,7 +232,7 @@ end
 
 -- Covers a child that finished and one that crashed: what it managed to write tells them apart.
 function Net:has_ended(pid)
-    return not pid or self.is_done(pid)
+    return not pid or self.done(pid)
 end
 
 -- Called repeatedly by the screen. Lichess asks for one request at a time, so they run in order.
@@ -337,7 +287,7 @@ function Net:stop()
     end
     self.queue = {}
     for _, pid in ipairs(self.finished) do
-        self.is_done(pid, true)
+        self.done(pid, true)
     end
     self.finished = {}
 end

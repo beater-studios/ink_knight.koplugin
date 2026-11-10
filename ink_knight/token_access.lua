@@ -1,4 +1,5 @@
--- Decides what each request gets on the page that receives the token. No network and no disk here, so each rule can be tested.
+-- Decides what each request gets on the page that receives the token, for the server of http_server.lua. No
+-- network and no disk here, so each rule can be tested.
 local TokenAccess = {}
 TokenAccess.__index = TokenAccess
 
@@ -12,14 +13,7 @@ local function escape_html(text)
     }))
 end
 
-function TokenAccess.is_private_ip(ip)
-    local a, b = tostring(ip):match("^(%d+)%.(%d+)%.%d+%.%d+$")
-    a, b = tonumber(a), tonumber(b)
-    if not a then
-        return false
-    end
-    return a == 10 or (a == 172 and b >= 16 and b <= 31) or (a == 192 and b == 168)
-end
+local Lan = require("ink_knight/lan")
 
 function TokenAccess.is_valid_token(token)
     return type(token) == "string" and #token >= 8 and #token <= 128 and token:match("^lip_[%w_]+$") ~= nil
@@ -53,6 +47,11 @@ end
 
 function TokenAccess:is_denied(ip)
     return self.denied[ip] == true
+end
+
+-- The device in use keeps connections of its own on the server. Before the approval there is none.
+function TokenAccess:preferred_ip()
+    return self.client_ip
 end
 
 function TokenAccess:reject(ip)
@@ -105,12 +104,13 @@ local function form_value(body, key)
     end
 end
 
--- request: the raw head. body: what came after it. ip: the address of the connection.
-function TokenAccess:handle(request, body, ip)
+-- request: the raw head. ip: the address of the connection. body: nil in the first call; the form, read by the
+-- server only after this said so, in the second.
+function TokenAccess:handle(request, ip, body)
     if self.denied[ip] then
-        return { status = 503, body = "", content_type = "text/plain", close_only = true }
+        return { close_only = true }
     end
-    if #request > TokenAccess.MAX_REQUEST_BYTES or not TokenAccess.is_private_ip(ip) then
+    if #request > TokenAccess.MAX_REQUEST_BYTES or not Lan.is_private_ip(ip) then
         return self:reject(ip)
     end
     local method, target = request:match("^(%u+) ([^%s]+) HTTP/1%.[01]\r?\n")
@@ -150,6 +150,14 @@ function TokenAccess:handle(request, body, ip)
         if origin and origin ~= "http://" .. self.host then
             return self:reject(ip)
         end
+        -- Only now, with the code, the host, the approval and the origin checked, is the body read.
+        if body == nil then
+            local size = tonumber(request:match("\n[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:[ \t]*(%d+)")) or 0
+            if size > TokenAccess.MAX_BODY_BYTES then
+                return { close_only = true }
+            end
+            return { read_body = size }
+        end
         local token = form_value(body, "token")
         token = token and token:gsub("^%s+", ""):gsub("%s+$", "")
         if not TokenAccess.is_valid_token(token) then
@@ -161,7 +169,7 @@ function TokenAccess:handle(request, body, ip)
     return self:reject(ip)
 end
 
-local STATUS_TEXT = { [200] = "OK", [404] = "Not Found", [503] = "Service Unavailable" }
+local STATUS_TEXT = { [200] = "OK", [404] = "Not Found", [500] = "Internal Server Error", [503] = "Service Unavailable" }
 
 function TokenAccess.response_head(result, size)
     return table.concat({

@@ -1,4 +1,17 @@
 package.path = "./?.lua;" .. package.path
+-- KOReader's JSON library is not in plain LuaJIT. The headers of an answer are a flat object of texts, which
+-- is all this one reads.
+package.preload["rapidjson"] = function()
+    return {
+        decode = function(text)
+            local out = {}
+            for key, value in text:gmatch('"([^"]*)"%s*:%s*"([^"]*)"') do
+                out[key] = value
+            end
+            return out
+        end,
+    }
+end
 local Api = require("ink_knight/api")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
@@ -243,7 +256,7 @@ local function fake_net(overrides)
             record.spawned[#record.spawned + 1] = spec
             return next_pid
         end,
-        is_done = function(pid, wait)
+        done = function(pid, wait)
             if wait then record.waited[#record.waited + 1] = pid end
             return record.dead[pid] == true
         end,
@@ -330,10 +343,10 @@ test("a token with odd characters does not start", function()
 end)
 
 test("every request verifies the certificate and the name of the server, and refuses redirects", function()
-    local worker = read_all("ink_knight/https_worker.lua")
-    assert(worker:find("Tls.create", 1, true))
-    assert(worker:find("redirect = false", 1, true))
-    assert(not worker:find("ssl.https", 1, true), "KOReader's module does not check the name on stable versions")
+    local request = read_all("ink_knight/https_request.lua")
+    assert(request:find("Tls.create", 1, true))
+    assert(request:find("redirect = false", 1, true))
+    assert(not request:find("ssl.https", 1, true), "KOReader's module does not check the name on stable versions")
     local tls = read_all("ink_knight/tls.lua")
     assert(tls:find('verify = "peer"', 1, true))
     assert(tls:find("cafile = opts.ca_file", 1, true))
@@ -529,6 +542,11 @@ test("the token only goes to the servers of Lichess that ask for it", function()
     unknown:request({ method = "GET", base = "https://example.org", path = "/" }, function() end)
     unknown:tick()
     eq(unknown_record.spawned[1].headers.authorization, nil)
+    -- LuaSocket reads this as evil.com, where a pattern of its own would see lichess.org.
+    local tricked, tricked_record = fake_net()
+    tricked:request({ method = "GET", base = "https://lichess.org:x@evil.com", path = "/" }, function() end)
+    tricked:tick()
+    eq(tricked_record.spawned[1].headers.authorization, nil)
 end)
 
 test("a game with no limit is never asked to be rated, and has no clock or days", function()
@@ -599,18 +617,18 @@ test("the scopes of the token come with the account, and the file is cleaned up"
     net:request(Api.account(), function(code, _, list) status, scopes = code, list end)
     net:tick()
     local spec = record.spawned[1]
-    assert(spec.scopes_path, "the account asks for the scopes")
+    assert(spec.headers_path, "the account asks for the headers")
     write(net.current.prefix .. ".code", "200")
-    write(spec.scopes_path, "board:play,puzzle:read")
+    write(spec.headers_path, '{"content-type":"application/json","x-oauth-scopes":"board:play,puzzle:read"}')
     record.dead[net.current.pid] = true
-    local path = spec.scopes_path
+    local path = spec.headers_path
     net:tick()
     eq(status, 200); eq(scopes, "board:play,puzzle:read")
     eq(read_all(path), nil)
     local other, other_record = fake_net()
     other:request(Api.playing(), function() end)
     other:tick()
-    eq(other_record.spawned[1].scopes_path, nil)
+    eq(other_record.spawned[1].headers_path, nil)
 end)
 
 test("a game knows when a repetition can be claimed", function()

@@ -1,0 +1,139 @@
+-- Reads back what Ink Knight keeps in koreader/settings/ink_knight.lua, whichever version saved it: the options,
+-- the games without internet and the puzzles kept for when there is no connection. Whatever does not make sense
+-- any more is left out, so an update or a damaged file never stops the plugin from opening. No KOReader here, so
+-- the tests can use it.
+local Chess = require("ink_knight/chess")
+local SavedState = require("ink_knight/saved_state")
+
+local State = {}
+
+-- Goes up only when a field of a saved game changes its meaning. A field added later gets its default instead.
+State.GAME_VERSION = 1
+
+-- key = { allowed values, default }. A value that no longer exists, or of another type, gets the default.
+State.OPTIONS = {
+    refresh_minutes = { { 1, 5, 15, 0 }, 5 },
+    rating_margin = { { 0, 100, 200, 300, 500 }, 0 },
+    rated = { { true, false }, false },
+    confirm_moves = { { true, false }, false },
+    board_coordinates = { { true, false }, false },
+    board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast" }, "plain" },
+    piece_set = { { "classic", "cburnett", "merida" }, "classic" },
+}
+
+function State.option(key, saved)
+    local option = assert(State.OPTIONS[key], "state: unknown option " .. tostring(key))
+    return SavedState.one_of(saved, option[1], option[2])
+end
+
+-- Moves as Lichess writes them, "e2e4 e7e5 e7e8q", separated by single spaces.
+local function is_moves(text)
+    if type(text) ~= "string" or text:find("^ ") or text:find(" $") or text:find("  ") then
+        return false
+    end
+    for move in text:gmatch("[^ ]+") do
+        if not move:match("^[a-h][1-8][a-h][1-8][qrbn]?$") then
+            return false
+        end
+    end
+    return true
+end
+
+-- Whether every move is legal where it was played, from the start.
+local function plays_from_start(moves)
+    local position = Chess.parse_fen(Chess.START_FEN)
+    for uci in moves:gmatch("[^ ]+") do
+        local legal = false
+        for _, move in ipairs(Chess.legal_moves(position)) do
+            if Chess.move_to_uci(move) == uci then
+                legal = true
+                break
+            end
+        end
+        if not legal then
+            return false
+        end
+        position = Chess.apply_uci(position, uci)
+    end
+    return true
+end
+
+-- A game without internet, against the engine or between two people. Returns the game to continue, or nil when the
+-- save does not hold one that can be played: the moves must still be legal from the start.
+function State.read_game(data, two_players)
+    if type(data) ~= "table" then
+        return nil
+    end
+    -- Saves from before the version field have the same format as version 1.
+    local version = data.version == nil and 1 or data.version
+    if version ~= State.GAME_VERSION or not is_moves(data.moves) or not plays_from_start(data.moves) then
+        return nil
+    end
+    if two_players then
+        return { version = State.GAME_VERSION, moves = data.moves, flipped = data.flipped == true }
+    end
+    local my_color = SavedState.one_of(data.my_color, { "w", "b" }, nil)
+    if not my_color then
+        return nil
+    end
+    return {
+        version = State.GAME_VERSION,
+        moves = data.moves,
+        my_color = my_color,
+        level = SavedState.one_of(data.level, { 1, 2, 3, 4 }, 1),
+        -- Only since 0.3.0: an older game had no choice, and the next one is random again.
+        color_choice = SavedState.one_of(data.color_choice, { "random", "white", "black" }, "random"),
+    }
+end
+
+local function is_text_list(list)
+    if type(list) ~= "table" or #list == 0 then
+        return false
+    end
+    for index = 1, #list do
+        if type(list[index]) ~= "string" then
+            return false
+        end
+    end
+    return true
+end
+
+-- A pile of puzzles, in its order, without the ones that cannot be played and without repeated ids.
+function State.read_pile(saved)
+    local pile, seen = {}, {}
+    if type(saved) ~= "table" then
+        return pile
+    end
+    for _, puzzle in ipairs(SavedState.list(saved, nil, {})) do
+        if type(puzzle) == "table" and type(puzzle.id) == "string" and not seen[puzzle.id]
+            and is_moves(puzzle.played) and is_text_list(puzzle.solution) then
+            seen[puzzle.id] = true
+            puzzle.rating = type(puzzle.rating) == "number" and puzzle.rating or nil
+            puzzle.angle = type(puzzle.angle) == "string" and puzzle.angle or nil
+            puzzle.pile = type(puzzle.pile) == "string" and puzzle.pile or nil
+            pile[#pile + 1] = puzzle
+        end
+    end
+    return pile
+end
+
+-- The results waiting to reach Lichess, without the ones that could not be sent.
+function State.read_results(saved)
+    local results = {}
+    if type(saved) ~= "table" then
+        return results
+    end
+    for _, result in ipairs(SavedState.list(saved, nil, {})) do
+        if type(result) == "table" and type(result.id) == "string" and type(result.win) == "boolean" then
+            results[#results + 1] = {
+                id = result.id,
+                win = result.win,
+                angle = type(result.angle) == "string" and result.angle or nil,
+                rated = result.rated ~= false,
+            }
+        end
+    end
+    return results
+end
+
+return State

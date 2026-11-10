@@ -8,10 +8,15 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
-local bit = require("bit")
 local ffi = require("ffi")
+local logger = require("logger")
 
 local BoardDiff = require("ink_knight/board_diff")
+local Page = require("ink_knight/ui/page")
+local Portrait = require("ink_knight/portrait")
+local Refresh = require("ink_knight/refresh")
+local Sleep = require("ink_knight/sleep")
+local State = require("ink_knight/state")
 local StatusStrip = require("ink_knight/ui/status_strip")
 
 local Screen = Device.screen
@@ -45,9 +50,10 @@ local STYLES = {
     end },
     contrast = { halo = true, dark = Blitbuffer.Color8(0x55) },
 }
-local STYLE_NAMES = { "plain", "newspaper", "crosshatch", "dotted", "contrast" }
+-- The same names the saved options accept, so a saved style always has a drawing.
+local STYLE_NAMES = State.OPTIONS.board_style[1]
 -- "classic" is drawn from FreeSerif. The others are pictures in ink_knight/pieces, see NOTICE for their authors.
-local PIECE_SET_NAMES = { "classic", "cburnett", "merida" }
+local PIECE_SET_NAMES = State.OPTIONS.piece_set[1]
 local PLUGIN_DIR = debug.getinfo(1, "S").source:gsub("^@", ""):gsub("/ink_knight/ui/board_screen%.lua$", "")
 -- The pieces of a set at a size are the same on every screen, and drawing a picture costs time on a Kindle.
 local art_cache = {}
@@ -66,6 +72,8 @@ local BoardScreen = InputContainer:extend{
     on_closed = nil,
     on_suspend = nil,
     on_resume = nil,
+    -- Shown in place of the board when it cannot be drawn.
+    broken_text = nil,
 }
 
 local function face(name, size)
@@ -278,25 +286,26 @@ function BoardScreen.piece_set_names()
     return PIECE_SET_NAMES
 end
 
+-- The layout only fits portrait.
 function BoardScreen:init()
-    -- The layout only fits portrait, and odd rotation modes are landscape.
-    local rotation = Screen:getRotationMode()
-    if bit.band(rotation, 1) == 1 then
-        self.restore_rotation = rotation
-        Screen:setRotationMode(Screen.DEVICE_ROTATED_UPRIGHT)
-    end
+    Portrait.open(self, self.setup)
+end
+
+function BoardScreen:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.ges_events = { Tap = { GestureRange:new{ ges = "tap", range = self.dimen } } }
     if Device:hasKeys() then
-        self.key_events = { Close = { { Device.input.group.Back } } }
+        self.key_events.Back = { { Device.input.group.Back } }
     end
+    Sleep.watch(self)
     self.scale = math.min(self.width / 600, self.height / 800)
     self:layout()
     self.tiles = {}
     self.labels = {}
     self.state = self.state or {}
-    self.refreshes = 0
+    -- Not "refresh", which is the method that sends a change to the screen.
+    self.refresh_count = Refresh.new(FULL_REFRESH_EVERY)
 end
 
 function BoardScreen:px(value)
@@ -523,14 +532,26 @@ function BoardScreen:paint_buttons(bb)
     end
 end
 
-function BoardScreen:paintTo(bb, x, y)
-    self.dimen.x, self.dimen.y = x, y
-    bb:paintRect(0, 0, self.width, self.height, WHITE)
+function BoardScreen:paint_game(bb)
     self:paint_bar(bb, self.top_bar, self.state.top)
     self:paint_board(bb)
     self:paint_bar(bb, self.bottom_bar, self.state.bottom)
     local rect = self.status_rect
     self:paint_text(bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
+end
+
+function BoardScreen:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    bb:paintRect(0, 0, self.width, self.height, WHITE)
+    -- The game comes from Lichess or from a save. If it cannot be drawn, a short message takes its place, and the
+    -- buttons below, with the way back, still work.
+    local ok, err = pcall(self.paint_game, self, bb)
+    if not ok then
+        logger.warn("Ink Knight: could not draw the board", err)
+        local bottom = self.buttons_rect.y
+        bb:paintRect(0, 0, self.width, bottom, WHITE)
+        self:paint_text(bb, self.broken_text or "", REGULAR, 18, self:px(10), 0, self.width - self:px(20), bottom, "center")
+    end
     self:paint_buttons(bb)
     StatusStrip.paint(bb, self.width, self.height)
 end
@@ -539,9 +560,10 @@ function BoardScreen:strip_region()
     return StatusStrip.region(self.width, self.height)
 end
 
+-- Asleep, it waits for the device to wake up, and then the whole board is drawn again.
 function BoardScreen:dirty(mode, x, y, w, h)
     local region = Geom:new{ x = x, y = y, w = w, h = h }
-    UIManager:setDirty(self, function() return mode, region end)
+    Sleep.dirty(self, function() return mode, region end)
 end
 
 function BoardScreen:dirty_rect(mode, rect)
@@ -549,6 +571,7 @@ function BoardScreen:dirty_rect(mode, rect)
 end
 
 -- Sends to the screen only what changed: each square on its own, so a move does not redraw what lies between.
+-- The clock changes every second when it is short, so it stays out of the count, with "fast" on its bars.
 function BoardScreen:refresh(what)
     local shown = BoardDiff.snapshot(self.state)
     local changes = BoardDiff.changes(self.shown, shown)
@@ -558,10 +581,12 @@ function BoardScreen:refresh(what)
         self:dirty_rect("fast", self.bottom_bar)
         return
     end
-    self.refreshes = self.refreshes + 1
-    local flash = what == "full" or self.refreshes % FULL_REFRESH_EVERY == 0
-    if flash or changes.whole then
-        UIManager:setDirty(self, function() return flash and "full" or "ui", self.dimen end)
+    if what == "full" then
+        self.refresh_count:reset()
+    end
+    local mode = self.refresh_count:mode("cells")
+    if mode == "full" or changes.whole then
+        Sleep.dirty(self, function() return mode, self.dimen end)
         return
     end
     if #changes.squares > MAX_SEPARATE_SQUARES then
@@ -601,7 +626,8 @@ function BoardScreen:onTap(_, ges)
     return true
 end
 
-function BoardScreen:onClose()
+-- The Back key does what the back button does: a game with a running clock asks first.
+function BoardScreen:onBack()
     if self.on_close_request then
         self.on_close_request()
     else
@@ -610,10 +636,20 @@ function BoardScreen:onClose()
     return true
 end
 
--- The whole screen once when it opens. Only after that does it send what changed.
+-- KOReader sends Close to every window before it quits, and with keep_screensaver before powering off, when the
+-- window stays so the sleep screen is left alone. Nothing is asked then.
+function BoardScreen:onClose(arg)
+    if not (arg and arg.keep_screensaver) then
+        UIManager:close(self)
+    end
+end
+
+-- The whole screen once when it opens, with a flash, since it comes over a page. Only after that does it send
+-- what changed.
 function BoardScreen:onShow()
     self.shown = BoardDiff.snapshot(self.state)
-    UIManager:setDirty(self, function() return "ui", self.dimen end)
+    local mode = self.refresh_count:mode("cells")
+    Sleep.dirty(self, function() return mode, self.dimen end)
     return true
 end
 
@@ -629,9 +665,7 @@ function BoardScreen:onResume()
     end
 end
 
-function BoardScreen:onSetRotationMode()
-    return true
-end
+BoardScreen.onSetRotationMode = Portrait.ignore_rotation
 
 function BoardScreen:onCloseWidget()
     for _, list in ipairs({ self.tiles, self.labels }) do
@@ -643,10 +677,9 @@ function BoardScreen:onCloseWidget()
     if self.on_closed then
         self.on_closed()
     end
-    if self.restore_rotation then
-        Screen:setRotationMode(self.restore_rotation)
-    end
-    UIManager:setDirty(nil, "ui")
+    Portrait.close(self)
+    -- A page of the plugin shows again underneath, as one more update of the pages.
+    UIManager:setDirty(nil, Page.refresh_mode())
 end
 
 return BoardScreen

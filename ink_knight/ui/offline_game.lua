@@ -8,6 +8,8 @@ local Chess = require("ink_knight/chess")
 local Engine = require("ink_knight/engine")
 local Game = require("ink_knight/game")
 local MoveList = require("ink_knight/ui/move_list")
+local Sleep = require("ink_knight/sleep")
+local State = require("ink_knight/state")
 
 local OfflineGame = {}
 OfflineGame.__index = OfflineGame
@@ -20,7 +22,7 @@ function OfflineGame.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings }, OfflineGame)
     self.two_players = opts.two_players == true
     self.save_key = self.two_players and "two_player_game" or "offline_game"
-    local saved = opts.resume and app.settings:readSetting(self.save_key)
+    local saved = opts.resume and app:saved_game(self.save_key)
     if self.two_players then
         -- No side is the reader's: whoever is to move plays, and the board turns only when asked.
         self.flipped = saved and saved.flipped or false
@@ -41,6 +43,7 @@ function OfflineGame.open(app, opts)
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() self:closed() end,
+        broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
     self:check_end()
@@ -64,9 +67,9 @@ function OfflineGame:save()
     if self:is_over() then
         self.app.settings:delSetting(self.save_key)
     elseif self.two_players then
-        self.app.settings:saveSetting(self.save_key, { flipped = self.flipped, moves = self.moves })
+        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, flipped = self.flipped, moves = self.moves })
     else
-        self.app.settings:saveSetting(self.save_key, { level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
+        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
     end
     self.app.settings:flush()
 end
@@ -214,9 +217,9 @@ function OfflineGame:run_search(opts, on_done)
                 return
             end
         end
-        UIManager:scheduleIn(SLICE_PAUSE, work)
+        Sleep.schedule(self.screen, SLICE_PAUSE, work)
     end
-    UIManager:scheduleIn(SLICE_PAUSE, work)
+    Sleep.schedule(self.screen, SLICE_PAUSE, work)
 end
 
 -- Stops the computer or a hint, so nothing found for a position that is gone lands on the board.

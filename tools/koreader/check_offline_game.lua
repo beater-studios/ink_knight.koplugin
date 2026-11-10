@@ -34,13 +34,19 @@ UIManager.scheduleIn = function(_, _, callback)
 end
 -- The clock of the status strip schedules itself every minute, so it is left out.
 local home
+-- The timers of a window go through sleep.lua, which schedules a stand-in for each function: this tells whether
+-- the stand-in is the one of fn on the window.
+local function stands_for(callback, window, fn)
+    local state = window and window._sleep
+    return state ~= nil and state.tasks[fn] == callback
+end
 local function run_scheduled()
     local guard = 0
     while #queue > 0 do
         guard = guard + 1
         assert(guard < 100000, "the scheduled work never ended")
         local callback = table.remove(queue, 1)
-        if callback ~= home.minute_callback then
+        if not stands_for(callback, home, home.minute_callback) then
             callback()
         end
     end
