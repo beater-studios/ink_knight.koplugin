@@ -44,8 +44,10 @@ function OfflineGame.open(app, opts)
         self.my_color = saved and saved.my_color or chosen or (math.random(2) == 1 and "w" or "b")
         self.flipped = self.my_color == "b"
     end
+    -- A game from a position set up in the editor starts there; nil is the usual start.
+    self.initial_fen = saved and saved.initial_fen or opts.initial_fen
     self.moves = saved and saved.moves or ""
-    self.position, self.last_move = Chess.from_moves(nil, self.moves)
+    self.position, self.last_move = Chess.from_moves(self.initial_fen, self.moves)
     self.seen = {}
     self:count_positions()
     self.tick_callback = function() self:tick() end
@@ -123,7 +125,7 @@ end
 
 -- Three times the same position is a draw, so each one is counted from the start of the game.
 function OfflineGame:count_positions()
-    local position = Chess.parse_fen(Chess.START_FEN)
+    local position = Chess.parse_fen(self.initial_fen or Chess.START_FEN)
     self.seen = { [Chess.position_key(position)] = 1 }
     for uci in self.moves:gmatch("%S+") do
         position = Chess.apply_uci(position, uci)
@@ -141,9 +143,10 @@ function OfflineGame:save()
             clock = self.clock and ChessClock.save(self.clock, socket.gettime()) or nil,
             clock_preset = self.clock_preset,
             clock_paused = self.clock_paused or nil,
+            initial_fen = self.initial_fen,
         })
     else
-        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
+        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves, initial_fen = self.initial_fen })
     end
     self.app.settings:flush()
 end
@@ -205,7 +208,7 @@ function OfflineGame:moves_after_undo()
     if self.two_players then
         return self.moves ~= "" and (self.moves:match("^(.*)%s+%S+$") or "") or nil
     end
-    return Chess.take_back(self.moves, self.my_color)
+    return Chess.take_back(self.moves, self.my_color, Chess.parse_fen(self.initial_fen or Chess.START_FEN).turn)
 end
 
 function OfflineGame:can_undo()
@@ -371,7 +374,7 @@ function OfflineGame:undo()
     end
     self:stop_search()
     self.moves = moves
-    self.position, self.last_move = Chess.from_moves(nil, moves)
+    self.position, self.last_move = Chess.from_moves(self.initial_fen, moves)
     self:count_positions()
     self:check_end()
     -- The time already spent stays, without the increment of the move taken back, and the side to move again is
@@ -471,14 +474,14 @@ function OfflineGame:on_button(button)
         self:render()
     elseif button == "moves" then
         self.san_cache = self.san_cache or {}
-        local sans, first_number, first_turn = Chess.san_list(nil, self.moves, self.san_cache)
-        MoveList.show(self.app, sans, first_number, first_turn, { moves = self.moves })
+        local sans, first_number, first_turn = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
+        MoveList.show(self.app, sans, first_number, first_turn, { initial_fen = self.initial_fen, moves = self.moves })
     elseif button == "again" then
         UIManager:close(self.screen)
         if self.two_players then
-            OfflineGame.open(self.app, { two_players = true, clock = self.clock_preset })
+            OfflineGame.open(self.app, { two_players = true, clock = self.clock_preset, initial_fen = self.initial_fen })
         else
-            OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })
+            OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice, initial_fen = self.initial_fen })
         end
     end
 end

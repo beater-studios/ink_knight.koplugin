@@ -54,9 +54,13 @@ test("there are the 18 stages of the app, with every text in the three languages
     eq(levels, 110)
 end)
 
-local Solver = require("tools/learn/solver")
+-- Only in the repository: a package, as on the Kindle before an install, leaves tools/ out.
+local has_solver, Solver = pcall(require, "tools/learn/solver")
 
 test("every level can be done within its par, as on the site", function()
+    if not has_solver then
+        return
+    end
     local unproven = {}
     for _, stage in ipairs(stages()) do
         for index, level in ipairs(stage.levels) do

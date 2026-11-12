@@ -349,7 +349,8 @@ test("every request verifies the certificate and the name of the server, and ref
     assert(not request:find("ssl.https", 1, true), "KOReader's module does not check the name on stable versions")
     local tls = read_all("ink_knight/tls.lua")
     assert(tls:find('verify = "peer"', 1, true))
-    assert(tls:find("cafile = opts.ca_file", 1, true))
+    assert(tls:find("cafile = ca_file", 1, true))
+    assert(tls:find("Tls.context(opts.ca_file)", 1, true))
     assert(tls:find("Tls.host_matches(Tls.certificate_names", 1, true))
 end)
 

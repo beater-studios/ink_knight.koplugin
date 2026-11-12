@@ -20,6 +20,7 @@ local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local Coordinates = require("ink_knight/coordinates")
 local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
 local CreateTokenScreen = require("ink_knight/ui/create_token_screen")
+local EditorScreen = require("ink_knight/ui/editor_screen")
 local Game = require("ink_knight/game")
 local I18n = require("ink_knight/i18n")
 local LiveGame = require("ink_knight/ui/live_game")
@@ -1313,6 +1314,7 @@ function Home:offline_rows(page)
     end }
     local t = self:learn_texts()
     rows[#rows + 1] = { text = t.learnLearnChess, detail = string.format(t.learnProgressX, self:learn_percent() .. "%"), callback = function() self:learn_menu() end }
+    rows[#rows + 1] = { text = s.editor, detail = s.editor_detail, callback = function() EditorScreen.open(self) end }
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
         rows[#rows + 1] = row

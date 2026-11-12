@@ -19,13 +19,21 @@ local function eq(actual, expected)
     end
 end
 
+-- The repository has every puzzle generated; a package, as on the Kindle before an install, has the first ones.
+local function in_package()
+    return io.open("tools/puzzles/trim.lua", "r") == nil
+end
+
 test("every level has its puzzles, in its ratings, with no id twice", function()
-    eq(Pack.per_level(), Pack.GENERATED_PER_LEVEL)
-    eq(Pack.total(), Pack.GENERATED_PER_LEVEL * #Pack.LEVELS)
+    local per_level = Pack.per_level()
+    if not in_package() then
+        eq(per_level, Pack.GENERATED_PER_LEVEL)
+    end
+    eq(Pack.total(), per_level * #Pack.LEVELS)
     local seen = {}
     for _, level in ipairs(Pack.LEVELS) do
         local list = Pack.list(level)
-        eq(#list, Pack.GENERATED_PER_LEVEL)
+        eq(#list, per_level)
         local range = Pack.RANGES[level]
         for _, entry in ipairs(list) do
             assert(type(entry[1]) == "string" and entry[1]:match("^%w+$"), level .. ": bad id")
@@ -79,6 +87,9 @@ test("the progress of each level is read back without what makes no sense", func
 end)
 
 test("a package keeps the first puzzles of each level, the same ones in every size", function()
+    if in_package() then
+        return
+    end
     local folder = os.tmpname()
     os.remove(folder)
     -- os.execute gives 0 in Lua 5.1 and true with the Lua 5.2 behavior some LuaJIT builds turn on.

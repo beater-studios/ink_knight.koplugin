@@ -366,12 +366,13 @@ end
 
 -- The moves of a game from the start, without the last move color played and those after it, so it is color's
 -- turn again. nil when color has not played yet.
-function Chess.take_back(moves, color)
+-- first_turn: who played the first move, "w" unless the game started from a position with black to move.
+function Chess.take_back(moves, color, first_turn)
     local list = {}
     for uci in moves:gmatch("%S+") do
         list[#list + 1] = uci
     end
-    local parity = color == "w" and 1 or 0
+    local parity = (color == (first_turn or "w")) and 1 or 0
     for index = #list, 1, -1 do
         if index % 2 == parity then
             return table.concat(list, " ", 1, index - 1)

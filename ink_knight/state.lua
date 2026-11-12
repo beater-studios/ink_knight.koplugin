@@ -52,9 +52,12 @@ local function is_moves(text)
     return true
 end
 
--- Whether every move is legal where it was played, from the start.
-local function plays_from_start(moves)
-    local position = Chess.parse_fen(Chess.START_FEN)
+-- Whether every move is legal where it was played, from the start or from a position set up in the editor.
+local function plays_from_start(moves, initial_fen)
+    local position = Chess.parse_fen(initial_fen or Chess.START_FEN)
+    if not position then
+        return false
+    end
     for uci in moves:gmatch("[^ ]+") do
         local legal = false
         for _, move in ipairs(Chess.legal_moves(position)) do
@@ -79,7 +82,17 @@ function State.read_game(data, two_players)
     end
     -- Saves from before the version field have the same format as version 1.
     local version = data.version == nil and 1 or data.version
-    if version ~= State.GAME_VERSION or not is_moves(data.moves) or not plays_from_start(data.moves) then
+    -- Only since 0.4.0: a game from a position, which must still be one that can be played.
+    local initial_fen = nil
+    if data.initial_fen ~= nil then
+        local Editor = require("ink_knight/editor")
+        local position = type(data.initial_fen) == "string" and Chess.parse_fen(data.initial_fen)
+        if not position or Editor.problem(position) then
+            return nil
+        end
+        initial_fen = data.initial_fen
+    end
+    if version ~= State.GAME_VERSION or not is_moves(data.moves) or not plays_from_start(data.moves, initial_fen) then
         return nil
     end
     if two_players then
@@ -92,6 +105,7 @@ function State.read_game(data, two_players)
             clock = clock and preset and ChessClock.save(clock, 0) or nil,
             clock_preset = clock and preset or nil,
             clock_paused = clock and preset and data.clock_paused == true or nil,
+            initial_fen = initial_fen,
         }
     end
     local my_color = SavedState.one_of(data.my_color, { "w", "b" }, nil)
@@ -105,6 +119,7 @@ function State.read_game(data, two_players)
         level = SavedState.one_of(data.level, { 1, 2, 3, 4 }, 1),
         -- Only since 0.3.0: an older game had no choice, and the next one is random again.
         color_choice = SavedState.one_of(data.color_choice, { "random", "white", "black" }, "random"),
+        initial_fen = initial_fen,
     }
 end
 

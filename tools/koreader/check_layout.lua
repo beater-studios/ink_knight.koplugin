@@ -188,6 +188,22 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home:save_correspondence({ account = LONG_NAME:lower(), name = LONG_NAME, games = kept })
     home:offline_menu()
     check_page(top_page(), language .. " offline menu with correspondence")
+    -- The position editor, its palette, its options with castling, and what to do with the position.
+    home.settings:saveSetting("editor_fen", Chess.START_FEN)
+    local editor = require("ink_knight/ui/editor_screen").open(home)
+    check_board(editor.screen, language .. " editor")
+    editor:choose_piece()
+    check_page(top_page(), language .. " editor palette")
+    UIManager:close(top_page())
+    editor.position = require("ink_knight/editor").new("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    editor:options()
+    check_page(top_page(), language .. " editor options")
+    UIManager:close(top_page())
+    editor:done()
+    check_page(top_page(), language .. " editor play")
+    UIManager:close(top_page())
+    UIManager:close(editor.screen)
+    home.settings:delSetting("editor_fen")
     -- Learn chess: the longest goal of each language in the banner, and the end of a stage.
     local categories = require("ink_knight/data/learn_stages")
     local pawn_stage = categories[1].stages[6]

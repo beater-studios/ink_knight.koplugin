@@ -89,6 +89,47 @@ expect("https://self-signed.badssl.com/", "certificate verify failed")
 expect("https://untrusted-root.badssl.com/", "certificate verify failed")
 expect("https://wrong.host.badssl.com/", "hostname does not match")
 
+-- Every connection of a process shares one context, so the refusals above went through the same one as the
+-- answers, and a refusal must not spoil it for the next request.
+local context = Tls.context(Request.CA_FILE)
+check(context ~= nil and Tls.context(Request.CA_FILE) == context, "the connections of a process share one context")
+local none, why = Tls.context(dir .. "/missing.crt")
+check(none == nil and why ~= nil, "a missing list of certificates gives no context", why)
+expect("https://badssl.com/", 200)
+
+-- A session keeps one connection for a batch, and checks every server as a single request does.
+local session = Request.session()
+local function expect_session(url, expected, label)
+    local spec = new_spec(url)
+    local ok, result = pcall(session.run, session, spec)
+    result = ok and result or ("error: " .. tostring(result))
+    local good
+    if type(expected) == "number" then
+        local code, body = Request.result(spec)
+        good = result == expected and code == expected and (expected ~= 200 or #body > 0)
+    else
+        good = type(result) == "string" and result:find(expected, 1, true) ~= nil
+    end
+    check(good, label .. ": " .. url, result)
+    return spec
+end
+expect_session("https://badssl.com/", 200, "session")
+expect_session("https://badssl.com/", 200, "session, again")
+check(session.connections == 1, "the session answers both on one connection", session.connections)
+expect_session("https://api.example.org:x@badssl.com/", "address refused", "session")
+expect_session("https://expired.badssl.com/", "certificate verify failed", "session")
+expect_session("https://wrong.host.badssl.com/", "hostname does not match", "session")
+expect_session("https://sha256.badssl.com/", 200, "session, after the refusals")
+-- The server may close a kept connection between two requests; a GET that got nothing back goes again once.
+local before = session.connections
+session.conn.sock:close()
+expect_session("https://sha256.badssl.com/", 200, "session, after the connection was closed")
+check(session.connections == before + 1, "a closed connection is opened again", session.connections - before)
+local redirect_in_session = expect_session("https://github.com/koreader/koreader/releases/latest", 302, "session")
+local _, _, session_headers = Request.result(redirect_in_session)
+check(type(session_headers) == "table" and type(session_headers.location) == "string", "a redirect in a session is not followed, and is kept in the headers")
+session:close()
+
 -- A redirect is answered, not followed, and where it points is in the headers.
 local redirect = expect("https://github.com/koreader/koreader/releases/latest", 302)
 local _, _, headers = Request.result(redirect)

@@ -158,8 +158,13 @@ end
 
 -- One question at a time, as Lichess asks. Only a game already finished gets here, never one under way.
 function ReviewScreen:show_analysis()
-    local s, net, app = self.s, self.app.net, self.app
-    local position = self.positions[self.index]
+    ReviewScreen.analyze(self.app, self.positions[self.index])
+end
+
+-- What Lichess knows about a position: the cloud evaluation, the most played moves and, with few pieces, the
+-- tablebase. For a finished game in the review, and for a position set up in the editor.
+function ReviewScreen.analyze(app, position)
+    local s, net = app.strings, app.net
     local fen = Chess.to_fen(position)
     local answers, reached = {}, false
     local function take(name, status, body)

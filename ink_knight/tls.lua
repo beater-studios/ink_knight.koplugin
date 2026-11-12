@@ -39,18 +39,36 @@ function Tls.certificate_names(certificate)
     return alternatives and alternatives.dNSName or {}
 end
 
+-- One context per list of certificates, kept for the life of the process. Building it reads the whole list,
+-- which takes 220 to 300 ms on the Kindle, more than the handshake itself; ssl.wrap with a table of
+-- parameters would build a new one for every connection.
+local contexts = {}
+
+function Tls.context(ca_file)
+    local key = ca_file or ""
+    local ctx = contexts[key]
+    if not ctx then
+        local err
+        ctx, err = require("ssl").newcontext({
+            mode = "client",
+            protocol = "any",
+            options = { "all", "no_sslv2", "no_sslv3", "no_tlsv1", "no_tlsv1_1" },
+            verify = "peer",
+            cafile = ca_file,
+        })
+        if not ctx then
+            return nil, err
+        end
+        contexts[key] = ctx
+    end
+    return ctx
+end
+
 -- What LuaSocket calls to open a connection. opts: ca_file, timeout.
 function Tls.create(opts)
     local socket = require("socket")
     local ssl = require("ssl")
     local try = socket.try
-    local params = {
-        mode = "client",
-        protocol = "any",
-        options = { "all", "no_sslv2", "no_sslv3", "no_tlsv1", "no_tlsv1_1" },
-        verify = "peer",
-        cafile = opts.ca_file,
-    }
     return function()
         local conn = { sock = try(socket.tcp()) }
         local set_timeout = getmetatable(conn.sock).__index.settimeout
@@ -59,7 +77,7 @@ function Tls.create(opts)
         end
         function conn:connect(host, port)
             try(self.sock:connect(host, port))
-            self.sock = try(ssl.wrap(self.sock, params))
+            self.sock = try(ssl.wrap(self.sock, try(Tls.context(opts.ca_file))))
             self.sock:sni(host)
             self.sock:settimeout(opts.timeout)
             try(self.sock:dohandshake())

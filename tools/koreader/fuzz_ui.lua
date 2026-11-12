@@ -184,6 +184,15 @@ fuzz:run{
     end,
 }
 
+-- The position editor, from the starting position.
+fuzz:run{
+    label = "position editor",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        return require("ink_knight/ui/editor_screen").open(home).screen
+    end,
+}
+
 -- The coordinate training, naming squares against the clock.
 fuzz:run{
     label = "coordinates",
