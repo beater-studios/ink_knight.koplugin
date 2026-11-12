@@ -11,6 +11,9 @@ return {
     ["ink_knight/ui/home"] = function(plugin_dir)
         return { plugin_dir = plugin_dir, version = "0" }
     end,
+    ["ink_knight/ui/clock_screen"] = function(plugin_dir)
+        return { app = { strings = strings_from(plugin_dir) }, preset = "5+3" }
+    end,
     ["ink_knight/ui/chart_screen"] = function(plugin_dir)
         return { title = "Rapid", points = {}, stats = {}, strings = strings_from(plugin_dir) }
     end,

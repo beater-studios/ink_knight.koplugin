@@ -101,6 +101,10 @@ check("a marker of the oldest versions, in cache: install removes it", not exist
 Awake.install(id)
 check("install recovers only once", count("preventScreenSaver 0") == 1)
 
+-- Letting go before install, as a check that opens a screen without main.lua, does nothing.
+local Early = dofile(plugin_dir .. "/" .. id .. "/awake.lua")
+check("off before install: does nothing", pcall(Early.set, false) and pcall(Early.set, false, "screen") and #scheduled == 0)
+
 -- A fresh copy of the module, as in the next run of KOReader, with only the marker in cache.
 local leftover = io.open(cache_marker, "w")
 leftover:close()
@@ -159,6 +163,19 @@ Awake.set(false)
 check("one of two off: keeps the device awake", #scheduled == 1 and PluginShare.pause_auto_suspend == true)
 Other.set(false)
 check("both off: stops the timer and restores the auto suspend", #scheduled == 0 and PluginShare.pause_auto_suspend == "previous")
+
+-- Several screens of the same plugin, each its own holder.
+Awake.set(true, "game")
+Awake.set(true, "clock")
+check("two holders on: one timer", #scheduled == 1 and PluginShare.pause_auto_suspend == true)
+Awake.set(false, "game")
+check("one of two holders off: keeps the device awake", #scheduled == 1 and PluginShare.pause_auto_suspend == true)
+Awake.set(false, "puzzle")
+check("off from a holder that holds nothing: keeps the device awake", #scheduled == 1 and PluginShare.pause_auto_suspend == true)
+Awake.set(false)
+check("off without a holder: leaves the named holders alone", #scheduled == 1)
+Awake.set(false, "clock")
+check("the last holder off: stops the timer and restores the auto suspend", #scheduled == 0 and PluginShare.pause_auto_suspend == "previous")
 
 Device.isKindle = function() return false end
 commands, resets = {}, 0

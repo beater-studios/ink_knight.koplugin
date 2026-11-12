@@ -441,17 +441,37 @@ function Chess.play(position, move)
     return play(position, move)
 end
 
-local function insufficient_material(position)
-    local minors, others = 0, 0
+-- The pieces other than the king of each side: minors (bishops and knights) and others.
+local function material(position)
+    local count = { w = { minors = 0, others = 0 }, b = { minors = 0, others = 0 } }
     for _, piece in pairs(position.board) do
         local kind = piece:lower()
-        if kind == "b" or kind == "n" then
-            minors = minors + 1
-        elseif kind ~= "k" then
-            others = others + 1
+        if kind ~= "k" then
+            local side = count[is_white(piece) and "w" or "b"]
+            if kind == "b" or kind == "n" then
+                side.minors = side.minors + 1
+            else
+                side.others = side.others + 1
+            end
         end
     end
-    return others == 0 and minors <= 1
+    return count
+end
+
+local function insufficient_material(position)
+    local count = material(position)
+    return count.w.others + count.b.others == 0 and count.w.minors + count.b.minors <= 1
+end
+
+-- Whether color has pieces enough to give mate at all, for a flag: running out of time against a side that
+-- cannot mate is a draw. A lone king cannot, and neither can a king with one bishop or knight against a lone king.
+function Chess.can_mate(position, color)
+    local count = material(position)
+    local mine, theirs = count[color], count[color == "w" and "b" or "w"]
+    if mine.others > 0 or mine.minors >= 2 then
+        return true
+    end
+    return mine.minors == 1 and theirs.minors + theirs.others > 0
 end
 
 -- What the rules say about a position, for games with no server to tell: nil while it goes on,

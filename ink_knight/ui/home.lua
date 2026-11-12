@@ -11,6 +11,8 @@ local rapidjson = require("rapidjson")
 
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
+local ChessClock = require("ink_knight/chess_clock")
+local ClockScreen = require("ink_knight/ui/clock_screen")
 local Correspondence = require("ink_knight/correspondence")
 local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local Coordinates = require("ink_knight/coordinates")
@@ -1292,8 +1294,15 @@ function Home:offline_rows(page)
     end
     rows[#rows + 1] = { kind = "tiles", columns = 4, items = items }
     rows[#rows + 1] = { text = s.two_players, detail = s.two_players_detail, callback = function()
-        self:close_pages()
-        OfflineGame.open(self, { two_players = true })
+        self:choose_clock(s.two_players, true, function(preset)
+            self:close_pages()
+            OfflineGame.open(self, { two_players = true, clock = preset })
+        end)
+    end }
+    rows[#rows + 1] = { text = s.chess_clock, detail = s.chess_clock_detail, callback = function()
+        self:choose_clock(s.chess_clock, false, function(preset)
+            ClockScreen.open(self, preset)
+        end)
     end }
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
@@ -1330,6 +1339,33 @@ function Home:offline_rows(page)
         rows[#rows + 1] = row
     end
     return rows
+end
+
+-- The time for each side: "Sem relógio" first for a game, which can do without; the last choice is marked, and
+-- with none yet, "Sem relógio".
+function Home:choose_clock(title, can_skip, on_pick)
+    local s = self.strings
+    local last = self:option("clock_preset")
+    local rows = {}
+    if can_skip then
+        rows[1] = { text = s.clock_none, value = last == "none" and "✓" or nil, callback = function()
+            self:save_setting("clock_preset", "none")
+            on_pick(nil)
+        end }
+    end
+    for _, preset in ipairs(ChessClock.PRESETS) do
+        local seconds, increment = ChessClock.parse(preset)
+        rows[#rows + 1] = {
+            text = preset,
+            detail = string.format(s.clock_detail, math.floor(seconds / 60), increment),
+            value = preset == last and "✓" or nil,
+            callback = function()
+                self:save_setting("clock_preset", preset)
+                on_pick(preset)
+            end,
+        }
+    end
+    self:choose(title, rows, { close_on_tap = true })
 end
 
 -- Returns whether score is a new best for the mode and side, which only runs with the clock count.

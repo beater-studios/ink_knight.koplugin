@@ -91,7 +91,7 @@ function LiveGame:connection_ended()
 end
 
 function LiveGame:update_awake()
-    Awake.set(self.game:is_active() and self.game:is_live())
+    Awake.set(self.game:is_active() and self.game:is_live(), self)
 end
 
 function LiveGame:outcome_text()
@@ -459,7 +459,7 @@ end
 function LiveGame:closed()
     self.is_closed = true
     self:disconnect()
-    Awake.set(false)
+    Awake.set(false, self)
     self.app:game_closed(self.id)
 end
 

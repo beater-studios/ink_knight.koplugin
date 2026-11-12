@@ -3,8 +3,10 @@
 local UIManager = require("ui/uimanager")
 local socket = require("socket")
 
+local Awake = require("ink_knight/awake")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
+local ChessClock = require("ink_knight/chess_clock")
 local Engine = require("ink_knight/engine")
 local Game = require("ink_knight/game")
 local MoveList = require("ink_knight/ui/move_list")
@@ -26,6 +28,14 @@ function OfflineGame.open(app, opts)
     if self.two_players then
         -- No side is the reader's: whoever is to move plays, and the board turns only when asked.
         self.flipped = saved and saved.flipped or false
+        -- An optional clock, such as "5+3"; it starts with black's time after white's first move.
+        self.clock_preset = saved and saved.clock_preset or opts.clock
+        if saved and saved.clock then
+            self.clock = ChessClock.restore(saved.clock)
+            self.clock_paused = saved.clock_paused == true
+        elseif self.clock_preset then
+            self.clock = ChessClock.new(ChessClock.parse(self.clock_preset))
+        end
     else
         self.level = saved and saved.level or opts.level or 1
         -- "random", "white" or "black": kept for the next game, so playing again keeps the choice.
@@ -38,18 +48,77 @@ function OfflineGame.open(app, opts)
     self.position, self.last_move = Chess.from_moves(nil, self.moves)
     self.seen = {}
     self:count_positions()
+    self.tick_callback = function() self:tick() end
+    self.wake_callback = function() self:start_clock() end
     self.screen = BoardScreen:new{
         state = { flipped = self.flipped },
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
+        on_suspend = function() self:stop_clock() end,
+        on_resume = function() if self.clock then Sleep.schedule(self.screen, 0, self.wake_callback) end end,
         on_closed = function() self:closed() end,
         broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
     self:check_end()
+    self:start_clock()
     self:render("full")
     self:maybe_think()
     return self
+end
+
+-- The clock of a game between two people runs while the screen is open and the device awake, unless someone paused
+-- it, and keeps the device awake while it runs.
+function OfflineGame:start_clock()
+    local clock = self.clock
+    if clock and not self.clock_paused and not self:is_over() and not self.is_closed then
+        ChessClock.resume(clock, socket.gettime())
+        if ChessClock.running(clock) then
+            Awake.set(true, self)
+            Sleep.schedule(self.screen, ChessClock.next_change(clock, socket.gettime()), self.tick_callback)
+        end
+    end
+end
+
+function OfflineGame:stop_clock()
+    if self.clock then
+        ChessClock.pause(self.clock, socket.gettime())
+        Sleep.unschedule(self.screen, self.tick_callback)
+        Awake.set(false, self)
+    end
+end
+
+function OfflineGame:tick()
+    if not self.clock or self.is_closed or not ChessClock.running(self.clock) then
+        return
+    end
+    if self:check_flag() then
+        self:render()
+        return
+    end
+    self:render("clock")
+    Sleep.schedule(self.screen, ChessClock.next_change(self.clock, socket.gettime()), self.tick_callback)
+end
+
+-- A side out of time loses, unless the other side has nothing left to mate with.
+function OfflineGame:check_flag()
+    local side = self.clock and not self.ending and ChessClock.check(self.clock, socket.gettime())
+    if not side then
+        return false
+    end
+    self.ending, self.flagged = "time", side
+    self.time_draw = not Chess.can_mate(self.position, ChessClock.other(side))
+    self.selected, self.targets = nil, nil
+    self:stop_clock()
+    self:save()
+    return true
+end
+
+function OfflineGame:clock_info(color)
+    if not self.clock then
+        return nil
+    end
+    return ChessClock.text(ChessClock.left(self.clock, color, socket.gettime()))
 end
 
 -- Three times the same position is a draw, so each one is counted from the start of the game.
@@ -67,7 +136,12 @@ function OfflineGame:save()
     if self:is_over() then
         self.app.settings:delSetting(self.save_key)
     elseif self.two_players then
-        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, flipped = self.flipped, moves = self.moves })
+        self.app.settings:saveSetting(self.save_key, {
+            version = State.GAME_VERSION, flipped = self.flipped, moves = self.moves,
+            clock = self.clock and ChessClock.save(self.clock, socket.gettime()) or nil,
+            clock_preset = self.clock_preset,
+            clock_paused = self.clock_paused or nil,
+        })
     else
         self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves })
     end
@@ -75,6 +149,9 @@ function OfflineGame:save()
 end
 
 function OfflineGame:check_end()
+    if self.ending == "time" then
+        return
+    end
     local ending = Chess.ending(self.position)
     if not ending and (self.seen[Chess.position_key(self.position)] or 0) >= 3 then
         ending = "repetition"
@@ -87,6 +164,12 @@ function OfflineGame:status_text()
     local turn = self.position.turn
     if self.resigned then
         return self.two_players and s["local_resigned_" .. self.resigned_color] or s.ending_loss_resign
+    end
+    if self.ending == "time" then
+        return s[(self.time_draw and "local_flag_draw_" or "local_flag_") .. self.flagged]
+    end
+    if self.clock_paused then
+        return s.clock_paused
     end
     if self.ending == "mate" then
         if self.two_players then
@@ -116,7 +199,7 @@ end
 
 -- The moves after undo: the last one alone between two people, or back to the reader's last move against the engine.
 function OfflineGame:moves_after_undo()
-    if self.resigned then
+    if self.resigned or self.ending == "time" then
         return nil
     end
     if self.two_players then
@@ -149,6 +232,9 @@ function OfflineGame:render(what)
     if self.two_players then
         buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
     end
+    if self.clock and self.clock.active and not self:is_over() then
+        buttons[#buttons + 1] = self.clock_paused and { id = "clock_resume", label = s.clock_resume } or { id = "clock_pause", label = s.clock_pause }
+    end
     if self:is_over() then
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
     else
@@ -156,7 +242,9 @@ function OfflineGame:render(what)
     end
     local top, bottom = { name = string.format(s.offline_level, self.level or 1) }, { name = s.you }
     if self.two_players then
-        top, bottom = { name = s.color_black }, { name = s.color_white }
+        local running = self.clock and ChessClock.running(self.clock)
+        top = { name = s.color_black, clock = self:clock_info("b"), active = running and self.position.turn == "b" }
+        bottom = { name = s.color_white, clock = self:clock_info("w"), active = running and self.position.turn == "w" }
         if self.flipped then
             top, bottom = bottom, top
         end
@@ -179,6 +267,14 @@ function OfflineGame:is_over()
 end
 
 function OfflineGame:apply(move)
+    if self.clock then
+        local now = socket.gettime()
+        if self.clock.active then
+            ChessClock.press(self.clock, now)
+        else
+            ChessClock.start(self.clock, ChessClock.other(self.position.turn), now)
+        end
+    end
     self.position = Chess.play(self.position, move)
     self.last_move = move
     local uci = Chess.move_to_uci(move)
@@ -186,6 +282,11 @@ function OfflineGame:apply(move)
     local key = Chess.position_key(self.position)
     self.seen[key] = (self.seen[key] or 0) + 1
     self:check_end()
+    if self:is_over() then
+        self:stop_clock()
+    elseif self.clock then
+        self:start_clock()
+    end
     self:save()
 end
 
@@ -273,6 +374,18 @@ function OfflineGame:undo()
     self.position, self.last_move = Chess.from_moves(nil, moves)
     self:count_positions()
     self:check_end()
+    -- The time already spent stays, without the increment of the move taken back, and the side to move again is
+    -- the one whose clock runs. Back at the start, the clock is as new.
+    if self.clock then
+        self:stop_clock()
+        if moves == "" then
+            self.clock = ChessClock.new(self.clock.initial, self.clock.increment)
+            self.clock_paused = false
+        elseif self.clock.active then
+            ChessClock.take_back(self.clock, self.position.turn)
+        end
+        self:start_clock()
+    end
     self.selected, self.targets, self.hint_text = nil, nil, nil
     self:save()
     self:render()
@@ -281,7 +394,11 @@ end
 function OfflineGame:on_square(square)
     -- Between two people, whoever is to move plays.
     local mover = self.two_players and self.position.turn or self.my_color
-    if self:is_over() or self.thinking or self.hinting or self.position.turn ~= mover then
+    if self:check_flag() then
+        self:render()
+        return
+    end
+    if self:is_over() or self.thinking or self.hinting or self.clock_paused or self.position.turn ~= mover then
         return
     end
     self.hint_text = nil
@@ -327,11 +444,22 @@ function OfflineGame:on_button(button)
                 self.resigned = true
                 self.resigned_color = turn
                 self:stop_search()
+                self:stop_clock()
                 self.selected, self.targets, self.hint_text = nil, nil, nil
                 self:save()
                 self:render()
             end,
         }
+    elseif button == "clock_pause" then
+        self.clock_paused = true
+        self.selected, self.targets = nil, nil
+        self:stop_clock()
+        self:save()
+        self:render()
+    elseif button == "clock_resume" then
+        self.clock_paused = false
+        self:start_clock()
+        self:render()
     elseif button == "undo" then
         self:undo()
     elseif button == "hint" then
@@ -348,7 +476,7 @@ function OfflineGame:on_button(button)
     elseif button == "again" then
         UIManager:close(self.screen)
         if self.two_players then
-            OfflineGame.open(self.app, { two_players = true })
+            OfflineGame.open(self.app, { two_players = true, clock = self.clock_preset })
         else
             OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice })
         end
@@ -356,6 +484,12 @@ function OfflineGame:on_button(button)
 end
 
 function OfflineGame:closed()
+    if self.clock and not self:is_over() then
+        self:stop_clock()
+        self:save()
+    else
+        Awake.set(false, self)
+    end
     self.is_closed = true
     self.app:refresh_list()
 end

@@ -152,6 +152,27 @@ fuzz:run{
     step = function(f) game_step(f, two) end,
 }
 
+-- A game between two people with a clock, moving through the board.
+local timed = {}
+fuzz:run{
+    label = "two players with a clock",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        timed.current = OfflineGame.open(home, { two_players = true, clock = "3+2" })
+        return timed.current.screen
+    end,
+    step = function(f) game_step(f, timed) end,
+}
+
+-- The chess clock for a physical board.
+fuzz:run{
+    label = "chess clock",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        return require("ink_knight/ui/clock_screen").open(home, "3+2")
+    end,
+}
+
 -- The coordinate training, naming squares against the clock.
 fuzz:run{
     label = "coordinates",

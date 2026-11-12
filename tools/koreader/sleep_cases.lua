@@ -1,6 +1,7 @@
 -- The windows of Ink Knight for tools/koreader/check_sleep.lua, each in a state that has timers: the clock of a
--- live game, the engine thinking, the reply of a puzzle, the clock of the coordinate training, the network of the
--- online part, a notice that leaves by itself and the page that receives the token. The network is invented: nothing leaves this computer, apart from
+-- live game, the engine thinking, the reply of a puzzle, the clock of the coordinate training, a game between two
+-- people with a clock, the chess clock, the network of the online part, a notice that leaves by itself and the page
+-- that receives the token. The network is invented: nothing leaves this computer, apart from
 -- the token page, which listens on its private address when it has one.
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
@@ -134,6 +135,26 @@ return {
         local screen = CoordinatesScreen.open(app)
         screen:start()
         return screen.screen
+    end,
+    ["two players with a clock"] = function()
+        close_all()
+        require("ink_knight/awake").install("ink_knight")
+        local OfflineGame = require("ink_knight/ui/offline_game")
+        local game = OfflineGame.open(fake_app(), { two_players = true, clock = "5+3" })
+        local Chess = require("ink_knight/chess")
+        game:on_square(Chess.square_from_name("e2"))
+        game:on_square(Chess.square_from_name("e4"))
+        return game.screen
+    end,
+    ["ink_knight/ui/clock_screen"] = function()
+        close_all()
+        require("ink_knight/awake").install("ink_knight")
+        local ClockScreen = require("ink_knight/ui/clock_screen")
+        local app = fake_app()
+        function app:ask() end
+        local clock = ClockScreen.open(app, "3+2")
+        clock:press("w")
+        return clock
     end,
     ["puzzle waiting for the reply"] = function()
         close_all()

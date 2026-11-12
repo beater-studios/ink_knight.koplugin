@@ -21,6 +21,13 @@ State.OPTIONS = {
     piece_set = { { "classic", "cburnett", "merida" }, "classic" },
     puzzle_difficulty = { { "easiest", "easier", "normal", "harder", "hardest" }, "normal" },
     puzzle_color = { { "any", "white", "black" }, "any" },
+    clock_preset = { (function()
+        local list = { "none" }
+        for _, preset in ipairs(require("ink_knight/chess_clock").PRESETS) do
+            list[#list + 1] = preset
+        end
+        return list
+    end)(), "none" },
     coordinates_mode = { { "find", "name" }, "find" },
     coordinates_side = { { "white", "black", "random" }, "white" },
     coordinates_time = { { "seconds", "none" }, "seconds" },
@@ -76,7 +83,16 @@ function State.read_game(data, two_players)
         return nil
     end
     if two_players then
-        return { version = State.GAME_VERSION, moves = data.moves, flipped = data.flipped == true }
+        local ChessClock = require("ink_knight/chess_clock")
+        local clock = ChessClock.restore(data.clock)
+        local preset = SavedState.one_of(data.clock_preset, ChessClock.PRESETS, nil)
+        return {
+            version = State.GAME_VERSION, moves = data.moves, flipped = data.flipped == true,
+            -- Only since 0.4.0, and only with a clock chosen.
+            clock = clock and preset and ChessClock.save(clock, 0) or nil,
+            clock_preset = clock and preset or nil,
+            clock_paused = clock and preset and data.clock_paused == true or nil,
+        }
     end
     local my_color = SavedState.one_of(data.my_color, { "w", "b" }, nil)
     if not my_color then

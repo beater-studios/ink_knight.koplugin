@@ -14,7 +14,10 @@ local lfs = require("libs/libkoreader-lfs")
 -- Below the shortest idle time of a Kindle, the same as KOReader's AutoSuspend.
 local T1_RESET_SECONDS = 4 * 60
 
-local Awake = { on = false }
+local Awake = { on = false, held = {} }
+
+-- The holder of the calls that name none, so a plugin with a single screen that needs it can leave it out.
+local DEFAULT_HOLDER = "default"
 
 -- Every plugin with this pattern has its own copy of the module, so the plugins holding the device awake
 -- are listed in PluginShare, which they all see: one timer runs while any of them holds it, and KOReader's
@@ -87,13 +90,24 @@ function Awake.install(id)
     end
 end
 
-function Awake.set(on)
-    assert(Awake.id, "awake: call Awake.install(id) when main.lua loads")
+-- holder: who needs the device awake, such as the screen with a clock; calls without one share a holder. Inside
+-- the plugin the device stays awake while any holder holds it, so one screen letting go does not wake another's
+-- clock up to the sleep screen. Letting go from a holder that holds nothing, or before install, does nothing.
+function Awake.set(on, holder)
     on = on and true or false
-    if Awake.on == on then
+    holder = holder == nil and DEFAULT_HOLDER or holder
+    if on then
+        assert(Awake.id, "awake: call Awake.install(id) when main.lua loads")
+        Awake.held[holder] = true
+    else
+        Awake.held[holder] = nil
+    end
+    local held = next(Awake.held) ~= nil
+    if Awake.on == held then
         return
     end
-    Awake.on = on
+    Awake.on = held
+    on = held
     local list = holders()
     if on then
         local first = next(list) == nil

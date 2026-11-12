@@ -199,6 +199,28 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     end
     home.settings:delSetting("coordinates_time")
     home.settings:delSetting("coordinates_mode")
+    -- A game between two people with a clock, which adds Pause to the buttons, and the chess clock, whose buttons
+    -- and time must fit at a readable size.
+    local two = OfflineGame.open(home, { two_players = true, clock = "30+20" })
+    two:on_square(Chess.square_from_name("e2"))
+    two:on_square(Chess.square_from_name("e4"))
+    check_board(two.screen, language .. " two players with a clock")
+    UIManager:close(two.screen)
+    home.settings:delSetting("two_player_game")
+    local clock = require("ink_knight/ui/clock_screen").open(home, "30+20")
+    clock:press("w")
+    where = language .. " chess clock"
+    shot(where:gsub("[^%w]+", "_"))
+    local Font = require("ui/font")
+    for _, rect in ipairs(clock:button_rects()) do
+        local widget = require("ui/widget/textwidget"):new{ text = rect.label, face = Font:getFace("noto/NotoSans-Bold.ttf", 16 * clock.scale * 1000 / Screen:scaleBySize(1000)) }
+        local w = widget:getSize().w
+        widget:free()
+        if w > rect.w - clock.px(12) then
+            problem(string.format("%s: the button \"%s\" needs %d px and has %d", where, rect.label, w, rect.w - clock.px(12)))
+        end
+    end
+    UIManager:close(clock)
     local corr = require("ink_knight/ui/correspondence_screen").open(home, "corr0001")
     check_board(corr.screen, language .. " correspondence offline")
     UIManager:close(corr.screen)
