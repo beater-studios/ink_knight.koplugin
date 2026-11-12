@@ -42,7 +42,7 @@
 - **Táticas:** um lote fica guardado no aparelho para resolver sem internet, e os resultados vão para o Lichess quando o Wi-Fi voltar. Também tem táticas por tema, seus resultados e a tática do dia, e dá para escolher a dificuldade, comparada ao seu rating de táticas, e a cor com que você joga. Dá também para revisar as táticas que você errou nos últimos 30 dias, inclusive as erradas no site.
 - **Rever:** suas partidas anteriores e favoritas, lance a lance, com o que o Lichess sabe de cada posição: a avaliação, os lances mais jogados e, perto do fim, o resultado com jogo perfeito.
 - **Jogadores:** busca por nome, quem você segue e está online, perfis, gráfico de rating com estatísticas e o seu histórico contra alguém.
-- **Offline:** jogue contra um motor pequeno, que nunca trava a tela, com escolha de cor, desfazer lance e dicas, e continue a partida depois. Ou jogue contra outra pessoa no mesmo aparelho. Suas partidas por correspondência também ficam no aparelho: dá para vê-las e fazer o seu lance com o Wi-Fi desligado, e ele vai para o Lichess na próxima vez que você jogar online, se a partida ainda estiver como você deixou.
+- **Offline:** jogue contra um motor pequeno, que nunca trava a tela, com escolha de cor, desfazer lance e dicas, e continue a partida depois. Ou jogue contra outra pessoa no mesmo aparelho, ou resolva as 5000 táticas que vêm com o plugin, sem precisar de conta, na dificuldade que você escolher. Suas partidas por correspondência também ficam no aparelho: dá para vê-las e fazer o seu lance com o Wi-Fi desligado, e ele vai para o Lichess na próxima vez que você jogar online, se a partida ainda estiver como você deixou.
 - **Seu tabuleiro:** cinco estilos de tabuleiro, incluindo as casas hachuradas dos diagramas impressos, três conjuntos de peças e coordenadas nas bordas.
 - **Tela de descanso:** se o aparelho dorme com o Ink Knight aberto, aparece a capa do Ink Knight no lugar da capa do livro. Vale quando a tela de descanso do KOReader mostra a capa do livro.
 
@@ -51,6 +51,8 @@
 1. Baixe `ink_knight.koplugin.zip` da [última release](https://github.com/beater-studios/ink_knight.koplugin/releases/latest).
 2. Extraia em `koreader/plugins/`, de forma que exista `koreader/plugins/ink_knight.koplugin/main.lua`.
 3. Reinicie o KOReader. O plugin fica no menu Ferramentas, como **Ink Knight**.
+
+A release tem mais dois pacotes, com o mesmo plugin e mais táticas para resolver sem internet: `ink_knight-20000-puzzles.koplugin.zip` (cerca de 1,2 MB) e `ink_knight-50000-puzzles.koplugin.zip` (cerca de 2,5 MB), contra 5000 táticas no pacote de sempre. Para trocar, extraia outro por cima da pasta instalada; o seu progresso é mantido.
 
 O idioma segue o do KOReader: português, inglês ou espanhol. Em qualquer outro idioma, usa inglês.
 
@@ -113,7 +115,7 @@ O desenho, as ferramentas e o processo de publicação estão em [docs/design.md
 
 [GPL-3.0](LICENSE), somente a versão 3. Você pode usar, estudar, modificar e redistribuir, mantendo aberto sob a mesma licença.
 
-Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças clássicas são desenhadas com a fonte FreeSerif, que vem com o KOReader, e as peças Cburnett e Merida são de Colin M.L. Burnett e Armando Hernandez Marroquin, sob a GPLv2 ou posterior. Os nomes das aberturas vêm da lista do Lichess, em domínio público (CC0).
+Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças clássicas são desenhadas com a fonte FreeSerif, que vem com o KOReader, e as peças Cburnett e Merida são de Colin M.L. Burnett e Armando Hernandez Marroquin, sob a GPLv2 ou posterior. Os nomes das aberturas e as táticas incluídas vêm dos dados abertos do Lichess, em domínio público (CC0).
 
 ---
 

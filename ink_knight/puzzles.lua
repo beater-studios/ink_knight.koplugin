@@ -131,8 +131,9 @@ function Puzzles.review_plan(pile, remaining, known, limit)
 end
 
 -- A session walks through one puzzle: the reader plays, and the reply comes by itself.
+-- A puzzle from Lichess starts from the game it came from; one of the package, from its FEN.
 function Puzzles.new_session(puzzle)
-    local position, last = Chess.from_moves(nil, puzzle.played)
+    local position, last = Chess.from_moves(puzzle.fen, puzzle.played)
     if not position then
         return nil
     end

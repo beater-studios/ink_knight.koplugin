@@ -23,6 +23,7 @@ local Page = require("ink_knight/ui/page")
 local Pgn = require("ink_knight/pgn")
 local Players = require("ink_knight/ui/players")
 local PuzzleScreen = require("ink_knight/ui/puzzle_screen")
+local PuzzlePack = require("ink_knight/puzzle_pack")
 local Puzzles = require("ink_knight/puzzles")
 local ReviewScreen = require("ink_knight/ui/review_screen")
 local SavedState = require("ink_knight/saved_state")
@@ -1296,19 +1297,25 @@ function Home:offline_rows(page)
         rows[#rows + 1] = row
     end
     local saved_puzzles = #self:puzzle_pile()
-    if saved_puzzles > 0 then
+    local saved_reviews = #self:puzzle_pile(Puzzles.REVIEW)
+    if PuzzlePack.available() or saved_puzzles > 0 or saved_reviews > 0 then
         rows[#rows + 1] = { kind = "section", text = s.puzzles }
+    end
+    if PuzzlePack.available() then
+        rows[#rows + 1] = {
+            text = s.pack_title,
+            detail = string.format(s.pack_detail, PuzzlePack.total()),
+            callback = function() self:pack_menu() end,
+        }
+    end
+    if saved_puzzles > 0 then
         rows[#rows + 1] = {
             text = s.puzzle_next,
             detail = string.format(s.puzzles_saved, saved_puzzles),
             callback = function() PuzzleScreen.open(self, {}) end,
         }
     end
-    local saved_reviews = #self:puzzle_pile(Puzzles.REVIEW)
     if saved_reviews > 0 then
-        if saved_puzzles == 0 then
-            rows[#rows + 1] = { kind = "section", text = s.puzzles }
-        end
         rows[#rows + 1] = {
             text = s.puzzle_review,
             detail = string.format(s.puzzles_saved, saved_reviews),
@@ -1358,6 +1365,50 @@ function Home:correspondence_rows()
     end
     rows[#rows + 1] = { kind = "text", text = string.format(s.correspondence_as_of, Api.format_left(math.max(0, now - newest))) }
     return rows
+end
+
+-- The puzzles of the package, at the level of the difficulty option and with its color. Each level goes on from
+-- where it was, and a puzzle left unsolved comes again.
+-- After a change to a package with fewer puzzles, a place past the end starts over.
+function Home:pack_index(level)
+    local at = State.read_pack_progress(self.settings:readSetting("puzzle_pack"))[level] or 1
+    return at <= (PuzzlePack.per_level() or 0) and at or 1
+end
+
+function Home:pack_puzzle()
+    local level = self:option("puzzle_difficulty")
+    return PuzzlePack.puzzle(level, self:pack_index(level), self:option("puzzle_color"))
+end
+
+function Home:advance_pack(puzzle)
+    local progress = State.read_pack_progress(self.settings:readSetting("puzzle_pack"))
+    progress[puzzle.pack] = PuzzlePack.next_index(puzzle.pack, puzzle.pack_index)
+    self.settings:saveSetting("puzzle_pack", progress)
+    self.settings:flush()
+end
+
+-- The difficulty and color are the same options as online, but here the levels are fixed bands, said in the note
+-- below, so the choice has no note about the Lichess rating and asks Lichess for nothing.
+function Home:pack_menu()
+    local s = self.strings
+    self:open_page{ title = s.pack_title, build = function(page)
+        local at = self:pack_index(self:option("puzzle_difficulty"))
+        local function choose(key, labels, title)
+            return self:choice_row(page, {
+                title = title, labels = labels, names = State.OPTIONS[key][1], current = self:option(key),
+                on_pick = function(name) self:save_setting(key, name) end,
+            })
+        end
+        return {
+            { kind = "primary", text = at > 1 and s.pack_continue or s.pack_start, callback = function()
+                PuzzleScreen.open(self, { pack = true, on_closed = function() page:reload() end })
+            end },
+            { kind = "section", text = s.options_section },
+            choose("puzzle_difficulty", s.puzzle_difficulties, s.puzzle_difficulty),
+            choose("puzzle_color", s.puzzle_colors, s.puzzle_color),
+            { kind = "text", text = s.pack_note },
+        }
+    end }
 end
 
 -- Puzzles: a pile is kept on the device, so they work with no network. Each theme has its own.
@@ -1978,6 +2029,7 @@ function Home:onCloseWidget()
     Toast.close_all(self)
     self:stop_network()
     BoardScreen.clear_art_cache()
+    PuzzlePack.release()
     Page.onCloseWidget(self)
 end
 

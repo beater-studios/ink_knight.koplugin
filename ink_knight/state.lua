@@ -156,6 +156,19 @@ function State.read_correspondence(saved)
     return { account = saved.account, name = type(saved.name) == "string" and saved.name or nil, games = games }
 end
 
+-- Where each level of the package goes on, { [level] = index }, without what is not a level or a whole number.
+function State.read_pack_progress(saved)
+    local Pack = require("ink_knight/puzzle_pack")
+    local progress = {}
+    for _, level in ipairs(Pack.LEVELS) do
+        local index = type(saved) == "table" and saved[level]
+        if type(index) == "number" and index >= 1 and index == math.floor(index) then
+            progress[level] = index
+        end
+    end
+    return progress
+end
+
 -- The results waiting to reach Lichess, without the ones that could not be sent.
 function State.read_results(saved)
     local results = {}

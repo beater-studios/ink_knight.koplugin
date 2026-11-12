@@ -1,6 +1,7 @@
 -- Goes through the review of missed puzzles on the real screens, with invented answers and no network: the list from
 -- Lichess, fetching what is missing, solving one, and what is kept for when there is no connection. Then the choice of
--- difficulty and color: online it asks for a batch that way, offline the kept puzzles still play.
+-- difficulty and color: online it asks for a batch that way, offline the kept puzzles still play. Last, the puzzles
+-- that come in the package: from the offline menu, at the level chosen, going on after each one, with nothing sent.
 -- Usage: OUTPUT_DIR=<folder> KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_puzzle_review.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -306,6 +307,54 @@ for _, widget in ipairs(UIManager._window_stack or {}) do
 end
 home.puzzle_in_play = nil
 UIManager:close(puzzles_page)
+
+-- The puzzles of the package, offline: the first of the level opens, solving it goes on to the next, leaving one
+-- unsolved keeps it, and nothing is asked or recorded for Lichess.
+local PuzzlePack = require("ink_knight/puzzle_pack")
+home.settings:delSetting("puzzle_pack")
+home.settings:delSetting("puzzle_results")
+home.settings:saveSetting("puzzle_difficulty", "easier")
+home.settings:saveSetting("puzzle_color", "any")
+asked = {}
+home:offline_menu()
+local offline = home.pages[#home.pages]
+local pack_row = row_of(offline, s.pack_title)
+check(pack_row ~= nil, "the offline menu should offer the puzzles of the package")
+pack_row.callback()
+local pack_page = home.pages[#home.pages]
+local start = row_of(pack_page, s.pack_start)
+check(start ~= nil, "the package should start from its first puzzle")
+start.callback()
+local first = PuzzlePack.list("easier")[1][1]
+local pack_screen
+for _, widget in ipairs(UIManager._window_stack or {}) do
+    if widget.widget and widget.widget.on_square then
+        pack_screen = widget.widget
+    end
+end
+check(home.puzzle_in_play == nil, "a puzzle of the package is not one of the pile")
+for _ = 1, 12 do
+    if pack_screen.state.buttons and pack_screen.state.buttons[2] and pack_screen.state.buttons[2].id == "show" then
+        pack_screen.on_button("show")
+        run_all()
+    end
+end
+local progress = home.settings:readSetting("puzzle_pack") or {}
+check(progress.easier == 2, "solving the first puzzle should go on to the second: " .. tostring(progress.easier))
+check(#home:puzzle_results() == 0, "a puzzle of the package should not be recorded for Lichess")
+pack_screen.on_button("next")
+UIManager:close(pack_screen)
+check((home.settings:readSetting("puzzle_pack") or {}).easier == 2, "leaving a puzzle unsolved should keep it for next time")
+check(row_of(pack_page, s.pack_continue) ~= nil, "the page should offer to continue")
+check(#asked == 0, "the package should ask nothing: " .. table.concat(asked, " "))
+check(first ~= nil, "the level should have puzzles")
+UIManager:close(pack_page)
+UIManager:close(offline)
+-- Progress past the end of the level, left by a package with more puzzles, starts over.
+home.settings:saveSetting("puzzle_pack", { easier = PuzzlePack.per_level() + 5 })
+check(home:pack_index("easier") == 1, "a place past the end of the level should start over")
+check(home:pack_puzzle().pack_index == 1, "the level should open on its first puzzle again")
+home.settings:delSetting("puzzle_pack")
 
 home.settings:delSetting("puzzles")
 home.settings:delSetting("puzzle_difficulty")

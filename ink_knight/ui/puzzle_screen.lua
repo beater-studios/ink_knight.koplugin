@@ -11,10 +11,10 @@ PuzzleScreen.__index = PuzzleScreen
 
 local REPLY_DELAY = 0.7
 
--- opts.puzzle: a prepared puzzle. Without it, the next saved one is used, of the theme in opts.angle.
--- Daily puzzles do not report a result.
+-- opts.puzzle: a prepared puzzle. Without it, the next saved one is used, of the theme in opts.angle, or with
+-- opts.pack the next one of the package. Daily puzzles and the ones of the package do not report a result.
 function PuzzleScreen.open(app, opts)
-    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, angle = opts.angle, review = opts.review }, PuzzleScreen)
+    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, angle = opts.angle, review = opts.review, pack = opts.pack, on_closed = opts.on_closed }, PuzzleScreen)
     self.screen = BoardScreen:new{
         state = {},
         on_square = function(square) self:on_square(square) end,
@@ -23,8 +23,15 @@ function PuzzleScreen.open(app, opts)
         broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
-    self:start(opts.puzzle or app:next_puzzle(opts.angle))
+    self:start(opts.puzzle or self:next())
     return self
+end
+
+function PuzzleScreen:next()
+    if self.pack then
+        return self.app:pack_puzzle()
+    end
+    return self.app:next_puzzle(self.angle)
 end
 
 function PuzzleScreen:start(puzzle)
@@ -66,7 +73,12 @@ end
 function PuzzleScreen:finish()
     local session, s = self.session, self.s
     self.message = (session.mistakes == 0 and not session.revealed) and s.puzzle_solved or s.puzzle_solved_after
-    if not self.daily and not self.recorded then
+    if self.pack then
+        if not self.recorded then
+            self.recorded = true
+            self.app:advance_pack(session.puzzle)
+        end
+    elseif not self.daily and not self.recorded then
         self.recorded = true
         self.app:add_puzzle_result(Puzzles.result(session))
     end
@@ -145,18 +157,22 @@ function PuzzleScreen:on_button(button)
         end
     elseif button == "next" then
         self.recorded = false
-        self:start(self.app:next_puzzle(self.angle))
+        self:start(self:next())
     end
 end
 
 function PuzzleScreen:closed()
     self.is_closed = true
-    -- Leaving a puzzle unsolved does not count against it: it just goes back to the pile.
-    if self.session and not self.session.solved and not self.daily then
+    -- Leaving a puzzle unsolved does not count against it: it just goes back to the pile. One of the package stays
+    -- where it is, so the same one comes next time.
+    if self.session and not self.session.solved and not self.daily and not self.pack then
         self.app:return_puzzle(self.session.puzzle)
     end
     self.app:flush_puzzles()
     self.app:refresh_list()
+    if self.on_closed then
+        self.on_closed()
+    end
 end
 
 return PuzzleScreen

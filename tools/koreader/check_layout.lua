@@ -172,7 +172,7 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     SavedState.remove_file(settings_path)
     local home = new_home(language)
     check_page(home, language .. " first page")
-    for _, open in ipairs({ "offline_menu", "show_about", "connect_menu" }) do
+    for _, open in ipairs({ "offline_menu", "pack_menu", "show_about", "connect_menu" }) do
         home[open](home)
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
