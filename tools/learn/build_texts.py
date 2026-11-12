@@ -1,5 +1,5 @@
 # Builds ink_knight/data/learn_texts.lua from the texts of the official Lichess app (lichess-org/mobile, GPL-3.0):
-# the ones of the learn stages, in English, Portuguese (Brazil) and Spanish. Placeholders such as {param} become %s.
+# the ones of the learn stages and the names of the practice lessons, in English, Portuguese (Brazil) and Spanish. Placeholders such as {param} become %s.
 # Usage, from the plugin folder: python3 -I tools/learn/build_texts.py <folder with the .arb files>
 import json
 import re
@@ -9,8 +9,9 @@ LANGUAGES = [("en", "app_en.arb"), ("pt", "app_pt_BR.arb"), ("es", "app_es.arb")
 OUT = "ink_knight/data/learn_texts.lua"
 
 
+# The texts of Learn chess, and the names of the sections and studies of the practice lessons.
 def wanted(key):
-    return (key.startswith("learn") or key == "enPassant") and not key.startswith("@")
+    return (key.startswith("learn") or key.startswith("practice") or key == "enPassant") and not key.startswith("@")
 
 
 def lua_string(text):

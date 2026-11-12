@@ -16,6 +16,8 @@ local ClockScreen = require("ink_knight/ui/clock_screen")
 local Correspondence = require("ink_knight/correspondence")
 local Learn = require("ink_knight/learn")
 local LearnScreen = require("ink_knight/ui/learn_screen")
+local Practice = require("ink_knight/practice")
+local PracticeScreen = require("ink_knight/ui/practice_screen")
 local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local Coordinates = require("ink_knight/coordinates")
 local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
@@ -1314,6 +1316,7 @@ function Home:offline_rows(page)
     end }
     local t = self:learn_texts()
     rows[#rows + 1] = { text = t.learnLearnChess, detail = string.format(t.learnProgressX, self:learn_percent() .. "%"), callback = function() self:learn_menu() end }
+    rows[#rows + 1] = { text = t.practice, detail = string.format(t.learnProgressX, self:practice_percent() .. "%"), callback = function() self:practice_menu() end }
     rows[#rows + 1] = { text = s.editor, detail = s.editor_detail, callback = function() EditorScreen.open(self) end }
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
@@ -1477,6 +1480,114 @@ function Home:learn_stage_done(stage)
     end
     rows[#rows + 1] = { kind = "secondary", text = t.learnBackToMenu, callback = function() end }
     self:open_page{ title = t[stage.title], rows = rows, close_on_tap = true }
+end
+
+-- The practice lessons: their texts in the reader's language, read the first time they are needed, each one in
+-- English when the translation lacks it.
+function Home:practice_texts()
+    if not self.practice_text_cache or self.practice_text_cache.language ~= self.language then
+        local english = require("ink_knight/data/practice_texts_en")
+        local texts = english
+        if self.language ~= "en" then
+            local ok, translated = pcall(require, "ink_knight/data/practice_texts_" .. self.language)
+            texts = ok and setmetatable(translated, { __index = english }) or english
+        end
+        self.practice_text_cache = { language = self.language, texts = texts }
+    end
+    return self.practice_text_cache.texts
+end
+
+local function practice_sections()
+    return require("ink_knight/data/practice")
+end
+
+function Home:practice_progress()
+    return State.read_practice_progress(self.settings:readSetting("practice_progress"))
+end
+
+function Home:practice_record(id, moves)
+    local progress = self:practice_progress()
+    if Practice.record(progress, id, moves) then
+        self.settings:saveSetting("practice_progress", progress)
+        self.settings:flush()
+    end
+end
+
+function Home:practice_percent()
+    return Practice.percent(practice_sections(), self:practice_progress())
+end
+
+function Home:practice_menu()
+    local t = self:learn_texts()
+    self:open_page{ title = t.practice, build = function()
+        local progress = self:practice_progress()
+        local rows = {}
+        for _, section in ipairs(practice_sections()) do
+            rows[#rows + 1] = { kind = "section", text = t[section.name] }
+            for _, study in ipairs(section.studies) do
+                local done = Practice.count_done(study, progress)
+                rows[#rows + 1] = {
+                    text = t[study.name],
+                    detail = t[study.subtitle],
+                    value = done == #study.chapters and "✓" or string.format("%d/%d", done, #study.chapters),
+                    callback = function() self:practice_study(study) end,
+                }
+            end
+        end
+        return rows
+    end }
+end
+
+-- The chapters of a study, the first not done marked to go on from.
+function Home:practice_study(study)
+    local t, texts = self:learn_texts(), self:practice_texts()
+    self:open_page{ title = t[study.name], build = function()
+        local progress = self:practice_progress()
+        local first = Practice.first_open(study, progress)
+        local rows = {}
+        for index, chapter in ipairs(study.chapters) do
+            local moves = progress[chapter.id]
+            rows[#rows + 1] = {
+                bold = index == first and not moves,
+                -- Some names are long, and the list is where they are read whole.
+                wrap = true,
+                text = texts[chapter.id .. ".n"],
+                value = moves and "✓" or nil,
+                callback = function()
+                    PracticeScreen.open(self, study, index, { on_study_done = function(done) self:practice_study_done(done) end })
+                end,
+            }
+        end
+        return rows
+    end }
+end
+
+-- The end of a study: how much of it is done, and the next study.
+function Home:practice_study_done(study)
+    local s, t = self.strings, self:learn_texts()
+    local all = {}
+    for _, section in ipairs(practice_sections()) do
+        for _, item in ipairs(section.studies) do
+            all[#all + 1] = item
+        end
+    end
+    local following
+    for index, item in ipairs(all) do
+        if item == study then
+            following = all[index + 1]
+            break
+        end
+    end
+    local rows = {
+        { kind = "text", text = string.format(s.practice_study_end, Practice.count_done(study, self:practice_progress()), #study.chapters), center = true },
+    }
+    if following then
+        rows[#rows + 1] = { kind = "primary", text = string.format(t.learnNextX, t[following.name]), callback = function()
+            self:practice_study(following)
+        end }
+    end
+    rows[#rows + 1] = { kind = "secondary", text = t.learnBackToMenu, callback = function() end }
+    self:open_page{ title = t[study.name], rows = rows, close_on_tap = true }
 end
 
 -- Returns whether score is a new best for the mode and side, which only runs with the clock count.

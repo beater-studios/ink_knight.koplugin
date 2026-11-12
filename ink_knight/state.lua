@@ -240,6 +240,20 @@ function State.read_learn_progress(saved)
     return progress
 end
 
+-- The practice lessons done: the fewest moves of each chapter, by id.
+function State.read_practice_progress(saved)
+    local progress = {}
+    if type(saved) ~= "table" then
+        return progress
+    end
+    for id, moves in pairs(saved) do
+        if type(id) == "string" and type(moves) == "number" and moves >= 0 and moves == math.floor(moves) then
+            progress[id] = moves
+        end
+    end
+    return progress
+end
+
 -- The results waiting to reach Lichess, without the ones that could not be sent.
 function State.read_results(saved)
     local results = {}

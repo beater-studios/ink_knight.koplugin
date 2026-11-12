@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Analysis of a game played without internet, against the engine or between two people: once it is over, Analyze goes through the moves with the engine of the plugin, showing its progress and with a way to cancel, and opens the review with the clear mistakes and blunders marked, the better move named and the evaluation of each move, as in the review of a Lichess game. Against the engine only your moves are looked at. The engine is small, so only clear mistakes are marked.
+- Practice, in the offline menu: the practice lessons of Lichess that the engine of the plugin can judge, in 27 studies of checkmates, tactics and pawn and rook endgames. 165 chapters are played against the engine until you mate, mate in so many moves or promote; 36 are guided, with the author's moves to find, comments, hints and the solution; and one is a commented game. The texts are in the three languages, translated from the English of Lichess, and the progress is kept.
 
 ## [0.4.0]
 

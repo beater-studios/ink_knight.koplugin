@@ -148,6 +148,33 @@ return {
         local stage = require("ink_knight/data/learn_stages")[3].stages[3]
         return LearnScreen.open(app, stage, 1).screen
     end,
+    ["practice waiting for the engine"] = function()
+        close_all()
+        local PracticeScreen = require("ink_knight/ui/practice_screen")
+        local app = fake_app()
+        app.language = "en"
+        function app:practice_texts() return require("ink_knight/data/practice_texts_en") end
+        function app:practice_record() end
+        function app:reload_pages() end
+        local study = require("ink_knight/data/practice")[1].studies[1]
+        local practice = PracticeScreen.open(app, study, 1)
+        practice:play_goal(require("ink_knight/chess").legal_moves(practice.state.position)[1])
+        return practice.screen
+    end,
+    ["practice guided waiting for the opponent"] = function()
+        close_all()
+        local PracticeScreen = require("ink_knight/ui/practice_screen")
+        local Practice = require("ink_knight/practice")
+        local app = fake_app()
+        app.language = "en"
+        function app:practice_texts() return require("ink_knight/data/practice_texts_en") end
+        function app:practice_record() end
+        function app:reload_pages() end
+        -- This chapter starts with black's move, after a pause.
+        local sections = require("ink_knight/data/practice")
+        local _, study, index = Practice.find(sections, "HcO0b869")
+        return PracticeScreen.open(app, study, index).screen
+    end,
     ["offline game being analyzed"] = function()
         close_all()
         local OfflineGame = require("ink_knight/ui/offline_game")

@@ -20,4 +20,6 @@ The names of the openings, in ink_knight/data/openings.lua, are built from the l
 
 The lessons of Learn chess, in ink_knight/learn.lua and ink_knight/data/learn_stages.lua, are ported from the official Lichess app, https://github.com/lichess-org/mobile (lib/src/model/learn), and their texts, in ink_knight/data/learn_texts.lua, are taken from its translations (lib/l10n). The app is licensed under the GNU General Public License, version 3.
 
+The practice lessons, in ink_knight/data/practice.lua and ink_knight/data/practice_texts_en.lua, are built from the copy of lichess.org/practice in the official Lichess app, https://github.com/lichess-org/mobile (assets/practice.json), licensed under the GNU General Public License, version 3 or later; the Lichess terms of service let Lichess sublicense what its users wrote. The studies were written for Lichess by their authors, named in each chapter on lichess.org/practice. The Portuguese and Spanish texts, in ink_knight/data/practice_texts_pt.lua and ink_knight/data/practice_texts_es.lua, are translated from them for this plugin.
+
 The puzzles in ink_knight/data/puzzles are a selection from the Lichess puzzle database, https://database.lichess.org/#puzzles, released under CC0 1.0.

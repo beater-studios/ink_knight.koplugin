@@ -172,7 +172,7 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     SavedState.remove_file(settings_path)
     local home = new_home(language)
     check_page(home, language .. " first page")
-    for _, open in ipairs({ "offline_menu", "pack_menu", "coordinates_menu", "learn_menu", "show_about", "connect_menu" }) do
+    for _, open in ipairs({ "offline_menu", "pack_menu", "coordinates_menu", "learn_menu", "practice_menu", "show_about", "connect_menu" }) do
         home[open](home)
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
@@ -224,6 +224,43 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     UIManager:close(lesson.screen)
     home:learn_stage_done(categories[3].stages[2])
     check_page(top_page(), language .. " learn stage done")
+    UIManager:close(top_page())
+    -- The practice lessons: a study and its end, a chapter with the longest description (with Read, the most
+    -- buttons of a chapter with a goal), the guided chapter with the longest name, and the commented game, which has
+    -- the most buttons.
+    local Practice = require("ink_knight/practice")
+    local PracticeScreen = require("ink_knight/ui/practice_screen")
+    local practice_sections = require("ink_knight/data/practice")
+    local practice_texts = home:practice_texts()
+    local longest = {}
+    for _, section in ipairs(practice_sections) do
+        for _, study in ipairs(section.studies) do
+            for index, item in ipairs(study.chapters) do
+                local field = item.kind == "goal" and ".d" or ".n"
+                local length = #(practice_texts[item.id .. field] or "")
+                if length > (longest[item.kind] and longest[item.kind].length or -1) then
+                    longest[item.kind] = { study = study, index = index, length = length }
+                end
+            end
+        end
+    end
+    for _, kind in ipairs({ "goal", "guided", "lesson" }) do
+        local chosen = longest[kind]
+        home:practice_study(chosen.study)
+        check_page(top_page(), language .. " practice study " .. kind)
+        UIManager:close(top_page())
+        local pages_before = #home.pages
+        local chapter_screen = PracticeScreen.open(home, chosen.study, chosen.index)
+        -- A guided chapter with a description opens with it on a page.
+        if #home.pages > pages_before then
+            check_page(top_page(), language .. " practice introduction " .. kind)
+            UIManager:close(top_page())
+        end
+        check_board(chapter_screen.screen, language .. " practice " .. kind)
+        UIManager:close(chapter_screen.screen)
+    end
+    home:practice_study_done(practice_sections[1].studies[1])
+    check_page(top_page(), language .. " practice study done")
     UIManager:close(top_page())
     -- The coordinate training in both modes, with no limit, which has the most buttons.
     home:save_setting("coordinates_time", "none")

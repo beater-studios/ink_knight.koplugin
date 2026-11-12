@@ -326,6 +326,8 @@ function BoardScreen:layout()
     local board_size = self.square * 8
     self.board_x = math.floor((self.width - board_size) / 2)
     self.top_bar = { x = 0, y = 0, w = self.width, h = top_h }
+    -- The sizes that fit the banner depend on its width.
+    self.banner_sizes = nil
     self.board_y = top_h
     self.board_rect = Geom:new{ x = self.board_x, y = self.board_y, w = board_size, h = board_size }
     self.bottom_bar = { x = 0, y = self.board_y + board_size, w = self.width, h = bar_h }
@@ -373,6 +375,14 @@ function BoardScreen:paint_text(bb, text, name, size, x, y, w, h, align, color)
     end
     widget:paintTo(bb, tx, y + math.floor((h - measured.h) / 2))
     widget:free()
+end
+
+-- Whether a name fits a bar beside its clock, so a screen can say something shorter when it does not.
+function BoardScreen:bar_name_fits(text)
+    local widget = TextWidget:new{ text = text, face = face(BOLD, 20 * self.scale) }
+    local w = widget:getSize().w
+    widget:free()
+    return w <= self.width - self:px(120) - 3 * self:px(10)
 end
 
 function BoardScreen:paint_bar(bb, rect, info)
@@ -554,25 +564,42 @@ function BoardScreen:paint_buttons(bb)
     end
 end
 
--- The banner: text over several lines, centered, smaller when it would not fit.
-function BoardScreen:paint_banner(bb, rect, text)
+-- The banner: text over several lines, centered, at the largest size from 19 down to 13 that fits rect, and whether
+-- even 13 did.
+function BoardScreen:banner_box(text, rect)
     local pad = self:px(12)
     -- The size that fits is worked out once for each text, since the board redraws it on every move.
     self.banner_sizes = self.banner_sizes or {}
-    local size = self.banner_sizes[text] or 19
-    local box
+    local known = self.banner_sizes[text]
+    local size = known and known.size or 19
     while true do
-        box = TextBoxWidget:new{ text = text, face = face(REGULAR, size * self.scale), width = rect.w - 2 * pad, alignment = "center", fgcolor = BLACK, bgcolor = WHITE }
+        local box = TextBoxWidget:new{ text = text, face = face(REGULAR, size * self.scale), width = rect.w - 2 * pad, alignment = "center", fgcolor = BLACK, bgcolor = WHITE }
         local fits = box:getSize().h <= rect.h - self:px(4)
         if fits or size <= 13 then
-            -- For the layout check: even the smallest size did not fit.
-            self.banner_overflow = not fits
-            self.banner_sizes[text] = size
-            break
+            self.banner_sizes[text] = { size = size, fits = fits }
+            return box, fits
         end
         box:free()
         size = size - 1
     end
+end
+
+-- Whether a text fits the banner, so a screen can offer to read it whole when it does not.
+function BoardScreen:banner_fits(text)
+    local known = self.banner_sizes and self.banner_sizes[text]
+    if known then
+        return known.fits
+    end
+    local box, fits = self:banner_box(text, self.top_bar)
+    box:free()
+    return fits
+end
+
+function BoardScreen:paint_banner(bb, rect, text)
+    local pad = self:px(12)
+    local box, fits = self:banner_box(text, rect)
+    -- For the layout check: even the smallest size did not fit.
+    self.banner_overflow = not fits
     local h = box:getSize().h
     box:paintTo(bb, rect.x + pad, rect.y + math.floor((rect.h - h) / 2))
     box:free()

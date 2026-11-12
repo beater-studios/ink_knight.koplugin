@@ -127,8 +127,31 @@ function Page:text_box(row)
     }
 end
 
+-- The width the name of a row has, beside its value and chevron.
+function Page:nav_text_width(row)
+    local chevron_w = row.callback and self:px(24) or 0
+    local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
+    return self.width - 2 * self:px(MARGIN) - chevron_w - value_w
+end
+
+-- The name of a row with wrap, on as many lines as it needs.
+function Page:wrapped_box(row, color)
+    return TextBoxWidget:new{
+        text = row.text,
+        face = face((row.bold and BOLD or REGULAR), 20 * self.scale),
+        width = self:nav_text_width(row),
+        fgcolor = color or BLACK,
+        bgcolor = WHITE,
+    }
+end
+
 function Page:row_height(row)
-    if row.kind == "text" then
+    if row.wrap and not row.kind then
+        local box = self:wrapped_box(row)
+        local height = box:getSize().h
+        box:free()
+        return math.max(self:px(64), height + self:px(24))
+    elseif row.kind == "text" then
         local box = self:text_box(row)
         local height = box:getSize().h
         box:free()
@@ -301,7 +324,7 @@ function Page:paint_nav(bb, row, y, h)
     end
     local chevron_w = row.callback and self:px(24) or 0
     local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
-    local text_w = self.width - 2 * m - chevron_w - value_w
+    local text_w = self:nav_text_width(row)
     if row.preview then
         local size = self:px(40)
         row.preview(bb, x, y + math.floor((h - size) / 2), size)
@@ -312,7 +335,11 @@ function Page:paint_nav(bb, row, y, h)
     local name = (row.bold or row.kind == "game") and BOLD or REGULAR
     local color = row.disabled and DISABLED or (row.dim and GRAY or BLACK)
     local detail_color = row.disabled and DISABLED or GRAY
-    if row.detail then
+    if row.wrap and not row.kind then
+        local box = self:wrapped_box(row, color)
+        box:paintTo(bb, x, y + math.floor((h - box:getSize().h) / 2))
+        box:free()
+    elseif row.detail then
         self:paint_text(bb, row.text, name, 20, x, y + self:px(10), text_w, self:px(32), "left", color)
         self:paint_text(bb, row.detail, REGULAR, 15, x, y + self:px(41), text_w, self:px(24), "left", detail_color)
     else

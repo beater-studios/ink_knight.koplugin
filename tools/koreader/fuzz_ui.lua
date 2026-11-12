@@ -184,6 +184,19 @@ fuzz:run{
     end,
 }
 
+-- The practice lessons: any chapter of any study, in any language, against the engine, guided or the commented game.
+fuzz:run{
+    label = "practice",
+    setup = function(f)
+        local languages = { "en", "pt", "es" }
+        local home = fresh_home(f, languages[f.random(1, 3)])
+        local sections = require("ink_knight/data/practice")
+        local section = sections[f.random(1, #sections)]
+        local study = section.studies[f.random(1, #section.studies)]
+        return require("ink_knight/ui/practice_screen").open(home, study, f.random(1, #study.chapters)).screen
+    end,
+}
+
 -- A game between two people that just ended in mate, so the analysis and its review get touched.
 fuzz:run{
     label = "analysis after a game",
