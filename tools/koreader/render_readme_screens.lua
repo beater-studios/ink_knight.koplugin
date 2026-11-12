@@ -86,7 +86,8 @@ for _, language in ipairs({ "en", "pt" }) do
 
     -- The list of moves of a game under review, with the move shown marked.
     local sans = Chess.san_list(nil, LONG_GAME)
-    save(Page:new{ title = s.move_list_title, rows = MoveList.rows(sans, 1, "w", { current = 15, on_pick = function() end }) }, folder .. "/moves.png")
+    local rows = MoveList.page_rows(sans, 1, "w", { current = 15, on_pick = function() end, moves = LONG_GAME })
+    save(Page:new{ title = s.move_list_title, rows = rows }, folder .. "/moves.png")
 
     -- A hint against the offline engine: the piece and its square, and the move named below the board.
     local hint_position = Chess.from_moves(nil, "e2e4 e7e5 g1f3 b8c6")

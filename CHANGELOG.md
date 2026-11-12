@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.0]
+
+- The list of moves starts with the name of the opening, from the list Lichess publishes, kept in the plugin so it works without internet: in the game against the engine, between two people and in the review. In a Lichess game it shows once the game is over, since Lichess does not show it to the players while they play.
+
 ## [0.3.0]
 
 - In a game without internet: choose your color, undo your last move and ask for a hint, which marks the best move found and plays it with a tap.

@@ -560,24 +560,27 @@ function Chess.to_san(position, move)
     return text
 end
 
--- A text that is the same for the same position, to count repetitions.
-function Chess.position_key(position)
-    local parts = {}
-    for square = 1, 64 do
-        parts[square] = position.board[square] or "."
-    end
-    -- The square passed over is part of the position only when taking on it is really possible.
-    local passant = ""
+-- The square passed over is part of the position only when taking on it is really possible.
+local function takeable_passant(position)
     if position.passant then
         for _, move in ipairs(Chess.legal_moves(position)) do
             if move.to == position.passant and position.board[move.from]:lower() == "p" then
-                passant = tostring(position.passant)
-                break
+                return position.passant
             end
         end
     end
-    return table.concat(parts) .. position.turn .. position.castling .. passant
+    return nil
 end
+
+-- The position as the first four fields of a FEN, with the square passed over only when taking on it is
+-- possible, as Lichess writes the positions of its list of openings.
+function Chess.epd(position)
+    local passant = takeable_passant(position)
+    return Chess.to_fen(position):match("^(%S+ %S+ %S+) ") .. " " .. (passant and Chess.square_name(passant) or "-")
+end
+
+-- A text that is the same for the same position, to count repetitions.
+Chess.position_key = Chess.epd
 
 -- For testing against known counts of positions.
 function Chess.perft(position, depth)

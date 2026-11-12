@@ -392,7 +392,14 @@ function LiveGame:on_button(button)
         self.app:send_rematch(game, self:opponent_name())
     elseif button == "moves" then
         self.san_cache = self.san_cache or {}
-        MoveList.show(self.app, Chess.san_list(self.game.initial_fen, self.game.moves, self.san_cache))
+        local game = self.game
+        local sans, first_number, first_turn = Chess.san_list(game.initial_fen, game.moves, self.san_cache)
+        -- Lichess does not tell the players the name of the opening while they play, so neither does this.
+        local finished = not game:is_active()
+        MoveList.show(self.app, sans, first_number, first_turn, {
+            initial_fen = game.initial_fen,
+            moves = finished and game.moves or nil,
+        })
     elseif button == "profile" then
         Players.show(self.app, self.game.opponent_id)
     elseif button == "draw_yes" then

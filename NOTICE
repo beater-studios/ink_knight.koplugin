@@ -15,3 +15,5 @@ THIRD PARTY
 The classic chess pieces, on the screens and in the art in docs/, are drawn from FreeSerif, part of GNU FreeFont, https://www.gnu.org/software/freefont/, which comes with KOReader and is not distributed with this plugin. GNU FreeFont is licensed under the GNU General Public License, version 3 or later, with a font exception.
 
 The Cburnett pieces, in ink_knight/pieces/cburnett, are by Colin M.L. Burnett, and the Merida pieces, in ink_knight/pieces/merida, are by Armando Hernandez Marroquin. Both are licensed under the GNU General Public License, version 2 or later, and are used here under version 3. The files were taken unchanged from the Lichess source, https://github.com/lichess-org/lila/tree/master/public/piece, where their authors and licenses are listed in COPYING.md.
+
+The names of the openings, in ink_knight/data/openings.lua, are built from the list of Lichess, https://github.com/lichess-org/chess-openings, dedicated to the public domain under CC0 1.0.

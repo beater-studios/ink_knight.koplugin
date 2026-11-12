@@ -192,6 +192,21 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         state = { moves = "e2e4 e7e5 g1f3", wtime = 3599000, btime = 3599000, status = "started" } }, os.time())
     live:render()
     check_board(live.screen, language .. " live game")
+    -- The name of the opening only after the game, as Lichess does for its players.
+    live:on_button("moves")
+    if top_page().lines[1].kind == "text" then
+        problem(language .. " live game: the list of moves names the opening during the game")
+    end
+    UIManager:close(top_page())
+    live.game:on_event({ type = "gameState", moves = "e2e4 e7e5 g1f3", wtime = 3599000, btime = 3599000,
+        status = "resign", winner = "white" }, os.time())
+    live:on_button("moves")
+    if top_page().lines[1].text ~= "King's Knight Opening" then
+        problem(language .. " live game: the list of moves should name the opening after the game, got "
+            .. tostring(top_page().lines[1].text))
+    end
+    check_page(top_page(), language .. " moves of a finished game")
+    UIManager:close(top_page())
     UIManager:close(live.screen)
     local offline = OfflineGame.open(home, { level = 4, color_choice = "black" })
     check_board(offline.screen, language .. " offline game")

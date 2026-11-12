@@ -233,7 +233,10 @@ do
     game:on_button("moves")
     local page = home.pages[#home.pages]
     check(page and page.title == s.move_list_title, "the list should open")
-    check(page and page.lines[1].white == "e4" and page.lines[1].black ~= nil, "the first row should hold both moves")
+    local opening = require("ink_knight/openings").name(nil, game.moves)
+    check(opening ~= nil, "1. e4 and any answer have a name: " .. game.moves)
+    check(page and page.lines[1].kind == "text" and page.lines[1].text == opening, "the name of the opening should come first")
+    check(page and page.lines[2].white == "e4" and page.lines[2].black ~= nil, "the first row of moves should hold both moves")
     page:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/move_list_offline.png")
     UIManager:close(page)
@@ -272,6 +275,7 @@ do
         end
     end
     check(current_sheet and page.sheet == current_sheet, "the list should open on the sheet of the move shown")
+    check(page.sheets[1][1].kind == "text" and page.sheets[1][1].text ~= "", "the review should name the opening too")
     page:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/move_list_review.png")
     local target

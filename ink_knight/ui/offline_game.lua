@@ -343,7 +343,8 @@ function OfflineGame:on_button(button)
         self:render()
     elseif button == "moves" then
         self.san_cache = self.san_cache or {}
-        MoveList.show(self.app, Chess.san_list(nil, self.moves, self.san_cache))
+        local sans, first_number, first_turn = Chess.san_list(nil, self.moves, self.san_cache)
+        MoveList.show(self.app, sans, first_number, first_turn, { moves = self.moves })
     elseif button == "again" then
         UIManager:close(self.screen)
         if self.two_players then

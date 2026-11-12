@@ -129,11 +129,18 @@ end
 -- The moves already read for the board, with the one shown marked. A tap on a move goes to it. The notation comes
 -- with the game from Lichess, and is only written here for a move that lacks it.
 function ReviewScreen:show_moves()
-    local sans = {}
+    local sans, ucis = {}, {}
     for index = 1, self.available do
         sans[index] = self.game.moves[index].san or Chess.to_san(self.positions[index - 1], self.last_moves[index])
+        ucis[index] = self.game.moves[index].uci
     end
-    MoveList.show(self.app, sans, 1, "w", { current = self.index, on_pick = function(index) self:go(index) end })
+    MoveList.show(self.app, sans, 1, "w", {
+        current = self.index,
+        on_pick = function(index) self:go(index) end,
+        -- The name Lichess gave the game, so the list and the start of the review agree.
+        opening = self.game.intro,
+        moves = table.concat(ucis, " "),
+    })
 end
 
 function ReviewScreen:toggle_bookmark()

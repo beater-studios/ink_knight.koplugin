@@ -1,5 +1,7 @@
--- The moves of a game on a page of their own, two to a row, as on a score sheet. It opens on the sheet with the
--- move to look at, the last one by default.
+-- The moves of a game on a page of their own, two to a row, as on a score sheet, under the name of the opening
+-- when the game has one. It opens on the sheet with the move to look at, the last one by default.
+local Openings = require("ink_knight/openings")
+
 local MoveList = {}
 
 -- sans: the moves in the usual notation. first_number and first_turn: where the game started.
@@ -36,16 +38,29 @@ function MoveList.rows(sans, first_number, first_turn, opts)
     return rows
 end
 
+-- The rows with the name of the opening first. opts.opening: the name, when Lichess already gave it; otherwise
+-- opts.initial_fen and opts.moves, in UCI: the game, to look the name up. Without either there is no name.
+function MoveList.page_rows(sans, first_number, first_turn, opts)
+    opts = opts or {}
+    local rows = MoveList.rows(sans, first_number, first_turn, opts)
+    local opening = opts.opening or (opts.moves and Openings.name(opts.initial_fen, opts.moves))
+    if opening then
+        table.insert(rows, 1, { kind = "text", text = opening, center = true })
+    end
+    return rows
+end
+
 function MoveList.show(app, sans, first_number, first_turn, opts)
     local s = app.strings
+    opts = opts or {}
     if #sans == 0 then
         app:info(s.no_moves_yet)
         return
     end
     app:open_page{
         title = s.move_list_title,
-        rows = MoveList.rows(sans, first_number, first_turn, opts),
-        close_on_tap = opts and opts.on_pick ~= nil,
+        rows = MoveList.page_rows(sans, first_number, first_turn, opts),
+        close_on_tap = opts.on_pick ~= nil,
     }
 end
 

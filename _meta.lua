@@ -1,7 +1,7 @@
 return {
     fullname = "Ink Knight",
     description = [[A Lichess client for KOReader: play live and by correspondence, solve puzzles and review your games on e-ink. By Beater Studios. Not an official Lichess product.]],
-    version = "0.3.0",
+    version = "0.4.0",
     author = "Beater Studios",
     copyright = "Copyright (C) 2026 Beater Studios",
     website = "https://beaterstudios.com/",

@@ -38,7 +38,7 @@
 - **Você escolhe ao abrir:** a primeira tela pergunta se você quer jogar online ou offline, e o Lichess só é contatado se você escolher online. A hora e a bateria ficam na parte de baixo de todas as telas.
 - **Jogar:** procure adversário em rapid e clássico, por correspondência, desafie um amigo (também em blitz ou sem limite de tempo) ou jogue contra o computador do Lichess. No desafio, você pode escolher a cor. Os desafios que você enviou ficam ao lado dos recebidos, e dá para cancelá-los.
 - **Várias partidas ao mesmo tempo:** a lista mostra de quem é a vez, com as que aguardam você no topo. Ela atualiza no intervalo que você escolher.
-- **Durante a partida:** relógios, promoção, pedidos de empate e empate por repetição, pedir para voltar lance, dar tempo, desistir e cancelar. A lista de lances fica a um toque, aqui e nos outros modos. No fim, é só jogar de novo. Uma conexão perdida volta sozinha.
+- **Durante a partida:** relógios, promoção, pedidos de empate e empate por repetição, pedir para voltar lance, dar tempo, desistir e cancelar. A lista de lances fica a um toque, aqui e nos outros modos, e começa com o nome da abertura, mesmo sem internet (numa partida do Lichess, depois que ela termina). No fim, é só jogar de novo. Uma conexão perdida volta sozinha.
 - **Táticas:** um lote fica guardado no aparelho para resolver sem internet, e os resultados vão para o Lichess quando o Wi-Fi voltar. Também tem táticas por tema, seus resultados e a tática do dia. Dá também para revisar as táticas que você errou nos últimos 30 dias, inclusive as erradas no site.
 - **Rever:** suas partidas anteriores e favoritas, lance a lance, com o que o Lichess sabe de cada posição: a avaliação, os lances mais jogados e, perto do fim, o resultado com jogo perfeito.
 - **Jogadores:** busca por nome, quem você segue e está online, perfis, gráfico de rating com estatísticas e o seu histórico contra alguém.
@@ -113,7 +113,7 @@ O desenho, as ferramentas e o processo de publicação estão em [docs/design.md
 
 [GPL-3.0](LICENSE), somente a versão 3. Você pode usar, estudar, modificar e redistribuir, mantendo aberto sob a mesma licença.
 
-Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças clássicas são desenhadas com a fonte FreeSerif, que vem com o KOReader, e as peças Cburnett e Merida são de Colin M.L. Burnett e Armando Hernandez Marroquin, sob a GPLv2 ou posterior.
+Lichess é marca de seus titulares, e esta licença não concede direitos sobre ela nem sobre os nomes "Ink Knight" e "Beater Studios". Veja o [NOTICE](NOTICE). As peças clássicas são desenhadas com a fonte FreeSerif, que vem com o KOReader, e as peças Cburnett e Merida são de Colin M.L. Burnett e Armando Hernandez Marroquin, sob a GPLv2 ou posterior. Os nomes das aberturas vêm da lista do Lichess, em domínio público (CC0).
 
 ---
 
