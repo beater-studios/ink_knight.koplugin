@@ -3,6 +3,7 @@
 ## [0.4.0]
 
 - The list of moves starts with the name of the opening, from the list Lichess publishes, kept in the plugin so it works without internet: in the game against the engine, between two people and in the review. In a Lichess game it shows once the game is over, since Lichess does not show it to the players while they play.
+- Correspondence games without internet: the games you have on Lichess stay on the device each time the list of games comes, and the offline menu shows them, your turn first. On your turn you can make a move with the Wi-Fi off, and take it back until it is sent. It goes to Lichess the next time you play online, or at once if the online part is open, only if the game is still in the position where you made it; if not, you are told it was not sent.
 - Puzzles have a difficulty, from easiest to hardest compared with your puzzle rating, and a color to play, both in the puzzles menu. The puzzles kept for offline stay until a new batch chosen that way arrives, so a change made without internet still leaves puzzles to solve.
 
 ## [0.3.0]

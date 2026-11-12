@@ -19,6 +19,7 @@ require("ink_knight/ui/token_screen").local_ip = "203.0.113.7"
 -- The invented Lichess: the account, a game waiting for the reader, a puzzle batch and an empty answer for the rest.
 -- Streams end at once, so they come back by themselves, as after a dropped connection.
 local GAME = '{"gameId":"fuzzgame","fullId":"fuzzgamexxxx","color":"white","isMyTurn":true,"secondsLeft":259200,'
+    .. '"fen":"' .. Chess.START_FEN .. '",'
     .. '"opponent":{"id":"helena","username":"Helena","rating":1612},"speed":"correspondence"}'
 local ANSWERS = {
     ["/api/account"] = '{"id":"reader","username":"Reader","perfs":{"rapid":{"rating":1500}}}',
@@ -149,6 +150,19 @@ fuzz:run{
         return two.current.screen
     end,
     step = function(f) game_step(f, two) end,
+}
+
+-- A correspondence game kept offline, on the reader's turn, from its board.
+fuzz:run{
+    label = "correspondence offline",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        local Correspondence = require("ink_knight/correspondence")
+        local game = Correspondence.from_playing({ gameId = "fuzzcorr", color = "white", fen = Chess.START_FEN,
+            speed = "correspondence", secondsLeft = 259200, opponent = { username = "Helena" } }, os.time())
+        home:save_correspondence({ account = "reader", name = "Reader", games = { game } })
+        return require("ink_knight/ui/correspondence_screen").open(home, "fuzzcorr").screen
+    end,
 }
 
 local parts = {}

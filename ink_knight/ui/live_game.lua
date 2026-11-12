@@ -327,6 +327,9 @@ function LiveGame:send_move(move)
         if status ~= 200 then
             self:revert_move()
             self:report(status)
+        elseif self.app.forget_correspondence_move then
+            -- A move made here replaces one made offline for the same game.
+            self.app:forget_correspondence_move(self.id)
         end
     end)
 end

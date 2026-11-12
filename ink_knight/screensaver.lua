@@ -40,8 +40,6 @@ function PluginScreensaver.install(plugin_dir, id)
     assert(type(id) == "string" and id ~= "", "screensaver: the plugin id is required")
     local image_file = plugin_dir .. "/assets/screensaver.png"
     local prefix = id .. "_"
-    PluginScreensaver.image_file = image_file
-    PluginScreensaver.prefix = prefix
     local key = "_" .. id .. "_original_setup"
     if Screensaver[key] then
         return

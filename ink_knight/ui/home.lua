@@ -11,6 +11,8 @@ local rapidjson = require("rapidjson")
 
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
+local Correspondence = require("ink_knight/correspondence")
+local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local CreateTokenScreen = require("ink_knight/ui/create_token_screen")
 local Game = require("ink_knight/game")
 local I18n = require("ink_knight/i18n")
@@ -323,7 +325,9 @@ function Home:reload_games()
     self.net:request(Api.playing(), function(status, body)
         if status == 200 then
             local data = decode(body)
-            self.games = Api.sort_games(data and data.nowPlaying or {})
+            local playing = data and data.nowPlaying or {}
+            self:sync_correspondence(playing)
+            self.games = Api.sort_games(playing)
             self.updated_at = os.date("%H:%M")
             self.load_problem = nil
         else
@@ -331,6 +335,147 @@ function Home:reload_games()
         end
         self:refresh_list()
     end)
+end
+
+-- Correspondence games kept for when there is no connection, with the moves made offline waiting to be sent.
+function Home:correspondence()
+    return State.read_correspondence(self.settings:readSetting("correspondence"))
+end
+
+function Home:save_correspondence(data)
+    self.settings:saveSetting("correspondence", data)
+    self.settings:flush()
+end
+
+-- Returns whether the move was kept, and whether it goes out now, when the online part is open.
+function Home:keep_correspondence_move(id, move)
+    local data = self:correspondence()
+    local game = Correspondence.find(data.games, id)
+    if not game or not Correspondence.play(game, move) then
+        return false
+    end
+    self:save_correspondence(data)
+    if self.net and self.my_id and not self.token_rejected then
+        self:reload_games()
+        return true, true
+    end
+    return true, false
+end
+
+function Home:forget_correspondence_move(id)
+    -- Called after every move of a live game, so the saved games are only read in full when one has a move waiting.
+    local raw = self.settings:readSetting("correspondence")
+    local waiting = false
+    for _, game in ipairs(type(raw) == "table" and type(raw.games) == "table" and raw.games or {}) do
+        waiting = waiting or (type(game) == "table" and game.id == id and game.pending ~= nil)
+    end
+    if not waiting then
+        return
+    end
+    local data = self:correspondence()
+    local game = Correspondence.find(data.games, id)
+    if game and game.pending then
+        game.pending = nil
+        self:save_correspondence(data)
+    end
+end
+
+-- The pages under the board show what changed, such as a move now waiting.
+function Home:correspondence_closed()
+    self.correspondence_view = nil
+    for _, page in ipairs(self.pages) do
+        if page.build then
+            page:reload()
+        end
+    end
+end
+
+-- A list that changed the kept games, or sent a move, shows on the board when it is open.
+function Home:correspondence_changed()
+    if self.correspondence_view then
+        self.correspondence_view:render()
+    end
+end
+
+-- Each fresh list of games first sends the moves made offline whose game is still where they were made, then keeps
+-- the list for the next time there is no connection. Moves that no longer fit are dropped and the reader is told.
+function Home:sync_correspondence(playing)
+    if not self.my_id then
+        return
+    end
+    local s = self.strings
+    local kept = self:correspondence()
+    if kept.account ~= self.my_id then
+        kept = { games = {} }
+    end
+    local plan = Correspondence.plan(kept.games, playing)
+    local games = Correspondence.merge(kept.games, playing, os.time())
+    local notes = {}
+    local function not_sent(game)
+        notes[#notes + 1] = string.format(s.correspondence_not_sent, game.opponent or s.anonymous)
+    end
+    for _, gone in ipairs(plan.gone) do
+        local game = Correspondence.find(games, gone.id)
+        if game then
+            game.pending = nil
+        end
+        not_sent(gone)
+    end
+    for _, landed in ipairs(plan.landed) do
+        local game = Correspondence.find(games, landed.id)
+        if game then
+            game.pending = nil
+        end
+    end
+    local changed = kept.account ~= self.my_id or kept.name ~= self.my_name or not Correspondence.same_games(kept.games, games)
+    if changed then
+        self:save_correspondence({ account = self.my_id, name = self.my_name, games = games })
+    end
+    local function finish(sent)
+        if sent > 0 then
+            notes[#notes + 1] = sent == 1 and s.correspondence_sent_one or string.format(s.correspondence_sent, sent)
+        end
+        if changed or sent > 0 then
+            self:correspondence_changed()
+        end
+        if #notes > 0 then
+            self:info(table.concat(notes, "\n"), 6)
+        end
+    end
+    if #plan.send > 0 and not self:allows("play") and not self.told_correspondence_scope then
+        -- Once a session: the moves stay saved, for a token that can play.
+        self.told_correspondence_scope = true
+        notes[#notes + 1] = string.format(s.missing_permission, "board:play")
+    end
+    if #plan.send == 0 or self.sending_correspondence or not self:allows("play") then
+        finish(#plan.landed)
+        return
+    end
+    self.sending_correspondence = true
+    local sent = #plan.landed
+    local function send(index)
+        local game = plan.send[index]
+        if not game then
+            self.sending_correspondence = false
+            finish(sent)
+            if sent > 0 then
+                self:reload_games()
+            end
+            return
+        end
+        self.net:request(Api.move(game.id, game.pending.uci), function(status)
+            if status == 200 then
+                sent = sent + 1
+                self:forget_correspondence_move(game.id)
+            elseif status == 400 then
+                -- Lichess refuses a move when it is no longer the reader's turn or the game is over.
+                self:forget_correspondence_move(game.id)
+                not_sent(game)
+            end
+            send(index + 1)
+        end)
+    end
+    send(1)
 end
 
 function Home:open_game(id)
@@ -1147,6 +1292,9 @@ function Home:offline_rows(page)
         self:close_pages()
         OfflineGame.open(self, { two_players = true })
     end }
+    for _, row in ipairs(self:correspondence_rows()) do
+        rows[#rows + 1] = row
+    end
     local saved_puzzles = #self:puzzle_pile()
     if saved_puzzles > 0 then
         rows[#rows + 1] = { kind = "section", text = s.puzzles }
@@ -1171,6 +1319,44 @@ function Home:offline_rows(page)
     for _, row in ipairs(self:board_look_rows(page)) do
         rows[#rows + 1] = row
     end
+    return rows
+end
+
+-- The correspondence games as Lichess last sent them, the reader's turn first, with how long ago that was.
+function Home:correspondence_rows()
+    local s = self.strings
+    local games = self:correspondence().games
+    if #games == 0 then
+        return {}
+    end
+    local now = os.time()
+    -- In the shape the online list is sorted in, so both lists keep the same order.
+    local listed = {}
+    for _, game in ipairs(games) do
+        listed[#listed + 1] = {
+            gameId = game.id,
+            game = game,
+            isMyTurn = Correspondence.is_my_turn(game) and not game.pending,
+            secondsLeft = Correspondence.seconds_left(game, now),
+        }
+    end
+    Api.sort_games(listed)
+    local rows = { { kind = "section", text = s.correspondence } }
+    local newest = 0
+    for _, entry in ipairs(listed) do
+        local game = entry.game
+        newest = math.max(newest, game.at or 0)
+        local detail = game.pending and s.correspondence_move_saved or (entry.isMyTurn and s.your_turn or s.their_turn)
+        rows[#rows + 1] = {
+            kind = "game",
+            text = game.opponent or s.anonymous,
+            detail = detail,
+            value = Api.format_left(entry.secondsLeft),
+            mine = entry.isMyTurn,
+            callback = function() CorrespondenceScreen.open(self, game.id) end,
+        }
+    end
+    rows[#rows + 1] = { kind = "text", text = string.format(s.correspondence_as_of, Api.format_left(math.max(0, now - newest))) }
     return rows
 end
 
@@ -1686,6 +1872,9 @@ end
 
 function Home:forget_token()
     self.token_store:clear()
+    -- The games kept offline belong to that account.
+    self.settings:delSetting("correspondence")
+    self.settings:flush()
     self.token, self.token_protected = nil, nil
     self:close_pages()
     if self.hub then
@@ -1755,6 +1944,8 @@ end
 function Home:stop_network()
     Sleep.unschedule(self, self.tick_callback)
     self.events, self.seek = nil, nil
+    -- Moves being sent wait for answers that will not come now; they stay saved for the next list.
+    self.sending_correspondence = false
     if self.net then
         self.net:stop()
         self.net = nil

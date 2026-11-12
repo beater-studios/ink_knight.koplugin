@@ -120,6 +120,42 @@ function State.read_pile(saved)
     return pile
 end
 
+-- The correspondence games kept for when there is no connection: { account, games }. A game must still have a
+-- position, and a move waiting must still be legal in the position it was made in, or the move is dropped.
+function State.read_correspondence(saved)
+    local Correspondence = require("ink_knight/correspondence")
+    if type(saved) ~= "table" or type(saved.account) ~= "string" then
+        return { games = {} }
+    end
+    local games, seen = {}, {}
+    for _, game in ipairs(SavedState.list(saved.games, nil, {})) do
+        local position = type(game) == "table" and type(game.fen) == "string" and Chess.parse_fen(game.fen)
+        if position and type(game.id) == "string" and game.id:match("^%w+$") and not seen[game.id]
+            and (game.color == "w" or game.color == "b") then
+            seen[game.id] = true
+            local kept = {
+                id = game.id,
+                color = game.color,
+                fen = game.fen,
+                last_move = is_moves(game.last_move) and not game.last_move:find(" ") and game.last_move or nil,
+                opponent = type(game.opponent) == "string" and game.opponent or nil,
+                seconds_left = type(game.seconds_left) == "number" and game.seconds_left or nil,
+                at = type(game.at) == "number" and game.at or nil,
+            }
+            local pending = game.pending
+            if type(pending) == "table" and type(pending.uci) == "string" and type(pending.fen) == "string"
+                and Correspondence.same_position(pending.fen, game.fen) then
+                local move = Chess.parse_uci(position, pending.uci)
+                if move then
+                    Correspondence.play(kept, move)
+                end
+            end
+            games[#games + 1] = kept
+        end
+    end
+    return { account = saved.account, name = type(saved.name) == "string" and saved.name or nil, games = games }
+end
+
 -- The results waiting to reach Lichess, without the ones that could not be sent.
 function State.read_results(saved)
     local results = {}

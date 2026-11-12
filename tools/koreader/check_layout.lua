@@ -177,6 +177,22 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- Correspondence kept offline, with the longest names, one game with a move waiting.
+    local Correspondence = require("ink_knight/correspondence")
+    local kept = {}
+    for index, fen in ipairs({ "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", Chess.START_FEN }) do
+        kept[index] = Correspondence.from_playing({ gameId = "corr000" .. index, color = "black", fen = fen, speed = "correspondence",
+            secondsLeft = 1209600, opponent = { username = LONG_NAME } }, os.time() - 90000)
+    end
+    Correspondence.play(kept[1], Chess.parse_uci(Chess.parse_fen(kept[1].fen), "e7e5"))
+    home:save_correspondence({ account = LONG_NAME:lower(), name = LONG_NAME, games = kept })
+    home:offline_menu()
+    check_page(top_page(), language .. " offline menu with correspondence")
+    local corr = require("ink_knight/ui/correspondence_screen").open(home, "corr0001")
+    check_board(corr.screen, language .. " correspondence offline")
+    UIManager:close(corr.screen)
+    UIManager:close(top_page())
+    home.settings:delSetting("correspondence")
     connect(home)
     check_page(home.hub, language .. " online")
     for _, open in ipairs({ "new_game_menu", "seek_menu", "seek_days_menu", "computer_menu", "puzzles_menu", "settings_menu", "all_games_menu" }) do
