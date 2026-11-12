@@ -2021,6 +2021,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
                                 moves = moves,
                                 white = white, black = black,
                                 intro = game.opening and game.opening.name,
+                                opening = game.opening and game.opening.name,
                                 result_text = game_result_text(s, game),
                             }, { flipped = on_black, game_id = Api.is_safe_id(game.id) and game.id or nil, bookmarked = bookmarked })
                         end,

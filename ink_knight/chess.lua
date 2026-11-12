@@ -407,6 +407,11 @@ function Chess.apply_uci(position, uci)
     return play(position, move), move
 end
 
+-- The position a game starts at: the usual one for nil or "startpos", as Lichess writes it, or the FEN given.
+function Chess.start_position(initial_fen)
+    return Chess.parse_fen((initial_fen == nil or initial_fen == "startpos") and Chess.START_FEN or initial_fen)
+end
+
 -- The position after a list of moves separated by spaces, with the last move played.
 function Chess.from_moves(initial_fen, moves)
     local position, err = Chess.parse_fen((initial_fen == nil or initial_fen == "startpos") and Chess.START_FEN or initial_fen)

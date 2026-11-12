@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Analysis of a game played without internet, against the engine or between two people: once it is over, Analyze goes through the moves with the engine of the plugin, showing its progress and with a way to cancel, and opens the review with the clear mistakes and blunders marked, the better move named and the evaluation of each move, as in the review of a Lichess game. Against the engine only your moves are looked at. The engine is small, so only clear mistakes are marked.
+
 ## [0.4.0]
 
 - The list of moves starts with the name of the opening, from the list Lichess publishes, kept in the plugin so it works without internet: in the game against the engine, between two people and in the review. In a Lichess game it shows once the game is over, since Lichess does not show it to the players while they play.

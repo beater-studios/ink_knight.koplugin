@@ -188,6 +188,15 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home:save_correspondence({ account = LONG_NAME:lower(), name = LONG_NAME, games = kept })
     home:offline_menu()
     check_page(top_page(), language .. " offline menu with correspondence")
+    -- A game between two people that ended, with the most buttons: undo, moves, flip, analyze and again.
+    local ended = OfflineGame.open(home, { two_players = true })
+    for _, uci in ipairs({ "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7" }) do
+        ended:on_square(Chess.square_from_name(uci:sub(1, 2)))
+        ended:on_square(Chess.square_from_name(uci:sub(3, 4)))
+    end
+    check_board(ended.screen, language .. " two players after mate")
+    UIManager:close(ended.screen)
+    home.settings:delSetting("two_player_game")
     -- The position editor, its palette, its options with castling, and what to do with the position.
     home.settings:saveSetting("editor_fen", Chess.START_FEN)
     local editor = require("ink_knight/ui/editor_screen").open(home)

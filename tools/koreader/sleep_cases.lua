@@ -148,6 +148,18 @@ return {
         local stage = require("ink_knight/data/learn_stages")[3].stages[3]
         return LearnScreen.open(app, stage, 1).screen
     end,
+    ["offline game being analyzed"] = function()
+        close_all()
+        local OfflineGame = require("ink_knight/ui/offline_game")
+        local Chess = require("ink_knight/chess")
+        local game = OfflineGame.open(fake_app(), { two_players = true })
+        for _, uci in ipairs({ "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7" }) do
+            game:on_square(Chess.square_from_name(uci:sub(1, 2)))
+            game:on_square(Chess.square_from_name(uci:sub(3, 4)))
+        end
+        game:analyze()
+        return game.screen
+    end,
     ["two players with a clock"] = function()
         close_all()
         require("ink_knight/awake").install("ink_knight")

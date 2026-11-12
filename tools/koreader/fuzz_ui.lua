@@ -184,6 +184,20 @@ fuzz:run{
     end,
 }
 
+-- A game between two people that just ended in mate, so the analysis and its review get touched.
+fuzz:run{
+    label = "analysis after a game",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        local game = OfflineGame.open(home, { two_players = true })
+        for _, uci in ipairs({ "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7" }) do
+            game:on_square(Chess.square_from_name(uci:sub(1, 2)))
+            game:on_square(Chess.square_from_name(uci:sub(3, 4)))
+        end
+        return game.screen
+    end,
+}
+
 -- The position editor, from the starting position.
 fuzz:run{
     label = "position editor",

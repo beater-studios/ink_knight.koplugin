@@ -10,12 +10,15 @@ local MoveList = require("ink_knight/ui/move_list")
 local ReviewScreen = {}
 ReviewScreen.__index = ReviewScreen
 
--- game: { moves = { { uci, san, eval_text, judgment } }, intro }, plus white, black and result for the bars.
+-- game: { moves = { { uci, san, eval_text, judgment, best } }, intro, initial_fen }, plus white, black and result
+-- for the bars; best is the better move, in the usual notation, when the engine of the plugin found one.
 -- opts: flipped, game_id and bookmarked, for the favorites.
 function ReviewScreen.open(app, game, opts)
     opts = opts or {}
     local self = setmetatable({ app = app, s = app.strings, game = game, flipped = opts.flipped == true, index = 0, opts = opts }, ReviewScreen)
-    local start = Chess.parse_fen(Chess.START_FEN)
+    local start = Chess.start_position(game.initial_fen)
+    -- Numbered from the move number of the FEN, as the list of moves of the game is.
+    self.first_number = tonumber(tostring(game.initial_fen or ""):match("%s(%d+)%s*$")) or 1
     self.positions = { [0] = start }
     self.last_moves = {}
     local position = start
@@ -49,12 +52,17 @@ function ReviewScreen:status_text()
     if self.index == 0 then
         parts[1] = game.intro or s.start_pos
     else
-        parts[1] = string.format("%d%s %s", math.ceil(self.index / 2), self.index % 2 == 1 and "." or "...", move.san or move.uci)
+        -- Counted from who moved first: black, in a game from a position set up with black to move.
+        local ply = self.index + (self.positions[0].turn == "b" and 1 or 0)
+        parts[1] = string.format("%d%s %s", self.first_number - 1 + math.ceil(ply / 2), ply % 2 == 1 and "." or "...", move.san or move.uci)
         if move.eval_text then
             parts[#parts + 1] = move.eval_text
         end
         if move.judgment then
             parts[#parts + 1] = s.judgments[move.judgment] or move.judgment
+        end
+        if move.best then
+            parts[#parts + 1] = string.format(s.review_best, move.best)
         end
     end
     if self.index == self.available and game.result_text then
@@ -113,10 +121,11 @@ end
 
 function ReviewScreen:more_menu()
     local s, opts = self.s, self.opts
-    local rows = {
-        { text = s.analysis, callback = function() self:show_analysis() end },
-        { text = s.moves, callback = function() self:show_moves() end },
-    }
+    local rows = { { text = s.moves, callback = function() self:show_moves() end } }
+    -- What Lichess knows needs the online part, which a game played offline is reviewed without.
+    if self.app.net then
+        table.insert(rows, 1, { text = s.analysis, callback = function() self:show_analysis() end })
+    end
     if opts.game_id then
         rows[#rows + 1] = {
             text = opts.bookmarked and s.bookmark_remove or s.bookmark_add,
@@ -134,11 +143,12 @@ function ReviewScreen:show_moves()
         sans[index] = self.game.moves[index].san or Chess.to_san(self.positions[index - 1], self.last_moves[index])
         ucis[index] = self.game.moves[index].uci
     end
-    MoveList.show(self.app, sans, 1, "w", {
+    MoveList.show(self.app, sans, self.first_number, self.positions[0].turn, {
         current = self.index,
         on_pick = function(index) self:go(index) end,
         -- The name Lichess gave the game, so the list and the start of the review agree.
-        opening = self.game.intro,
+        opening = self.game.opening,
+        initial_fen = self.game.initial_fen,
         moves = table.concat(ucis, " "),
     })
 end

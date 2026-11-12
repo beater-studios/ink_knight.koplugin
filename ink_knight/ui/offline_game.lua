@@ -9,6 +9,7 @@ local Chess = require("ink_knight/chess")
 local ChessClock = require("ink_knight/chess_clock")
 local Engine = require("ink_knight/engine")
 local Game = require("ink_knight/game")
+local GameReview = require("ink_knight/game_review")
 local MoveList = require("ink_knight/ui/move_list")
 local Sleep = require("ink_knight/sleep")
 local State = require("ink_knight/state")
@@ -164,6 +165,9 @@ end
 
 function OfflineGame:status_text()
     local s = self.s
+    if self.analysis then
+        return string.format(s.analysis_progress, math.max(1, self.analysis.index), #self.analysis.list)
+    end
     local turn = self.position.turn
     if self.resigned then
         return self.two_players and s["local_resigned_" .. self.resigned_color] or s.ending_loss_resign
@@ -223,10 +227,15 @@ end
 function OfflineGame:render(what)
     local s = self.s
     local buttons = { { id = "back", label = s.back } }
+    if self.analysis then
+        buttons[#buttons + 1] = { id = "analysis_cancel", label = s.cancel }
+        self:show_state(buttons, what)
+        return
+    end
     if self:can_undo() then
         buttons[#buttons + 1] = { id = "undo", label = s.undo }
     end
-    if not self:is_over() and self:can_hint() then
+    if self:can_hint() then
         buttons[#buttons + 1] = { id = "hint", label = s.hint }
     end
     if self.moves ~= "" then
@@ -239,10 +248,18 @@ function OfflineGame:render(what)
         buttons[#buttons + 1] = self.clock_paused and { id = "clock_resume", label = s.clock_resume } or { id = "clock_pause", label = s.clock_pause }
     end
     if self:is_over() then
+        if self.moves ~= "" then
+            buttons[#buttons + 1] = { id = "analyze", label = s.analyze_game }
+        end
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
     else
         buttons[#buttons + 1] = { id = "resign", label = s.resign }
     end
+    self:show_state(buttons, what)
+end
+
+function OfflineGame:show_state(buttons, what)
+    local s = self.s
     local top, bottom = { name = string.format(s.offline_level, self.level or 1) }, { name = s.you }
     if self.two_players then
         local running = self.clock and ChessClock.running(self.clock)
@@ -269,7 +286,118 @@ function OfflineGame:is_over()
     return self.ending ~= nil or self.resigned == true
 end
 
+-- The engine goes through the moves of the game, one search each, and the review opens with what it found. Against
+-- the engine, only the reader's moves. Done once per game: a second tap opens the same review.
+function OfflineGame:analyze()
+    if self.review_game then
+        self:open_review()
+        return
+    end
+    local only = not self.two_players and self.my_color or nil
+    local list = GameReview.moves(self.initial_fen, self.moves, only)
+    if #list == 0 then
+        self.app:info(self.s.analysis_nothing)
+        return
+    end
+    self.analysis = { list = list, index = 0, results = {}, skipped = 0 }
+    self.selected, self.targets = nil, nil
+    self:analyze_next()
+end
+
+function OfflineGame:analyze_next()
+    local analysis = self.analysis
+    if not analysis or self.is_closed then
+        return
+    end
+    analysis.index = analysis.index + 1
+    local item = analysis.list[analysis.index]
+    if not item then
+        self:finish_analysis()
+        return
+    end
+    self:render()
+    self:run_engine(item.position, { limits = GameReview.LIMITS, report = true, exact = item.uci }, function(result)
+        if self.analysis ~= analysis then
+            return
+        end
+        if result and result.score then
+            analysis.results[item.index] = {
+                mover = item.mover, position = item.position, best = result.best, score = result.score,
+                played = result.played, judgment = GameReview.judge(result.score, result.played),
+            }
+        elseif not item.retried then
+            -- No depth finished, as after a sleep in the middle, when the time ran out while it was paused:
+            -- once more.
+            item.retried = true
+            analysis.index = analysis.index - 1
+        else
+            analysis.skipped = analysis.skipped + 1
+        end
+        self:analyze_next()
+    end)
+end
+
+function OfflineGame:cancel_analysis()
+    self.analysis = nil
+    self:stop_search()
+    self:render()
+end
+
+function OfflineGame:finish_analysis()
+    local s, analysis = self.s, self.analysis
+    self.analysis = nil
+    self.san_cache = self.san_cache or {}
+    local sans = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
+    local moves, index = {}, 0
+    for uci in self.moves:gmatch("%S+") do
+        index = index + 1
+        local result = analysis.results[index]
+        local entry = { uci = uci, san = sans[index] }
+        if result then
+            entry.eval_text = GameReview.eval_text(result.played, result.mover)
+            entry.judgment = result.judgment
+            if result.judgment and result.best and Chess.move_to_uci(result.best) ~= uci then
+                entry.best = Chess.to_san(result.position, result.best)
+            end
+        end
+        moves[index] = entry
+    end
+    local counts = GameReview.count(analysis.results)
+    local function line(name, side)
+        local count = counts[side]
+        if count.Blunder + count.Mistake == 0 then
+            return string.format(s.review_side_none, name)
+        end
+        return string.format(s.review_side, name, count.Blunder, count.Mistake)
+    end
+    -- One line fits the start of the review; the two sides of a game between two people come in a notice too.
+    local summary
+    if self.two_players then
+        summary = line(s.color_white, "w") .. "\n" .. line(s.color_black, "b")
+    else
+        summary = line(s.you, self.my_color)
+    end
+    if analysis.skipped > 0 then
+        summary = summary .. "\n" .. string.format(s.analysis_skipped, analysis.skipped)
+    end
+    local you, engine = s.you, string.format(s.offline_level, self.level or 1)
+    self.review_game = {
+        moves = moves, intro = not self.two_players and summary or nil, summary = summary,
+        initial_fen = self.initial_fen, result_text = self:status_text(),
+        white = self.two_players and s.color_white or (self.my_color == "w" and you or engine),
+        black = self.two_players and s.color_black or (self.my_color == "b" and you or engine),
+    }
+    self:render()
+    self:open_review()
+end
+
+function OfflineGame:open_review()
+    require("ink_knight/ui/review_screen").open(self.app, self.review_game, { flipped = self.flipped })
+    self.app:info(self.review_game.summary, 6)
+end
+
 function OfflineGame:apply(move)
+    self.review_game = nil
     if self.clock then
         local now = socket.gettime()
         if self.clock.active then
@@ -296,15 +424,21 @@ end
 -- Runs a search a slice at a time, so the screen keeps answering. Whoever replaces or clears self.search cancels
 -- it, and then on_done is not called. A game that ended meanwhile gets on_done(nil).
 function OfflineGame:run_search(opts, on_done)
+    self:run_engine(self.position, opts, on_done, function() return not self:is_over() end)
+end
+
+-- The engine on any position, a slice at a time. still_wanted, when given, is asked between slices: false ends the
+-- search with on_done(nil).
+function OfflineGame:run_engine(position, opts, on_done, still_wanted)
     -- os.time() only counts whole seconds, which would cut up to a second from each level's time to think.
     opts.now = socket.gettime
-    local search = Engine.search(self.position, opts)
+    local search = Engine.search(position, opts)
     self.search = search
     local function work()
         if self.is_closed or self.search ~= search then
             return
         end
-        if self:is_over() then
+        if still_wanted and not still_wanted() then
             self.search = nil
             on_done(nil)
             return
@@ -368,6 +502,7 @@ end
 
 -- Back to the reader's last move: the computer's answer to it goes too, and so does a search under way.
 function OfflineGame:undo()
+    self.review_game = nil
     local moves = self:moves_after_undo()
     if not moves then
         return
@@ -463,6 +598,10 @@ function OfflineGame:on_button(button)
         self.clock_paused = false
         self:start_clock()
         self:render()
+    elseif button == "analyze" then
+        self:analyze()
+    elseif button == "analysis_cancel" then
+        self:cancel_analysis()
     elseif button == "undo" then
         self:undo()
     elseif button == "hint" then

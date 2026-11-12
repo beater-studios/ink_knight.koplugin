@@ -5,6 +5,7 @@ local Engine = {}
 
 local VALUE = { p = 100, n = 320, b = 330, r = 500, q = 900, k = 0 }
 local MATE = 100000
+Engine.MATE = MATE
 
 -- Levels: how long it may think, how deep it may go, and how much it may stray from its best move.
 Engine.LEVELS = {
@@ -60,7 +61,9 @@ end
 
 -- Returns a search that advances a little at each resume, and gives the move at the end.
 -- opts: level (1 to 4) or limits (a table like those in LEVELS), now() for the time, random(n) for the noise,
--- nodes_per_slice.
+-- nodes_per_slice. To look at a move played, opts.report gives { best, score, played, depth } instead of a move:
+-- the best move and its score, and the exact score of the move opts.exact (in UCI), both for the side to move,
+-- from the deepest search finished; nil scores when not even the first depth finished.
 function Engine.search(position, opts)
     local level = opts.limits or Engine.LEVELS[opts.level] or Engine.LEVELS[1]
     local now = opts.now or os.time
@@ -70,7 +73,11 @@ function Engine.search(position, opts)
         local deadline = now() + level.seconds
         local nodes = 0
         local out_of_time = false
-        local function negamax(pos, depth, alpha, beta, ply)
+        local exact = opts.exact and Chess.parse_uci(position, opts.exact) or nil
+        local function is_exact(move)
+            return exact ~= nil and move.from == exact.from and move.to == exact.to and move.promotion == exact.promotion
+        end
+        local function tick()
             nodes = nodes + 1
             if nodes % per_slice == 0 then
                 coroutine.yield()
@@ -78,6 +85,44 @@ function Engine.search(position, opts)
                     out_of_time = true
                 end
             end
+        end
+        -- Past the depth, only captures, until the position is quiet, so a line does not end in the middle of an
+        -- exchange and look better than it is. Only for the analysis (limits.quiescence): the levels of the
+        -- games keep playing as they always did.
+        local function quiesce(pos, alpha, beta, ply, left)
+            tick()
+            if out_of_time then
+                return 0
+            end
+            local stand = pos.turn == "w" and evaluate(pos) or -evaluate(pos)
+            if stand >= beta or left == 0 then
+                return stand
+            end
+            alpha = math.max(alpha, stand)
+            local white = pos.turn == "w"
+            local captures = {}
+            for _, move in ipairs(Chess.pseudo_legal_moves(pos)) do
+                if pos.board[move.to] or (move.to == pos.passant and pos.board[move.from]:lower() == "p") then
+                    captures[#captures + 1] = move
+                end
+            end
+            for _, move in ipairs(ordered(pos, captures)) do
+                local after = Chess.play(pos, move)
+                if not Chess.in_check(after, white) then
+                    local score = -quiesce(after, -beta, -alpha, ply + 1, left - 1)
+                    if out_of_time then
+                        return alpha
+                    end
+                    if score >= beta then
+                        return score
+                    end
+                    alpha = math.max(alpha, score)
+                end
+            end
+            return alpha
+        end
+        local function negamax(pos, depth, alpha, beta, ply)
+            tick()
             if out_of_time then
                 return 0
             end
@@ -86,6 +131,9 @@ function Engine.search(position, opts)
             if depth == 0 then
                 if Chess.in_check(pos) and #Chess.legal_moves(pos) == 0 then
                     return -(MATE - ply)
+                end
+                if level.quiescence then
+                    return quiesce(pos, alpha, beta, ply, level.quiescence)
                 end
                 return pos.turn == "w" and evaluate(pos) or -evaluate(pos)
             end
@@ -114,14 +162,16 @@ function Engine.search(position, opts)
             return nil
         end
         local scored = {}
+        local finished = 0
         root = ordered(position, root)
         for depth = 1, level.depth do
             local results = {}
             local best = -math.huge
             for _, move in ipairs(root) do
                 -- Only moves that come within the noise of the best one so far can be chosen, so the others only
-                -- need to be shown worse than that, which lets the search cut them short.
-                local floor = best > -math.huge and (best - level.noise - 1) or -MATE * 2
+                -- need to be shown worse than that, which lets the search cut them short. The move looked at is
+                -- searched in full, since its own score is what is wanted.
+                local floor = (best > -math.huge and not is_exact(move)) and (best - level.noise - 1) or -MATE * 2
                 local score = -negamax(Chess.play(position, move), depth - 1, -MATE * 2, -floor, 1)
                 if out_of_time then
                     break
@@ -132,6 +182,7 @@ function Engine.search(position, opts)
             -- A depth cut short by the clock is thrown away, because its scores cannot be compared.
             if #results == #root then
                 scored = results
+                finished = depth
                 -- The next depth looks first at what was best at this one, so it finds a good bound sooner.
                 local sorted = {}
                 for i, entry in ipairs(results) do
@@ -152,11 +203,19 @@ function Engine.search(position, opts)
             end
         end
         if #scored == 0 then
-            return root[1]
+            return opts.report and { best = root[1], depth = 0 } or root[1]
         end
-        local top = -math.huge
+        local top, top_move, played = -math.huge, nil, nil
         for _, entry in ipairs(scored) do
-            top = math.max(top, entry.score)
+            if entry.score > top then
+                top, top_move = entry.score, entry.move
+            end
+            if is_exact(entry.move) then
+                played = entry.score
+            end
+        end
+        if opts.report then
+            return { best = top_move, score = top, played = played, depth = finished }
         end
         -- Lower levels take any move close enough to the best one. A forced mate is never thrown away.
         local noise = top >= MATE - 100 and 0 or level.noise
