@@ -172,7 +172,7 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     SavedState.remove_file(settings_path)
     local home = new_home(language)
     check_page(home, language .. " first page")
-    for _, open in ipairs({ "offline_menu", "pack_menu", "show_about", "connect_menu" }) do
+    for _, open in ipairs({ "offline_menu", "pack_menu", "coordinates_menu", "show_about", "connect_menu" }) do
         home[open](home)
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
@@ -188,6 +188,17 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home:save_correspondence({ account = LONG_NAME:lower(), name = LONG_NAME, games = kept })
     home:offline_menu()
     check_page(top_page(), language .. " offline menu with correspondence")
+    -- The coordinate training in both modes, with no limit, which has the most buttons.
+    home:save_setting("coordinates_time", "none")
+    for _, mode in ipairs({ "find", "name" }) do
+        home:save_setting("coordinates_mode", mode)
+        local training = require("ink_knight/ui/coordinates_screen").open(home)
+        training:start()
+        check_board(training.screen, language .. " coordinates " .. mode)
+        UIManager:close(training.screen)
+    end
+    home.settings:delSetting("coordinates_time")
+    home.settings:delSetting("coordinates_mode")
     local corr = require("ink_knight/ui/correspondence_screen").open(home, "corr0001")
     check_board(corr.screen, language .. " correspondence offline")
     UIManager:close(corr.screen)

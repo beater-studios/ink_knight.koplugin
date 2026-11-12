@@ -152,6 +152,18 @@ fuzz:run{
     step = function(f) game_step(f, two) end,
 }
 
+-- The coordinate training, naming squares against the clock.
+fuzz:run{
+    label = "coordinates",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        home:save_setting("coordinates_mode", f.random(1, 2) == 1 and "find" or "name")
+        local training = require("ink_knight/ui/coordinates_screen").open(home)
+        training:start()
+        return training.screen
+    end,
+}
+
 -- A correspondence game kept offline, on the reader's turn, from its board.
 fuzz:run{
     label = "correspondence offline",

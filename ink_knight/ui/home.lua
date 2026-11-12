@@ -13,6 +13,8 @@ local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Correspondence = require("ink_knight/correspondence")
 local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
+local Coordinates = require("ink_knight/coordinates")
+local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
 local CreateTokenScreen = require("ink_knight/ui/create_token_screen")
 local Game = require("ink_knight/game")
 local I18n = require("ink_knight/i18n")
@@ -1293,6 +1295,7 @@ function Home:offline_rows(page)
         self:close_pages()
         OfflineGame.open(self, { two_players = true })
     end }
+    rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
         rows[#rows + 1] = row
     end
@@ -1327,6 +1330,49 @@ function Home:offline_rows(page)
         rows[#rows + 1] = row
     end
     return rows
+end
+
+-- Returns whether score is a new best for the mode and side, which only runs with the clock count.
+function Home:keep_coordinate_score(mode, color, score)
+    local records = State.read_coordinate_records(self.settings:readSetting("coordinate_records"))
+    local key = Coordinates.record_key(mode, color)
+    if score <= (records[key] or 0) then
+        return false
+    end
+    records[key] = score
+    self.settings:saveSetting("coordinate_records", records)
+    self.settings:flush()
+    return true
+end
+
+function Home:coordinates_menu()
+    local s = self.strings
+    self:open_page{ title = s.coordinates, build = function(page)
+        local records = State.read_coordinate_records(self.settings:readSetting("coordinate_records"))
+        local mode = self:option("coordinates_mode")
+        local function choose(key, labels, title)
+            return self:choice_row(page, {
+                title = title, labels = labels, names = State.OPTIONS[key][1], current = self:option(key),
+                on_pick = function(name) self:save_setting(key, name) end,
+            })
+        end
+        return {
+            { kind = "primary", text = s.coord_start, callback = function()
+                CoordinatesScreen.open(self, { on_closed = function() page:reload() end })
+            end },
+            { kind = "section", text = s.options_section },
+            choose("coordinates_mode", s.coord_modes, s.coord_mode),
+            choose("coordinates_side", s.coord_sides, s.coord_side),
+            choose("coordinates_time", s.coord_times, s.coord_time),
+            { kind = "toggle", text = s.coord_pieces, on = self:option("coordinates_pieces"), on_text = s.yes, off_text = s.no, callback = function()
+                self:save_setting("coordinates_pieces", not self:option("coordinates_pieces"))
+                page:reload()
+            end },
+            { kind = "section", text = string.format(s.coord_records_title, s.coord_modes[mode]) },
+            { kind = "stat", text = s.coord_sides.white, value = tostring(records[Coordinates.record_key(mode, "w")] or 0) },
+            { kind = "stat", text = s.coord_sides.black, value = tostring(records[Coordinates.record_key(mode, "b")] or 0) },
+        }
+    end }
 end
 
 -- The correspondence games as Lichess last sent them, the reader's turn first, with how long ago that was.

@@ -1,6 +1,6 @@
 -- The windows of Ink Knight for tools/koreader/check_sleep.lua, each in a state that has timers: the clock of a
--- live game, the engine thinking, the reply of a puzzle, the network of the online part, a notice that leaves by
--- itself and the page that receives the token. The network is invented: nothing leaves this computer, apart from
+-- live game, the engine thinking, the reply of a puzzle, the clock of the coordinate training, the network of the
+-- online part, a notice that leaves by itself and the page that receives the token. The network is invented: nothing leaves this computer, apart from
 -- the token page, which listens on its private address when it has one.
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
@@ -125,6 +125,15 @@ return {
         close_all()
         local OfflineGame = require("ink_knight/ui/offline_game")
         return OfflineGame.open(fake_app(), { level = 2, color_choice = "black" }).screen
+    end,
+    ["coordinate training with its clock"] = function()
+        close_all()
+        local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
+        local app = fake_app()
+        function app:keep_coordinate_score() return false end
+        local screen = CoordinatesScreen.open(app)
+        screen:start()
+        return screen.screen
     end,
     ["puzzle waiting for the reply"] = function()
         close_all()

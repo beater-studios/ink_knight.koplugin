@@ -21,6 +21,10 @@ State.OPTIONS = {
     piece_set = { { "classic", "cburnett", "merida" }, "classic" },
     puzzle_difficulty = { { "easiest", "easier", "normal", "harder", "hardest" }, "normal" },
     puzzle_color = { { "any", "white", "black" }, "any" },
+    coordinates_mode = { { "find", "name" }, "find" },
+    coordinates_side = { { "white", "black", "random" }, "white" },
+    coordinates_time = { { "seconds", "none" }, "seconds" },
+    coordinates_pieces = { { true, false }, true },
 }
 
 function State.option(key, saved)
@@ -167,6 +171,22 @@ function State.read_pack_progress(saved)
         end
     end
     return progress
+end
+
+-- The best score in 30 seconds of each mode and side, { find_w = 12, ... }, without what makes no sense.
+function State.read_coordinate_records(saved)
+    local Coordinates = require("ink_knight/coordinates")
+    local records = {}
+    for _, mode in ipairs(State.OPTIONS.coordinates_mode[1]) do
+        for _, color in ipairs({ "w", "b" }) do
+            local key = Coordinates.record_key(mode, color)
+            local score = type(saved) == "table" and saved[key]
+            if type(score) == "number" and score >= 0 and score == math.floor(score) then
+                records[key] = score
+            end
+        end
+    end
+    return records
 end
 
 -- The results waiting to reach Lichess, without the ones that could not be sent.
