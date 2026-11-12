@@ -172,7 +172,7 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     SavedState.remove_file(settings_path)
     local home = new_home(language)
     check_page(home, language .. " first page")
-    for _, open in ipairs({ "offline_menu", "pack_menu", "coordinates_menu", "show_about", "connect_menu" }) do
+    for _, open in ipairs({ "offline_menu", "pack_menu", "coordinates_menu", "learn_menu", "show_about", "connect_menu" }) do
         home[open](home)
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
@@ -188,6 +188,18 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home:save_correspondence({ account = LONG_NAME:lower(), name = LONG_NAME, games = kept })
     home:offline_menu()
     check_page(top_page(), language .. " offline menu with correspondence")
+    -- Learn chess: the longest goal of each language in the banner, and the end of a stage.
+    local categories = require("ink_knight/data/learn_stages")
+    local pawn_stage = categories[1].stages[6]
+    local lesson = require("ink_knight/ui/learn_screen").open(home, pawn_stage, 1)
+    check_board(lesson.screen, language .. " learn banner")
+    if lesson.screen.banner_overflow then
+        problem(language .. " learn banner: the goal does not fit even at the smallest size")
+    end
+    UIManager:close(lesson.screen)
+    home:learn_stage_done(categories[3].stages[2])
+    check_page(top_page(), language .. " learn stage done")
+    UIManager:close(top_page())
     -- The coordinate training in both modes, with no limit, which has the most buttons.
     home:save_setting("coordinates_time", "none")
     for _, mode in ipairs({ "find", "name" }) do

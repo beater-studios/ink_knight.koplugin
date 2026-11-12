@@ -25,7 +25,18 @@ local function square_text(state, square)
         state.selected == square and "s" or "",
         state.targets and state.targets[square] and "t" or "",
         last and (last.from == square or last.to == square) and "l" or "",
+        state.stars and state.stars[square] and "*" or "",
+        state.check_square == square and "c" or "",
     })
+end
+
+-- Arrows cross many squares, and a highlighted rank borders eight: any change of them redraws the whole board.
+local function overlay_text(state)
+    local parts = { tostring(state.highlighted_rank) }
+    for _, shape in ipairs(state.shapes or {}) do
+        parts[#parts + 1] = table.concat({ tostring(shape.from), tostring(shape.to), tostring(shape.brush) }, ":")
+    end
+    return table.concat(parts, "|")
 end
 
 function BoardDiff.snapshot(state)
@@ -37,7 +48,8 @@ function BoardDiff.snapshot(state)
         squares = squares,
         flipped = state.flipped == true,
         has_position = state.position ~= nil,
-        top = bar_text(state.top),
+        top = bar_text(state.top) .. "|" .. tostring(state.banner),
+        overlay = overlay_text(state),
         bottom = bar_text(state.bottom),
         status = tostring(state.status),
         buttons = buttons_text(state.buttons),
@@ -50,8 +62,10 @@ function BoardDiff.changes(old, new)
         return { whole = true, squares = {} }
     end
     local squares = {}
+    -- Arrows or a highlighted rank that changed: every square counts as changed, which redraws the board.
+    local overlay = old.overlay ~= new.overlay
     for square = 1, 64 do
-        if old.squares[square] ~= new.squares[square] then
+        if overlay or old.squares[square] ~= new.squares[square] then
             squares[#squares + 1] = square
         end
     end

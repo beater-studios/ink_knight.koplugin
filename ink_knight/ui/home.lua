@@ -14,6 +14,8 @@ local BoardScreen = require("ink_knight/ui/board_screen")
 local ChessClock = require("ink_knight/chess_clock")
 local ClockScreen = require("ink_knight/ui/clock_screen")
 local Correspondence = require("ink_knight/correspondence")
+local Learn = require("ink_knight/learn")
+local LearnScreen = require("ink_knight/ui/learn_screen")
 local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local Coordinates = require("ink_knight/coordinates")
 local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
@@ -91,7 +93,8 @@ end
 
 -- Runs inside Page:init, with the screen already in portrait.
 function Home:setup()
-    self.strings = I18n[I18n.language_from(G_reader_settings:readSetting("language"))]
+    self.language = I18n.language_from(G_reader_settings:readSetting("language"))
+    self.strings = I18n[self.language]
     self.title = self.strings.games_title
     self.broken_text = self.strings.unexpected_error
     self.decode = decode
@@ -385,14 +388,18 @@ function Home:forget_correspondence_move(id)
     end
 end
 
--- The pages under the board show what changed, such as a move now waiting.
-function Home:correspondence_closed()
-    self.correspondence_view = nil
+-- The pages under a board show what changed there, such as a move now waiting or a level done.
+function Home:reload_pages()
     for _, page in ipairs(self.pages) do
         if page.build then
             page:reload()
         end
     end
+end
+
+function Home:correspondence_closed()
+    self.correspondence_view = nil
+    self:reload_pages()
 end
 
 -- A list that changed the kept games, or sent a move, shows on the board when it is open.
@@ -1304,6 +1311,8 @@ function Home:offline_rows(page)
             ClockScreen.open(self, preset)
         end)
     end }
+    local t = self:learn_texts()
+    rows[#rows + 1] = { text = t.learnLearnChess, detail = string.format(t.learnProgressX, self:learn_percent() .. "%"), callback = function() self:learn_menu() end }
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
         rows[#rows + 1] = row
@@ -1366,6 +1375,106 @@ function Home:choose_clock(title, can_skip, on_pick)
         }
     end
     self:choose(title, rows, { close_on_tap = true })
+end
+
+-- "Learn chess": the texts of the app in the reader's language, read the first time they are needed.
+function Home:learn_texts()
+    return require("ink_knight/data/learn_texts")[self.language] or require("ink_knight/data/learn_texts").en
+end
+
+function Home:learn_progress()
+    return State.read_learn_progress(self.settings:readSetting("learn_progress"))
+end
+
+-- Keeps the best score of a level.
+function Home:learn_record(stage_key, index, score)
+    local progress = self:learn_progress()
+    progress[stage_key] = progress[stage_key] or {}
+    if score > (progress[stage_key][index] or -1) then
+        progress[stage_key][index] = score
+        self.settings:saveSetting("learn_progress", progress)
+        self.settings:flush()
+    end
+end
+
+local function learn_categories()
+    return require("ink_knight/data/learn_stages")
+end
+
+function Home:learn_percent()
+    return Learn.percent(learn_categories(), self:learn_progress())
+end
+
+function Home:learn_menu()
+    local t = self:learn_texts()
+    self:open_page{ title = t.learnLearnChess, build = function()
+        local progress = self:learn_progress()
+        local rows = {}
+        for _, category in ipairs(learn_categories()) do
+            rows[#rows + 1] = { kind = "section", text = t[category.name] }
+            for _, stage in ipairs(category.stages) do
+                local scores = progress[stage.key] or {}
+                local done = 0
+                for index in ipairs(stage.levels) do
+                    done = done + (scores[index] and 1 or 0)
+                end
+                local rank = Learn.stage_rank(stage, scores)
+                rows[#rows + 1] = {
+                    text = t[stage.title],
+                    detail = t[stage.subtitle],
+                    value = rank and LearnScreen.stars_text(rank) or (done > 0 and string.format("%d/%d", done, #stage.levels) or nil),
+                    callback = function() self:learn_open(stage) end,
+                }
+            end
+        end
+        return rows
+    end }
+end
+
+-- A stage never played starts with its introduction; otherwise at its first level not done, or the first.
+function Home:learn_open(stage)
+    local t = self:learn_texts()
+    local scores = self:learn_progress()[stage.key] or {}
+    local first
+    for index in ipairs(stage.levels) do
+        if not scores[index] then
+            first = first or index
+        end
+    end
+    local function play(index)
+        LearnScreen.open(self, stage, index, { on_stage_done = function(done) self:learn_stage_done(done) end })
+    end
+    if next(scores) == nil then
+        self:ask{ title = t[stage.title], text = t[stage.intro], ok_text = t.learnLetsGo, on_ok = function() play(1) end }
+    else
+        play(first or 1)
+    end
+end
+
+-- The end of a stage: what it taught, its stars, and the next stage.
+function Home:learn_stage_done(stage)
+    local t = self:learn_texts()
+    local rank = Learn.stage_rank(stage, self:learn_progress()[stage.key] or {})
+    local following
+    local all = {}
+    for _, category in ipairs(learn_categories()) do
+        for _, item in ipairs(category.stages) do
+            all[#all + 1] = item
+        end
+    end
+    for index, item in ipairs(all) do
+        if item == stage then
+            following = all[index + 1]
+        end
+    end
+    local rows = {
+        { kind = "text", text = t[stage.complete] .. (rank and ("\n\n" .. LearnScreen.stars_text(rank)) or ""), center = true },
+    }
+    if following then
+        rows[#rows + 1] = { kind = "primary", text = string.format(t.learnNextX, t[following.title]), callback = function() self:learn_open(following) end }
+    end
+    rows[#rows + 1] = { kind = "secondary", text = t.learnBackToMenu, callback = function() end }
+    self:open_page{ title = t[stage.title], rows = rows, close_on_tap = true }
 end
 
 -- Returns whether score is a new best for the mode and side, which only runs with the clock count.

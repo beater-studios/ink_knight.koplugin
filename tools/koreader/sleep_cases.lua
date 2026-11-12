@@ -136,6 +136,18 @@ return {
         screen:start()
         return screen.screen
     end,
+    ["learn chess waiting for the opponent"] = function()
+        close_all()
+        local LearnScreen = require("ink_knight/ui/learn_screen")
+        local app = fake_app()
+        app.language = "en"
+        function app:learn_texts() return require("ink_knight/data/learn_texts").en end
+        function app:learn_record() end
+        function app:reload_pages() end
+        -- En passant: the level starts with black's scripted move, after a pause.
+        local stage = require("ink_knight/data/learn_stages")[3].stages[3]
+        return LearnScreen.open(app, stage, 1).screen
+    end,
     ["two players with a clock"] = function()
         close_all()
         require("ink_knight/awake").install("ink_knight")

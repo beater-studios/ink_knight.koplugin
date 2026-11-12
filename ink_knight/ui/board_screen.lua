@@ -74,7 +74,13 @@ local BoardScreen = InputContainer:extend{
     on_resume = nil,
     -- Shown in place of the board when it cannot be drawn.
     broken_text = nil,
+    -- Lines of text in place of the top bar, for a goal that does not fit one line, as in the lessons.
+    banner_lines = nil,
 }
+
+-- The hints of the lessons: the colors of the app become grays, and the arrows that warn are black.
+local SHAPE_INK = { red = BLACK, yellow = Blitbuffer.Color8(0x44) }
+local HINT_INK = Blitbuffer.Color8(0x66)
 
 local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
@@ -314,12 +320,13 @@ end
 
 function BoardScreen:layout()
     local bar_h, status_h, button_h = self:px(46), self:px(34), self:px(58)
-    local room = self.height - StatusStrip.height() - 2 * bar_h - status_h - button_h
+    local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(12) or bar_h
+    local room = self.height - StatusStrip.height() - top_h - bar_h - status_h - button_h
     self.square = math.floor(math.min(self.width, room) / 8)
     local board_size = self.square * 8
     self.board_x = math.floor((self.width - board_size) / 2)
-    self.top_bar = { x = 0, y = 0, w = self.width, h = bar_h }
-    self.board_y = bar_h
+    self.top_bar = { x = 0, y = 0, w = self.width, h = top_h }
+    self.board_y = top_h
     self.board_rect = Geom:new{ x = self.board_x, y = self.board_y, w = board_size, h = board_size }
     self.bottom_bar = { x = 0, y = self.board_y + board_size, w = self.width, h = bar_h }
     self.status_rect = { x = 0, y = self.bottom_bar.y + bar_h, w = self.width, h = status_h }
@@ -489,6 +496,21 @@ function BoardScreen:paint_board(bb)
     if state.selected then
         self:paint_marker(bb, state.selected, self:px(6))
     end
+    if state.highlighted_rank then
+        local _, y = self:square_position((state.highlighted_rank - 1) * 8 + 1)
+        bb:paintBorder(self.board_x, y, self.square * 8, self.square, self:px(4), BLACK)
+    end
+    if state.check_square then
+        local x, y = self:square_position(state.check_square)
+        bb:paintBorder(x + self:px(4), y + self:px(4), self.square - self:px(8), self.square - self:px(8), self:px(3), BLACK)
+    end
+    for _, shape in ipairs(state.shapes or {}) do
+        self:paint_shape(bb, shape)
+    end
+    -- Over the arrows, which often end on them.
+    for square in pairs(state.stars or {}) do
+        self:paint_star(bb, square)
+    end
     for square in pairs(state.targets or {}) do
         local x, y = self:square_position(square)
         local r = math.floor(self.square * 0.16)
@@ -532,8 +554,103 @@ function BoardScreen:paint_buttons(bb)
     end
 end
 
+-- The banner: text over several lines, centered, smaller when it would not fit.
+function BoardScreen:paint_banner(bb, rect, text)
+    local pad = self:px(12)
+    -- The size that fits is worked out once for each text, since the board redraws it on every move.
+    self.banner_sizes = self.banner_sizes or {}
+    local size = self.banner_sizes[text] or 19
+    local box
+    while true do
+        box = TextBoxWidget:new{ text = text, face = face(REGULAR, size * self.scale), width = rect.w - 2 * pad, alignment = "center", fgcolor = BLACK, bgcolor = WHITE }
+        local fits = box:getSize().h <= rect.h - self:px(4)
+        if fits or size <= 13 then
+            -- For the layout check: even the smallest size did not fit.
+            self.banner_overflow = not fits
+            self.banner_sizes[text] = size
+            break
+        end
+        box:free()
+        size = size - 1
+    end
+    local h = box:getSize().h
+    box:paintTo(bb, rect.x + pad, rect.y + math.floor((rect.h - h) / 2))
+    box:free()
+    bb:paintRect(0, rect.y + rect.h - 1, self.width, 1, Blitbuffer.Color8(0xCC))
+end
+
+function BoardScreen:square_center(square)
+    local x, y = self:square_position(square)
+    return x + math.floor(self.square / 2), y + math.floor(self.square / 2)
+end
+
+-- A straight line, thick, by small squares along it.
+local function paint_line(bb, x0, y0, x1, y1, thickness, color)
+    local steps = math.max(math.abs(x1 - x0), math.abs(y1 - y0))
+    local half = math.floor(thickness / 2)
+    for i = 0, steps do
+        local t = steps == 0 and 0 or i / steps
+        bb:paintRect(math.floor(x0 + (x1 - x0) * t + 0.5) - half, math.floor(y0 + (y1 - y0) * t + 0.5) - half, thickness, thickness, color)
+    end
+end
+
+-- A filled triangle, a row at a time.
+local function paint_triangle(bb, points, color)
+    local top, bottom = math.huge, -math.huge
+    for _, p in ipairs(points) do
+        top, bottom = math.min(top, p[2]), math.max(bottom, p[2])
+    end
+    for y = math.floor(top), math.ceil(bottom) do
+        local xs = {}
+        for i = 1, 3 do
+            local a, b = points[i], points[i % 3 + 1]
+            if (a[2] <= y and b[2] > y) or (b[2] <= y and a[2] > y) then
+                xs[#xs + 1] = a[1] + (y - a[2]) * (b[1] - a[1]) / (b[2] - a[2])
+            end
+        end
+        if #xs == 2 then
+            local left, right = math.min(xs[1], xs[2]), math.max(xs[1], xs[2])
+            bb:paintRect(math.floor(left), y, math.max(1, math.ceil(right - left)), 1, color)
+        end
+    end
+end
+
+-- An arrow from the center of one square to the edge of the head on another, or a ring on a square.
+function BoardScreen:paint_shape(bb, shape)
+    local color = SHAPE_INK[shape.brush] or HINT_INK
+    local x0, y0 = self:square_center(shape.from)
+    if not shape.to then
+        local r = math.floor(self.square * 0.42)
+        bb:paintCircle(x0, y0, r, color, self:px(4))
+        return
+    end
+    local x1, y1 = self:square_center(shape.to)
+    local dx, dy = x1 - x0, y1 - y0
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length == 0 then
+        return
+    end
+    local ux, uy = dx / length, dy / length
+    local head, half_w = self.square * 0.38, self.square * 0.22
+    local bx, by = x1 - ux * head, y1 - uy * head
+    paint_line(bb, x0, y0, bx, by, math.max(3, self:px(7)), color)
+    paint_triangle(bb, { { x1, y1 }, { bx - uy * half_w, by + ux * half_w }, { bx + uy * half_w, by - ux * half_w } }, color)
+end
+
+-- A star to collect: a white one over a larger black one, so it shows on any square.
+function BoardScreen:paint_star(bb, square)
+    local x, y = self:square_position(square)
+    local size = math.floor(self.square * 0.62)
+    self:paint_text(bb, "\226\152\133", PIECE_FONT, size * 1.3 / self.scale, x, y, self.square, self.square, "center", BLACK)
+    self:paint_text(bb, "\226\152\133", PIECE_FONT, size / self.scale, x, y, self.square, self.square, "center", WHITE)
+end
+
 function BoardScreen:paint_game(bb)
-    self:paint_bar(bb, self.top_bar, self.state.top)
+    if self.banner_lines then
+        self:paint_banner(bb, self.top_bar, self.state.banner or "")
+    else
+        self:paint_bar(bb, self.top_bar, self.state.top)
+    end
     self:paint_board(bb)
     self:paint_bar(bb, self.bottom_bar, self.state.bottom)
     local rect = self.status_rect

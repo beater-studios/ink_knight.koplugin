@@ -173,6 +173,17 @@ fuzz:run{
     end,
 }
 
+-- Learn chess: a level with the opponent's moves and captures that fail it, and one with stars.
+fuzz:run{
+    label = "learn chess",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        local categories = require("ink_knight/data/learn_stages")
+        local stage = f.random(1, 2) == 1 and categories[2].stages[3] or categories[1].stages[f.random(1, 6)]
+        return require("ink_knight/ui/learn_screen").open(home, stage, f.random(1, #stage.levels)).screen
+    end,
+}
+
 -- The coordinate training, naming squares against the clock.
 fuzz:run{
     label = "coordinates",

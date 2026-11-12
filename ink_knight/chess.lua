@@ -148,6 +148,20 @@ local function copy(position)
     return { board = board, turn = position.turn, castling = position.castling, passant = position.passant, halfmove = position.halfmove }
 end
 
+-- A copy to change, optionally with the turn handed to another side, which drops the square passed over: it is
+-- only good for the reply of the side that did not just move.
+function Chess.copy_position(position, turn)
+    local result = copy(position)
+    if turn and turn ~= position.turn then
+        result.turn, result.passant = turn, nil
+    end
+    return result
+end
+
+function Chess.king_square(position, color)
+    return find_king(position, color == "w")
+end
+
 local function drop_castling(castling, letters)
     return (castling:gsub("[" .. letters .. "]", ""))
 end
@@ -285,6 +299,12 @@ local function pseudo_moves(position, list)
     return list
 end
 
+-- The moves of the side to move, also the ones that leave its own king attacked: for the lessons that let the
+-- reader blunder, and to find what attacks a king.
+function Chess.pseudo_legal_moves(position)
+    return pseudo_moves(position, {})
+end
+
 function Chess.legal_moves(position)
     local legal = {}
     local white = position.turn == "w"
@@ -297,9 +317,10 @@ function Chess.legal_moves(position)
 end
 
 -- Where the piece on a square can go, as { [target] = { moves } }, with several moves for a promotion.
-function Chess.targets_from(position, from)
+-- moves: the moves to look among, the legal ones by default.
+function Chess.targets_from(position, from, moves)
     local targets = {}
-    for _, move in ipairs(Chess.legal_moves(position)) do
+    for _, move in ipairs(moves or Chess.legal_moves(position)) do
         if move.from == from then
             targets[move.to] = targets[move.to] or {}
             table.insert(targets[move.to], move)

@@ -205,6 +205,26 @@ function State.read_coordinate_records(saved)
     return records
 end
 
+-- The best score of each level of "Learn chess", { [stage key] = { [level] = score } }, without what makes no sense.
+function State.read_learn_progress(saved)
+    local progress = {}
+    if type(saved) ~= "table" then
+        return progress
+    end
+    for key, levels in pairs(saved) do
+        if type(key) == "string" and type(levels) == "table" then
+            local kept = {}
+            for index, score in pairs(levels) do
+                if type(index) == "number" and index >= 1 and index == math.floor(index) and type(score) == "number" and score >= 0 then
+                    kept[index] = score
+                end
+            end
+            progress[key] = kept
+        end
+    end
+    return progress
+end
+
 -- The results waiting to reach Lichess, without the ones that could not be sent.
 function State.read_results(saved)
     local results = {}
