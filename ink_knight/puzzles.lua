@@ -36,6 +36,47 @@ function Puzzles.prepare(raw, angle)
     }
 end
 
+-- What a batch was asked with, kept in each puzzle, so a change of difficulty or color is followed without losing
+-- the puzzles kept for when there is no connection. Puzzles from before the choice were asked with neither.
+function Puzzles.wanted(difficulty, color)
+    return difficulty .. " " .. color
+end
+Puzzles.DEFAULT_WANTED = Puzzles.wanted("normal", "any")
+
+local function is_wanted(puzzle, wanted)
+    return (puzzle.wanted or Puzzles.DEFAULT_WANTED) == wanted
+end
+
+function Puzzles.count_wanted(pile, wanted)
+    local count = 0
+    for _, puzzle in ipairs(pile) do
+        if is_wanted(puzzle, wanted) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Takes out the first puzzle asked as wanted. Without one, the first of the pile, so there is always something to
+-- solve offline.
+function Puzzles.take(pile, wanted)
+    for index, puzzle in ipairs(pile) do
+        if is_wanted(puzzle, wanted) then
+            return table.remove(pile, index)
+        end
+    end
+    return table.remove(pile, 1)
+end
+
+-- Leaves only the puzzles asked as wanted, once a batch asked that way has arrived to take the place of the rest.
+function Puzzles.drop_unwanted(pile, wanted)
+    for index = #pile, 1, -1 do
+        if not is_wanted(pile[index], wanted) then
+            table.remove(pile, index)
+        end
+    end
+end
+
 -- Adds to the pile the prepared puzzles it does not know yet. Puzzles still on the device have not been played as
 -- far as Lichess knows, so a new batch can bring them again. known: ids to leave out, as { [id] = true }.
 function Puzzles.add_new(pile, incoming, known)

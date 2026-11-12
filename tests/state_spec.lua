@@ -132,5 +132,17 @@ test("every save kept in tests/saves opens", function()
     assert(count > 0, "no saves found")
 end)
 
+test("the puzzle choices fall back to normal and either color, and a pile keeps what each was asked with", function()
+    eq(State.option("puzzle_difficulty", "impossible"), "normal")
+    eq(State.option("puzzle_color", nil), "any")
+    eq(State.option("puzzle_color", "black"), "black")
+    local pile = State.read_pile({
+        { id = "a", played = "e2e4", solution = { "e7e5" }, wanted = "harder black" },
+        { id = "b", played = "e2e4", solution = { "e7e5" }, wanted = 3 },
+    })
+    eq(pile[1].wanted, "harder black")
+    eq(pile[2].wanted, nil)
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

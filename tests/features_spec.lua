@@ -660,6 +660,28 @@ test("a new batch does not bring back puzzles already on the device", function()
     eq(pile[3].id, "c")
 end)
 
+test("a batch asks for the difficulty and color chosen, and nothing else", function()
+    eq(Api.puzzle_batch(15).path, "/api/puzzle/batch/mix?nb=15")
+    eq(Api.puzzle_batch(15, "fork", "harder", "black").path, "/api/puzzle/batch/fork?nb=15&difficulty=harder&color=black")
+    eq(Api.puzzle_batch(15, nil, "normal", "any").path, "/api/puzzle/batch/mix?nb=15&difficulty=normal")
+    eq(Api.puzzle_batch(15, nil, "impossible&x=1", "red").path, "/api/puzzle/batch/mix?nb=15")
+end)
+
+test("the next puzzle is one asked the way chosen, and the others wait for a batch to replace them", function()
+    local hard_black = Puzzles.wanted("harder", "black")
+    -- "a" was saved before the choice existed, so it counts as normal and either color.
+    local pile = { { id = "a" }, { id = "b", wanted = hard_black }, { id = "c", wanted = Puzzles.wanted("easiest", "any") } }
+    eq(Puzzles.count_wanted(pile, Puzzles.DEFAULT_WANTED), 1)
+    eq(Puzzles.count_wanted(pile, hard_black), 1)
+    eq(Puzzles.take(pile, hard_black).id, "b")
+    eq(Puzzles.take(pile, hard_black).id, "a")
+    Puzzles.drop_unwanted(pile, hard_black)
+    eq(#pile, 0)
+    pile = { { id = "a" }, { id = "b", wanted = hard_black } }
+    Puzzles.drop_unwanted(pile, hard_black)
+    eq(#pile, 1); eq(pile[1].id, "b")
+end)
+
 test("results of puzzles go to Lichess one theme at a time", function()
     local results = { { id = "a", win = true }, { id = "b", win = false }, { id = "c", angle = "fork", win = true }, { id = "d", win = true } }
     local angle, count = Puzzles.first_group(results)

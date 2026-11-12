@@ -279,8 +279,18 @@ function Api.puzzle_daily()
     return { method = "GET", path = "/api/puzzle/daily" }
 end
 
-function Api.puzzle_batch(count, angle)
-    return { method = "GET", path = string.format("/api/puzzle/batch/%s?nb=%d", path_id(angle or "mix"), count) }
+-- difficulty: easiest to hardest, relative to the reader's puzzle rating. color: white or black, the side the
+-- reader plays; nil for either, half and half. Lichess draws three times as many and keeps that color.
+local PUZZLE_DIFFICULTIES = { easiest = true, easier = true, normal = true, harder = true, hardest = true }
+function Api.puzzle_batch(count, angle, difficulty, color)
+    local path = string.format("/api/puzzle/batch/%s?nb=%d", path_id(angle or "mix"), count)
+    if PUZZLE_DIFFICULTIES[difficulty] then
+        path = path .. "&difficulty=" .. difficulty
+    end
+    if color == "white" or color == "black" then
+        path = path .. "&color=" .. color
+    end
+    return { method = "GET", path = path }
 end
 
 function Api.puzzle_results(body, angle)

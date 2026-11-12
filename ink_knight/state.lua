@@ -19,6 +19,8 @@ State.OPTIONS = {
     board_coordinates = { { true, false }, false },
     board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast" }, "plain" },
     piece_set = { { "classic", "cburnett", "merida" }, "classic" },
+    puzzle_difficulty = { { "easiest", "easier", "normal", "harder", "hardest" }, "normal" },
+    puzzle_color = { { "any", "white", "black" }, "any" },
 }
 
 function State.option(key, saved)
@@ -111,6 +113,7 @@ function State.read_pile(saved)
             puzzle.rating = type(puzzle.rating) == "number" and puzzle.rating or nil
             puzzle.angle = type(puzzle.angle) == "string" and puzzle.angle or nil
             puzzle.pile = type(puzzle.pile) == "string" and puzzle.pile or nil
+            puzzle.wanted = type(puzzle.wanted) == "string" and puzzle.wanted or nil
             pile[#pile + 1] = puzzle
         end
     end

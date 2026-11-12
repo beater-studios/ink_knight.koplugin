@@ -1,5 +1,6 @@
 -- Goes through the review of missed puzzles on the real screens, with invented answers and no network: the list from
--- Lichess, fetching what is missing, solving one, and what is kept for when there is no connection.
+-- Lichess, fetching what is missing, solving one, and what is kept for when there is no connection. Then the choice of
+-- difficulty and color: online it asks for a batch that way, offline the kept puzzles still play.
 -- Usage: OUTPUT_DIR=<folder> KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_puzzle_review.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -34,7 +35,7 @@ end
 
 local ca_file = os.tmpname()
 write(ca_file, "certificates")
-local answers, asked = {}, {}
+local answers, asked, asked_urls = {}, {}, {}
 local real_new = Net.new
 Net.new = function(opts)
     local next_pid = 0
@@ -46,6 +47,7 @@ Net.new = function(opts)
         -- The invented event stream ends at once and reconnects all the time, so it is left out of what was asked.
         if path ~= "/api/stream/event" then
             asked[#asked + 1] = path
+            asked_urls[#asked_urls + 1] = spec.url
         end
         local answer = answers[path] or answers.default
         write(spec.code_path, tostring(answer[1]))
@@ -209,6 +211,105 @@ end
 check(#asked == 0, "nothing should be asked without a connection")
 check(#home:puzzle_pile(Puzzles.REVIEW) == 0, "the kept puzzle should be on the screen")
 
+-- Difficulty and color, from the puzzles menu.
+local s = home.strings
+local decode = require("rapidjson").decode
+local function old_puzzle(id) return Puzzles.prepare(decode(puzzle_json(id)), nil) end
+local function batch_of(...)
+    local list = {}
+    for _, id in ipairs({ ... }) do
+        list[#list + 1] = puzzle_json(id)
+    end
+    return { 200, '{"puzzles":[' .. table.concat(list, ",") .. "]}" }
+end
+local function ids_of(pile)
+    local list = {}
+    for _, puzzle in ipairs(pile) do
+        list[#list + 1] = puzzle.id
+    end
+    return table.concat(list, " ")
+end
+local function row_of(page, text)
+    for _, line in ipairs(page.lines) do
+        if line.text == text then
+            return line
+        end
+    end
+end
+-- Picks a choice the way a tap does; called directly, the choice page is closed by hand.
+local function pick(menu, row_text, choice_text)
+    row_of(menu, row_text).callback()
+    local choice = home.pages[#home.pages]
+    local row = row_of(choice, choice_text)
+    check(row ~= nil, "the choice should list " .. choice_text)
+    row.callback()
+    UIManager:close(choice)
+end
+home.puzzle_in_play = nil
+home.settings:delSetting("puzzle_difficulty")
+home.settings:delSetting("puzzle_color")
+home.settings:saveSetting("puzzles", { old_puzzle("old1"), old_puzzle("old2") })
+home:open_hub()
+run_all()
+
+-- Online, a batch that brings only one puzzle the new way leaves the kept ones, so there is still enough offline.
+answers["/api/puzzle/batch/mix"] = batch_of("new1")
+asked_urls = {}
+home:puzzles_menu()
+local puzzles_page = home.pages[#home.pages]
+check(row_of(puzzles_page, s.puzzle_difficulty).value == s.puzzle_difficulties.normal, "the menu should show the normal difficulty first")
+pick(puzzles_page, s.puzzle_difficulty, s.puzzle_difficulties.harder)
+run_all()
+local batch_url = table.concat(asked_urls, " ")
+check(batch_url:find("/api/puzzle/batch/mix?nb=15&difficulty=harder", 1, true) and not batch_url:find("color=", 1, true),
+    "the batch should ask for the difficulty chosen and no color: " .. batch_url)
+check(ids_of(home:puzzle_pile()) == "old1 old2 new1", "a batch of one should leave the kept puzzles: " .. ids_of(home:puzzle_pile()))
+check(home:puzzle_pile()[3].wanted == Puzzles.wanted("harder", "any"), "a puzzle should keep how it was asked")
+check(row_of(puzzles_page, s.puzzle_difficulty).value == s.puzzle_difficulties.harder, "the menu should show the new difficulty")
+
+-- A tap on the next puzzle while the batch is on its way opens it when the batch arrives, and enough puzzles the
+-- new way replace the others.
+answers["/api/puzzle/batch/mix"] = batch_of("new2", "new3", "new4", "new5")
+pick(puzzles_page, s.puzzle_color, s.puzzle_colors.black)
+check(home.puzzle_waiting.puzzles ~= nil, "changing the color should ask for a batch")
+home:open_puzzles(nil)
+check(home.puzzle_in_play == nil, "nothing should open before the batch arrives")
+run_all()
+check(home.puzzle_in_play and home.puzzle_in_play.id == "new2", "the first puzzle of the new batch should open: "
+    .. tostring(home.puzzle_in_play and home.puzzle_in_play.id))
+check(ids_of(home:puzzle_pile()) == "new3 new4 new5", "enough puzzles the new way should replace the others: " .. ids_of(home:puzzle_pile()))
+for _, widget in ipairs(UIManager._window_stack or {}) do
+    if widget.widget and widget.widget.on_square and widget.widget ~= home.hub then
+        UIManager:close(widget.widget)
+    end
+end
+home.puzzle_in_play = nil
+UIManager:close(puzzles_page)
+
+-- Offline: the color changes, nothing is asked, and the kept puzzles still play.
+UIManager:close(home.hub)
+asked = {}
+home:puzzles_menu()
+puzzles_page = home.pages[#home.pages]
+local kept_before = #home:puzzle_pile()
+pick(puzzles_page, s.puzzle_color, s.puzzle_colors.any)
+run_all()
+check(#asked == 0, "nothing should be asked without a connection")
+check(home:option("puzzle_color") == "any", "the color should be saved")
+check(kept_before > 0 and #home:puzzle_pile() == kept_before, "the kept puzzles should stay without a connection")
+home:open_puzzles(nil)
+check(home.puzzle_in_play ~= nil, "a kept puzzle should still open")
+for _, widget in ipairs(UIManager._window_stack or {}) do
+    if widget.widget and widget.widget.on_square then
+        UIManager:close(widget.widget)
+    end
+end
+home.puzzle_in_play = nil
+UIManager:close(puzzles_page)
+
+home.settings:delSetting("puzzles")
+home.settings:delSetting("puzzle_difficulty")
+home.settings:delSetting("puzzle_color")
 home.settings:delSetting("puzzles_review")
 home.settings:delSetting("puzzle_results")
 home:forget_token()

@@ -93,7 +93,7 @@ function Home:setup()
     self:apply_board_look()
     self.games, self.challenges, self.sent = {}, {}, {}
     self.open_games = {}
-    self.fetching_puzzles = {}
+    self.puzzle_waiting = {}
     self.pages = {}
     self.tick_callback = function() self:tick() end
     self.minute_callback = function() self:on_minute() end
@@ -1051,23 +1051,38 @@ function Home:apply_board_look()
     BoardScreen.coordinates = self:option("board_coordinates")
 end
 
--- sample(bb, name, x, y, size) draws each choice before its name, two sizes wide, so the drawings line up.
-function Home:look_choice_row(page, title, labels, names, key, current, sample)
-    return { text = title, value = labels[current], wide_value = true, callback = function()
+-- A row that opens a choice among names, with the current one marked, and reloads page after the pick.
+-- opts: title, labels (by name), names, current and on_pick(name); note, a text above the choices; sample(bb, name,
+-- x, y, size), drawn before each name, two sizes wide, so the drawings line up.
+function Home:choice_row(page, opts)
+    return { text = opts.title, value = opts.labels[opts.current], wide_value = true, callback = function()
         local rows = {}
-        for _, name in ipairs(names) do
-            rows[#rows + 1] = {
-                text = labels[name], value = name == current and "✓" or nil,
-                preview = function(bb, x, y, size) sample(bb, name, x, y, size) end, preview_columns = 2,
-                callback = function()
-                    self:save_setting(key, name)
-                    self:apply_board_look()
-                    page:reload()
-                end,
-            }
+        if opts.note then
+            rows[1] = { kind = "text", text = opts.note }
         end
-        self:choose(title, rows, { close_on_tap = true })
+        for _, name in ipairs(opts.names) do
+            local row = { text = opts.labels[name], value = name == opts.current and "✓" or nil, callback = function()
+                opts.on_pick(name)
+                page:reload()
+            end }
+            if opts.sample then
+                row.preview = function(bb, x, y, size) opts.sample(bb, name, x, y, size) end
+                row.preview_columns = 2
+            end
+            rows[#rows + 1] = row
+        end
+        self:choose(opts.title, rows, { close_on_tap = true })
     end }
+end
+
+function Home:look_choice_row(page, title, labels, names, key, current, sample)
+    return self:choice_row(page, {
+        title = title, labels = labels, names = names, current = current, sample = sample,
+        on_pick = function(name)
+            self:save_setting(key, name)
+            self:apply_board_look()
+        end,
+    })
 end
 
 function Home:board_look_rows(page)
@@ -1172,10 +1187,19 @@ function Home:puzzle_results()
     return State.read_results(self.settings:readSetting("puzzle_results"))
 end
 
+function Home:puzzle_wanted()
+    return Puzzles.wanted(self:option("puzzle_difficulty"), self:option("puzzle_color"))
+end
+
 -- angle: a theme, or Puzzles.REVIEW for the missed ones, which come from their own list and not from a batch.
 function Home:next_puzzle(angle)
     local pile = self:puzzle_pile(angle)
-    local puzzle = table.remove(pile, 1)
+    local puzzle
+    if angle == Puzzles.REVIEW then
+        puzzle = table.remove(pile, 1)
+    else
+        puzzle = Puzzles.take(pile, self:puzzle_wanted())
+    end
     self.settings:saveSetting(pile_key(angle), pile)
     self.settings:flush()
     -- Out of the pile while on the screen, and not yet a result, so it is remembered for the next batch.
@@ -1285,14 +1309,29 @@ function Home:open_review()
     end)
 end
 
+-- A batch is asked for when few puzzles of the chosen difficulty and color are left. The ones asked otherwise stay
+-- until enough asked the new way have arrived, so a change made offline, or a batch that brings only a few, still
+-- leaves something to solve. on_done(status) runs once the pile is ready: status is nil when nothing was asked, and
+-- a call made while a batch is on its way waits for it.
 function Home:ensure_puzzles(angle, on_done)
     local key = pile_key(angle)
-    if not self.net or not self:allows("puzzles") or self.fetching_puzzles[key] or #self:puzzle_pile(angle) > Puzzles.LOW then
+    local waiting = self.puzzle_waiting[key]
+    if waiting then
+        waiting[#waiting + 1] = on_done
         return
     end
-    self.fetching_puzzles[key] = true
-    self.net:request(Api.puzzle_batch(Puzzles.BATCH_SIZE, angle), function(status, body)
-        self.fetching_puzzles[key] = false
+    local difficulty, color = self:option("puzzle_difficulty"), self:option("puzzle_color")
+    local wanted = Puzzles.wanted(difficulty, color)
+    if not self.net or not self:allows("puzzles") or Puzzles.count_wanted(self:puzzle_pile(angle), wanted) > Puzzles.LOW then
+        if on_done then
+            on_done(nil)
+        end
+        return
+    end
+    waiting = { on_done }
+    self.puzzle_waiting[key] = waiting
+    self.net:request(Api.puzzle_batch(Puzzles.BATCH_SIZE, angle, difficulty, color), function(status, body)
+        self.puzzle_waiting[key] = nil
         local data = status == 200 and decode(body)
         if data and data.puzzles then
             local pile = self:puzzle_pile(angle)
@@ -1300,17 +1339,67 @@ function Home:ensure_puzzles(angle, on_done)
             for _, raw in ipairs(data.puzzles) do
                 local puzzle = Puzzles.prepare(raw, angle)
                 if puzzle then
+                    puzzle.wanted = wanted
                     incoming[#incoming + 1] = puzzle
                 end
             end
             Puzzles.add_new(pile, incoming, self:known_puzzle_ids())
+            if Puzzles.count_wanted(pile, wanted) > Puzzles.LOW then
+                Puzzles.drop_unwanted(pile, wanted)
+            end
             self.settings:saveSetting(key, pile)
             self.settings:flush()
         end
-        if on_done then
-            on_done(status)
+        -- The choice changed while the batch was on its way, so it was asked the old way: ask again, and whoever
+        -- was waiting gets that answer.
+        if self:puzzle_wanted() ~= wanted then
+            self:ensure_puzzles(angle)
+            for _, callback in ipairs(waiting) do
+                self:ensure_puzzles(angle, callback)
+            end
+            return
+        end
+        for _, callback in ipairs(waiting) do
+            callback(status)
         end
     end)
+end
+
+-- Opens the puzzles of a theme, or the mix without one. With none of the chosen difficulty and color kept, it waits
+-- for a batch first, and if none can come, the ones kept are used.
+function Home:open_puzzles(angle)
+    if Puzzles.count_wanted(self:puzzle_pile(angle), self:puzzle_wanted()) > 0 then
+        PuzzleScreen.open(self, { angle = angle })
+        return
+    end
+    if self.net and self:allows("puzzles") then
+        self:info(self.strings.loading, 2)
+    end
+    self:ensure_puzzles(angle, function(status)
+        if status == nil or status == 200 or #self:puzzle_pile(angle) > 0 then
+            PuzzleScreen.open(self, { angle = angle })
+        else
+            self:info(self:error_text(status))
+        end
+    end)
+end
+
+function Home:puzzle_option_rows(page)
+    local s = self.strings
+    -- After a change, the kept mix is renewed at once when there is a connection; a theme, when it is opened.
+    local function choose(key, labels, title, note)
+        return self:choice_row(page, {
+            title = title, labels = labels, names = State.OPTIONS[key][1], current = self:option(key), note = note,
+            on_pick = function(name)
+                self:save_setting(key, name)
+                self:ensure_puzzles(nil)
+            end,
+        })
+    end
+    return {
+        choose("puzzle_difficulty", s.puzzle_difficulties, s.puzzle_difficulty, s.puzzle_difficulty_note),
+        choose("puzzle_color", s.puzzle_colors, s.puzzle_color),
+    }
 end
 
 function Home:add_puzzle_result(result)
@@ -1345,37 +1434,29 @@ end
 
 function Home:puzzles_menu()
     local s = self.strings
-    self:open_list(s.puzzles, {
-        { kind = "primary", text = s.puzzle_next, callback = function() PuzzleScreen.open(self, {}) end },
-        { text = s.puzzle_daily, callback = function() self:open_daily_puzzle() end },
-        { text = s.puzzle_review, detail = string.format(s.puzzle_review_detail, Api.PUZZLE_DAYS), callback = function()
-            self:with_feature("puzzles", function() self:open_review() end)
-        end },
-        { text = s.puzzle_by_theme, callback = function() self:with_feature("puzzles", function() self:puzzle_themes_menu() end) end },
-        { text = s.puzzle_stats, callback = function() self:with_feature("puzzles", function() self:show_puzzle_stats() end) end },
-        { kind = "text", text = string.format(s.puzzles_saved, #self:puzzle_pile()), center = true },
-    })
+    self:open_page{ title = s.puzzles, build = function(page)
+        return spliced({
+            { kind = "primary", text = s.puzzle_next, callback = function() self:open_puzzles(nil) end },
+            { text = s.puzzle_daily, callback = function() self:open_daily_puzzle() end },
+            { text = s.puzzle_review, detail = string.format(s.puzzle_review_detail, Api.PUZZLE_DAYS), callback = function()
+                self:with_feature("puzzles", function() self:open_review() end)
+            end },
+            { text = s.puzzle_by_theme, callback = function() self:with_feature("puzzles", function() self:puzzle_themes_menu() end) end },
+            { text = s.puzzle_stats, callback = function() self:with_feature("puzzles", function() self:show_puzzle_stats() end) end },
+            { kind = "section", text = s.options_section },
+            { splice = self:puzzle_option_rows(page) },
+            { kind = "text", text = string.format(s.puzzles_saved, #self:puzzle_pile()), center = true },
+        })
+    end }
 end
 
 function Home:puzzle_themes_menu()
     local s = self.strings
     local rows = {}
     for _, angle in ipairs(Api.PUZZLE_THEMES) do
-        rows[#rows + 1] = { text = s.puzzle_themes[angle], callback = function() self:open_theme_puzzles(angle) end }
+        rows[#rows + 1] = { text = s.puzzle_themes[angle], callback = function() self:open_puzzles(angle) end }
     end
     self:open_list(s.puzzle_by_theme, { { kind = "tiles", columns = 2, items = rows } })
-end
-
-function Home:open_theme_puzzles(angle)
-    if #self:puzzle_pile(angle) > 0 then
-        PuzzleScreen.open(self, { angle = angle })
-        return
-    end
-    self:ensure_puzzles(angle, function(status)
-        self:report_or(status, function()
-            PuzzleScreen.open(self, { angle = angle })
-        end)
-    end)
 end
 
 function Home:show_puzzle_stats()
