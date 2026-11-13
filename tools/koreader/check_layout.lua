@@ -89,6 +89,18 @@ end
 ANSWERS["/broadcast/BcastTour/players"] = "[" .. table.concat(standings, ",") .. "]"
 ANSWERS["/api/broadcast/-/-/BcastRnd10"] = '{"round":{"id":"BcastRnd10","name":"Round 10"},"games":[' .. table.concat(round_games, ",") .. ']}'
 ANSWERS["/api/broadcast/round/BcastRnd10.pgn"] = '[Event "Round 10"]\n[White "' .. BROADCAST_NAME .. '"]\n[Black "' .. BROADCAST_NAME .. '"]\n[WhiteTitle "WGM"]\n[BlackTitle "WCM"]\n[WhiteElo "2999"]\n[BlackElo "2999"]\n[Result "*"]\n[Opening "Nimzo-Indian Defense: Sämisch Variation, Keres Variation"]\n[GameURL "https://lichess.org/broadcast/x/round-10/BcastRnd10/Game2"]\n\n1. d4 { [%clk 9:59:59] } 1... Nf6 { [%clk 9:59:58] } 2. c4 { [%clk 1:28:54] } *\n'
+-- Studies with the longest names: the reader's list, and a study of two chapters (analysis and interactive) the
+-- invented download writes.
+local STUDY_NAME = "Candidates Tournament 2026 | Annotations by WGM Alessandra Vasconcelos | All Rounds"
+local STUDY_LINES = {}
+for index = 1, 12 do
+    STUDY_LINES[index] = string.format('{"id":"Study%03d","name":"%s","updatedAt":1794600000000}', index, STUDY_NAME)
+end
+ANSWERS["/api/study/by/" .. LONG_NAME:lower()] = table.concat(STUDY_LINES, "\n")
+local STUDY_PGN = '[Event "x"]\n[StudyName "' .. STUDY_NAME .. '"]\n[ChapterName "Round 14: Vasconcelos, Alessandra Bartholomew - Maximiliana, Hortensia"]\n\n{ '
+    .. string.rep("A long introduction to this chapter of the study, written by its author. ", 8) .. '} 1. e4 { A comment after the first move. [%cal Ge2e4] } 1... e5 ( 1... c5 { The Sicilian. } ) 2. Nf3 *\n\n\n'
+    .. '[Event "y"]\n[ChapterName "Puzzle: find the move"]\n[FEN "rn1r2k1/pb3ppp/1p2pn2/3p4/1PP5/q2N2P1/P2NPPBP/R2Q1RK1 b - - 0 14"]\n[Orientation "black"]\n[ChapterMode "gamebook"]\n\n'
+    .. '{ What had Black missed? } 14... a5 { Now White traps the queen. } ( 14... Qxb4 { No, that loses the queen at once. } ) 15. Nb1 Qxb4 *\n'
 ANSWERS["/api/player"] = '{"correspondence":[{"id":"' .. OTHER:lower() .. '","username":"' .. OTHER .. '","title":"WCM","perfs":{"correspondence":{"rating":2999}}}]}'
 
 local real_new = Net.new
@@ -611,6 +623,69 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home:close_pages()
     store:delete(home:saved_broadcasts()[1])
     home:save_broadcast_index({})
+    home.downloads = nil
+    -- Studies: the menu, the reader's list, a study kept through an invented download, its chapters, and both kinds of
+    -- chapter in the screen of the practice lessons.
+    local Studies = require("ink_knight/ui/studies")
+    home:save_study_index({})
+    home:study_store():delete({ id = "Study001" })
+    Studies.menu(home)
+    check_page(top_page(), language .. " studies")
+    Studies.list(home, LONG_NAME:lower(), home.strings.study_mine)
+    settle()
+    check_page(top_page(), language .. " study list")
+    home.downloads = Downloader.new{ work_dir = out_dir .. "/downloads", hosts = { "lichess.org" },
+        spawn = function(list, progress)
+            for line in io.lines(list) do
+                local file = io.open(line:match("\t(.+)$"), "wb")
+                file:write(STUDY_PGN)
+                file:close()
+            end
+            local file = io.open(progress, "wb")
+            file:write("1 0 1 end")
+            file:close()
+            return 1
+        end,
+        is_done = function() return true end,
+        kill = function() end,
+    }
+    top_page().lines[1].callback()
+    local study_page = top_page()
+    local keep_row
+    for _, line in ipairs(study_page.lines) do
+        if line.text == home.strings.study_keep then keep_row = line end
+    end
+    if not keep_row then
+        problem(language .. " study: the page should offer to keep the study")
+    else
+        keep_row.callback()
+        for _ = 1, 5 do home.downloads:tick() end
+        home:tick_downloads()
+        study_page:reload()
+    end
+    check_page(study_page, language .. " study kept")
+    local kept_study = home:saved_studies()[1]
+    if not (kept_study and #kept_study.chapters == 2 and kept_study.name == STUDY_NAME) then
+        problem(language .. " study: the kept study should list its two chapters and its name")
+    else
+        Studies.open_chapter(home, kept_study, 1)
+        check_board(top_page(), language .. " study chapter")
+        UIManager:close(top_page())
+        Studies.open_chapter(home, kept_study, 2)
+        local guided = top_page()
+        if guided.title then
+            -- The introduction of the interactive chapter opens on a page first.
+            check_page(guided, language .. " study interactive introduction")
+            UIManager:close(guided)
+        end
+        check_board(top_page(), language .. " study interactive chapter")
+        UIManager:close(top_page())
+    end
+    Studies.kept_menu(home)
+    check_page(top_page(), language .. " kept studies")
+    home:close_pages()
+    home:study_store():delete({ id = "Study001" })
+    home:save_study_index({})
     home.downloads = nil
     -- A game being played: new moves are followed from the last move, and left alone from an earlier one.
     local ReviewScreen = require("ink_knight/ui/review_screen")

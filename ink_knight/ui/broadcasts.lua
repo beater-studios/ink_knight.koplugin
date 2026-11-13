@@ -264,7 +264,9 @@ function Broadcasts.save_row(app, data, changed)
             changed()
         end }
     end
-    return { text = s.broadcast_saved, detail = s.broadcast_saved_update, callback = keep }
+    -- An update that did not come leaves the rounds as they were, and says so.
+    local stopped = (app.download_results or {})[entry.id] == "stopped"
+    return { text = s.broadcast_saved, detail = stopped and s.broadcast_stopped or s.broadcast_saved_update, callback = keep }
 end
 
 function Broadcasts.standings(app, id, name)
@@ -438,7 +440,7 @@ function Broadcasts.saved_tournament(app, tour, changed)
         end
         rows[#rows + 1] = { kind = "section", text = s.broadcast_rounds }
         for _, round in ipairs(tour.rounds) do
-            local kept = store.exists(store:round_path(tour, round))
+            local kept = store:readable(tour, round) ~= nil
             rows[#rows + 1] = {
                 text = round.name,
                 detail = not kept and s.broadcast_missing or (not round.finished and s.broadcast_unfinished or nil),

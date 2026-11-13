@@ -20,9 +20,11 @@ local OPPONENT_DELAY, FIRST_MOVE_DELAY, TAKE_BACK_DELAY = 1, 0.3, 0.8
 local SLICE_SECONDS, SLICE_PAUSE = 0.04, 0.02
 
 -- study: one of ink_knight/data/practice.lua. opts.on_study_done(study): when the reader goes on from its last
--- chapter.
+-- chapter. For a study of Lichess instead of the practice: opts.title, its name; opts.load(index), which reads the
+-- chapter at index and gives it with its texts (study.chapters only has to count them); and no progress is kept.
 function PracticeScreen.open(app, study, index, opts)
-    local self = setmetatable({ app = app, s = app.strings, t = app:practice_texts(), study = study, opts = opts or {} }, PracticeScreen)
+    opts = opts or {}
+    local self = setmetatable({ app = app, s = app.strings, t = opts.load and {} or app:practice_texts(), study = study, opts = opts }, PracticeScreen)
     self.later_callback = function() self:later() end
     self.screen = BoardScreen:new{
         state = {},
@@ -47,7 +49,15 @@ function PracticeScreen:start(index, what, again)
     Sleep.unschedule(self.screen, self.later_callback)
     self.search, self.thinking, self.hinting, self.pending = nil, false, false, nil
     self.index = index
-    self.chapter = self.study.chapters[index]
+    if self.opts.load then
+        local chapter, texts = self.opts.load(index)
+        self.chapter = chapter
+        for key, text in pairs(texts or {}) do
+            self.t[key] = text
+        end
+    else
+        self.chapter = self.study.chapters[index]
+    end
     self.selected, self.targets, self.hint_move, self.show_solution, self.recorded = nil, nil, nil, false, false
     local chapter = self.chapter
     if chapter.kind == "goal" then
@@ -63,7 +73,7 @@ function PracticeScreen:start(index, what, again)
                 local state = self.state
                 self:render(what)
                 self.app:open_page{
-                    title = self:study_name(),
+                    title = self:page_title(),
                     rows = {
                         { kind = "text", text = self:with_name(self:text("d")) },
                         { kind = "primary", text = self.s.practice_continue, callback = function() end },
@@ -257,7 +267,14 @@ function PracticeScreen:render(what)
 end
 
 function PracticeScreen:study_name()
-    return self.app:learn_texts()[self.study.name] or ""
+    return self.opts.title or self.app:learn_texts()[self.study.name] or ""
+end
+
+-- The practice keeps the fewest moves of each chapter done; a study of Lichess keeps nothing.
+function PracticeScreen:record(id, moves)
+    if not self.opts.load then
+        self.app:practice_record(id, moves)
+    end
 end
 
 -- A text on a page, after the name of the chapter, which may be too long for the title.
@@ -275,13 +292,24 @@ function PracticeScreen:read_text()
     return banner
 end
 
--- The name of the chapter below the board, or of the study when the chapter's is too long for it, measured once
--- for each chapter.
+-- A study of Lichess may have a name too long for a title, so its pages are titled Studies.
+function PracticeScreen:page_title()
+    return self.opts.load and self.s.studies or self:study_name()
+end
+
+-- The name of the chapter below the board, or of the study when the chapter's is too long for it (Chapter N when
+-- neither fits, for a study of Lichess), measured once for each chapter.
 function PracticeScreen:bar_name()
     local name = self:text("n") or ""
     if self.bar_name_of ~= self.chapter then
         self.bar_name_of = self.chapter
-        self.bar_name_text = self.screen:bar_name_fits(name) and name or self:study_name()
+        if self.screen:bar_name_fits(name) then
+            self.bar_name_text = name
+        elseif self.screen:bar_name_fits(self:study_name()) then
+            self.bar_name_text = self:study_name()
+        else
+            self.bar_name_text = string.format(self.s.chapter_number, self.index)
+        end
     end
     return self.bar_name_text
 end
@@ -315,7 +343,7 @@ function PracticeScreen:finish_goal()
     local state = self.state
     if state.status == "solved" and not self.recorded then
         self.recorded = true
-        self.app:practice_record(self.chapter.id, state.played)
+        self:record(self.chapter.id, state.played)
     end
 end
 
@@ -409,7 +437,7 @@ function PracticeScreen:after_guided_change()
     if feedback == "end" then
         if not self.recorded then
             self.recorded = true
-            self.app:practice_record(chapter.id, Practice.guided_moves(state, chapter))
+            self:record(chapter.id, Practice.guided_moves(state, chapter))
         end
     elseif (feedback == "good" or feedback == "bad") and not Practice.comment(state, chapter, self.t) then
         self.pending = feedback
@@ -474,7 +502,7 @@ function PracticeScreen:go_lesson(ply)
     state.ply = math.max(0, math.min(#chapter.line, ply))
     if state.ply == #chapter.line and not self.recorded then
         self.recorded = true
-        self.app:practice_record(chapter.id, 0)
+        self:record(chapter.id, 0)
     end
     self:render()
 end
@@ -484,7 +512,7 @@ function PracticeScreen:on_button(button)
     if button == "back" then
         UIManager:close(self.screen)
     elseif button == "read" then
-        self.app:open_page{ title = self:study_name(), rows = { { kind = "text", text = self:with_name(self:read_text()) } }, close_on_tap = true }
+        self.app:open_page{ title = self:page_title(), rows = { { kind = "text", text = self:with_name(self:read_text()) } }, close_on_tap = true }
     elseif button == "hint" then
         self:hint()
     elseif button == "solution" then

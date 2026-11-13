@@ -95,11 +95,22 @@ function Store:files(tour)
     return files
 end
 
+-- The file of a round to read: the kept one, or, while a new copy downloads, the old one set aside.
+function Store:readable(tour, round)
+    local path = self:round_path(tour, round)
+    if self.exists(path) then
+        return path
+    elseif self.exists(path .. ".old") then
+        return path .. ".old"
+    end
+    return nil
+end
+
 -- How many rounds are on the device, of how many.
 function Store:count(tour)
     local have = 0
     for _, round in ipairs(tour.rounds) do
-        if self.exists(self:round_path(tour, round)) then
+        if self:readable(tour, round) then
             have = have + 1
         end
     end
@@ -145,7 +156,8 @@ end
 
 -- The games of a kept round: { text, detail, game_text }, or nil when its file is not there.
 function Store:round_games(tour, round, s)
-    local text = self.read(self:round_path(tour, round))
+    local path = self:readable(tour, round)
+    local text = path and self.read(path)
     if not text then
         return nil
     end

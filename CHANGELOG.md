@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Studies, in the online part: your studies (private ones too with the optional permission `study:read`, which the link for creating a token now marks, since it only reads), another player's, also from their profile, or one by its address or code. A study is kept on the device, downloaded in the background, to read without internet: a chapter as a commented game, with its comments and arrows, and an interactive chapter as a guided one, with the author's comments on wrong moves. Navigating the variations comes later.
+
 ## [0.5.0]
 
 - Broadcasts, in the online part: the over-the-board tournaments Lichess relays, live, coming and finished, with search; each tournament with its rounds and standings; a round with its games, kept up to date; and a game with the clocks of both players that follows the moves while it is played. A tournament can be kept on the device, downloaded in the background, to see with no network; a download cut short resumes with what is missing.

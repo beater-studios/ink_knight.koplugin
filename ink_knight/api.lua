@@ -405,6 +405,17 @@ function Api.broadcast_round_pgn(id)
     return { method = "GET", anonymous = true, path = "/api/broadcast/round/" .. path_id(id) .. ".pgn", accept = "application/x-chess-pgn" }
 end
 
+-- Studies: public ones answer without a token; the private ones of the reader need study:read, and a token without it
+-- is refused even for public ones, so the token goes only when it has that permission (anonymous otherwise).
+function Api.study_list(username, anonymous)
+    return { method = "GET", path = "/api/study/by/" .. path_id(username), accept = "application/x-ndjson", anonymous = anonymous }
+end
+
+-- The whole study in PGN, with comments, variations and drawings, without the clocks a study of a game may carry.
+function Api.study_pgn(id)
+    return { method = "GET", path = "/api/study/" .. path_id(id) .. ".pgn?clocks=false", accept = "application/x-chess-pgn" }
+end
+
 -- The openings Lichess has puzzles of, by family, the way its app asks for them: a page of the site that answers
 -- JSON when asked to.
 function Api.puzzle_openings()

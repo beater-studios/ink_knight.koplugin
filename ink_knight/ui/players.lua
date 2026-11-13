@@ -211,6 +211,7 @@ function Players.open_profile(app, user)
             end
         end }
         rows[#rows + 1] = { text = s.profile_activity, callback = function() Players.show_activity(app, user.id) end }
+        rows[#rows + 1] = { text = s.studies, callback = function() require("ink_knight/ui/studies").list(app, user.id, name) end }
         -- The notes are the reader's own, about someone else, and need an optional permission of their own.
         if not mine and app.my_id then
             rows[#rows + 1] = { text = s.profile_notes, callback = function()

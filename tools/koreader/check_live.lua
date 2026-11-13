@@ -364,6 +364,12 @@ do
         pump(function() return tour_data ~= nil end, 30, "broadcast tournament data")
     end
     local entry = tour_data and BroadcastStore.entry_of(tour_data, os.time())
+    -- Three rounds are enough to see the download, and ask little of Lichess after everything this check asked.
+    if entry then
+        while #entry.rounds > 3 do
+            table.remove(entry.rounds)
+        end
+    end
     if entry then
         local kept_before = home.settings:readSetting("saved_broadcasts")
         home:save_broadcast_index(BroadcastStore.with_entry(home:saved_broadcasts(), entry))
@@ -383,6 +389,34 @@ do
     else
         problem("broadcast kept: no finished tournament to keep")
     end
+    -- Studies, read without the token unless it has study:read: the studies of the account lichess, then the puzzle
+    -- pack of the 2026 Olympiad kept for real, a chapter of it opened, and deleted.
+    local Studies = require("ink_knight/ui/studies")
+    print("studies with the token: " .. tostring(home:reads_studies()))
+    if opens(function() Studies.list(home, "lichess", "lichess") end, "study list") then
+        print("study list rows: " .. #items_of(top_widget()))
+        shot("study_list")
+        close_top()
+    end
+    local kept_studies_before = home.settings:readSetting("saved_studies")
+    local study = { id = "Zwqt6BdF", name = "Zwqt6BdF", chapters = {} }
+    home:save_study_index({ study })
+    local study_started = os.time()
+    home:download_study(study)
+    pump(function() return not home.downloads:active() end, 300, "study download")
+    local kept_study = home:saved_studies()[1]
+    print(string.format("study kept: %s, %d chapters in %d s, result %s", tostring(kept_study and kept_study.name), kept_study and #kept_study.chapters or 0,
+        os.time() - study_started, tostring((home.download_results or {})["study_Zwqt6BdF"])))
+    if not (kept_study and #kept_study.chapters > 0) then
+        problem("study kept: no chapters")
+    elseif opens(function() Studies.open_chapter(home, kept_study, 1) end, "study chapter") then
+        shot("study_chapter")
+        while top_widget().title do close_top() end
+        close_top()
+    end
+    home:study_store():delete(study)
+    home.settings:saveSetting("saved_studies", kept_studies_before)
+    home.settings:flush()
     home:close_pages()
 end
 

@@ -801,7 +801,9 @@ test("the link for creating a token marks what the plugin needs, and no more", f
     assert(url:find("description=Ink+Knight", 1, true))
     assert(not url:find("preference:write", 1, true))
     assert(not url:find("challenge:read", 1, true))
-    assert(not url:find("study:read", 1, true))
+    -- study:read only reads, for the reader's private studies, so it comes marked like preference:read.
+    assert(url:find("scopes[]=study:read", 1, true))
+    eq(TokenScopes.OPTIONAL.studies, true)
 end)
 
 test("every listed permission has a name in every language", function()

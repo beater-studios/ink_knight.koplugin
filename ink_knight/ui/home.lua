@@ -33,6 +33,7 @@ local Page = require("ink_knight/ui/page")
 local Pgn = require("ink_knight/pgn")
 local Players = require("ink_knight/ui/players")
 local Broadcasts = require("ink_knight/ui/broadcasts")
+local Studies = require("ink_knight/ui/studies")
 local PuzzleScreen = require("ink_knight/ui/puzzle_screen")
 local PuzzlePack = require("ink_knight/puzzle_pack")
 local Puzzles = require("ink_knight/puzzles")
@@ -41,6 +42,7 @@ local SavedState = require("ink_knight/saved_state")
 local Sleep = require("ink_knight/sleep")
 local Awake = require("ink_knight/awake")
 local BroadcastStore = require("ink_knight/broadcast_store")
+local StudyStore = require("ink_knight/study_store")
 local Downloader = require("ink_knight/download")
 local State = require("ink_knight/state")
 local TokenAccess = require("ink_knight/token_access")
@@ -63,7 +65,7 @@ local ACCOUNT_RETRY = 30
 -- The chess symbols of FreeSerif, which comes with KOReader, stand in for icons.
 local ICON_KING, ICON_QUEEN, ICON_ROOK, ICON_BISHOP, ICON_KNIGHT, ICON_PAWN =
     "\226\153\154", "\226\153\155", "\226\153\156", "\226\153\157", "\226\153\158", "\226\153\159"
-local ICON_WHITE_KNIGHT = "\226\153\152"
+local ICON_WHITE_KNIGHT, ICON_WHITE_BISHOP = "\226\153\152", "\226\153\151"
 local MAX_GAMES_ON_HOME = 4
 
 local Home = Page:extend{
@@ -494,6 +496,75 @@ function Home:download_broadcast(tour)
     self:tick_downloads()
 end
 
+-- Studies kept on the device ---------------------------------------------------------------------------------------
+
+function Home:study_store()
+    if not self.studies_store then
+        local broadcasts = self:broadcast_store()
+        self.studies_store = StudyStore.new{
+            -- koreader/ink_knight/studies, joined in parts like the folder of the broadcasts.
+            dir = table.concat({ DataStorage:getDataDir(), "ink_knight", "studies" }, "/"),
+            exists = broadcasts.exists, remove = broadcasts.remove, rename = broadcasts.rename,
+            make_dir = broadcasts.make_dir, read = broadcasts.read,
+        }
+    end
+    return self.studies_store
+end
+
+function Home:saved_studies()
+    return StudyStore.read_index(self.settings:readSetting("saved_studies"))
+end
+
+function Home:save_study_index(index)
+    self.settings:saveSetting("saved_studies", index)
+    self.settings:flush()
+end
+
+-- Whether the token may read studies: only then does it go with them, since one without study:read is refused even
+-- for public studies. Unlike the other features, unknown scopes count as no: going without the token only leaves the
+-- private studies out, while going with one that lacks the permission loses the public ones too.
+function Home:reads_studies()
+    return self.scopes ~= nil and TokenScopes.allows(self.scopes, "studies")
+end
+
+-- Downloads a kept study; once it is here, its chapters go into the index.
+function Home:download_study(study)
+    local store = self:study_store()
+    store.make_dir(store.dir)
+    local files = store:files(study)
+    if #files == 0 then
+        return
+    end
+    local downloads = self:downloader()
+    self.download_results = self.download_results or {}
+    self.download_results["study_" .. study.id] = nil
+    downloads:add{
+        id = "study_" .. study.id,
+        files = files,
+        headers = self:reads_studies() and self.token and { authorization = "Bearer " .. self.token } or nil,
+        on_done = function(_, failed, _, cancelled, stopped)
+            self.download_results["study_" .. study.id] = (stopped or failed > 0) and "stopped" or (not cancelled and "done" or nil)
+            store:settle(study)
+            local chapters, name = store:chapters_of(study)
+            if chapters then
+                local index = self:saved_studies()
+                for _, entry in ipairs(index) do
+                    if entry.id == study.id then
+                        entry.chapters, entry.name = chapters, name or entry.name
+                        self:save_study_index(StudyStore.with_entry(index, entry))
+                        break
+                    end
+                end
+            end
+        end,
+    }
+    self:tick_downloads()
+end
+
+function Home:study_download_state(study)
+    return self.downloads and self.downloads:busy_with("study_" .. study.id) or nil
+end
+
 -- "running" with the rounds done and the total, or nil.
 function Home:broadcast_download_state(tour)
     local downloads = self.downloads
@@ -775,6 +846,7 @@ function Home:hub_rows()
         { icon = ICON_PAWN, text = s.players, callback = function() self:when_connected(function() Players.menu(self) end) end },
         { icon = ICON_BISHOP, text = s.settings_short, callback = function() self:settings_menu() end },
         { icon = ICON_WHITE_KNIGHT, text = s.broadcasts, callback = function() self:when_connected(function() Broadcasts.menu(self) end) end },
+        { icon = ICON_WHITE_BISHOP, text = s.studies, callback = function() self:when_connected(function() Studies.menu(self) end) end },
     } }
     if self.token_rejected then
         Page.disable_rows(rows)
@@ -1490,6 +1562,12 @@ function Home:offline_rows(page)
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
         rows[#rows + 1] = row
+    end
+    local kept_studies = #self:saved_studies()
+    if kept_studies > 0 then
+        rows[#rows + 1] = { text = s.study_kept_menu, detail = string.format(kept_studies == 1 and s.study_kept_count_one or s.study_kept_count, kept_studies), callback = function()
+            Studies.kept_menu(self)
+        end }
     end
     local kept = #self:saved_broadcasts()
     if kept > 0 then
