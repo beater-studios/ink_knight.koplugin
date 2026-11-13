@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/brand/banner.png" alt="Ink Knight: um cliente do Lichess para o KOReader">
+  <img src="docs/brand/banner.png" alt="Ink Knight: xadrez em e-ink, offline e no Lichess">
 </p>
 
 <p align="center">
-  <strong>Um cliente do Lichess para o KOReader. Jogue ao vivo e por correspondência, resolva táticas e reveja suas partidas em e-ink.</strong>
+  <strong>Xadrez em e-ink, offline e no Lichess. Motor, táticas, lições e relógio sem internet, e partidas ao vivo e por correspondência com a sua conta do Lichess, tudo dentro do KOReader.</strong>
 </p>
 
 <p align="center">

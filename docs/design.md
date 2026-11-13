@@ -1,6 +1,6 @@
 # Ink Knight: design and tools
 
-A Lichess client inside KOReader, built for e-ink. `ink_knight` is the plugin identifier. The research and the lessons from earlier clients are in `docs/research/chess-clients.md` and `docs/research/lichess-api.md`, in the `kindle` project.
+Chess inside KOReader, built for e-ink: offline, with an engine, puzzles, lessons and clocks, and on Lichess with the reader's account. `ink_knight` is the plugin identifier. The research and the lessons from earlier clients are in `docs/research/chess-clients.md` and `docs/research/lichess-api.md`, in the `kindle` project.
 
 ## What is in and out
 

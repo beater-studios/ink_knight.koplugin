@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/brand/banner.png" alt="Ink Knight: a Lichess client for KOReader">
+  <img src="docs/brand/banner.png" alt="Ink Knight: chess on e-ink, offline and on Lichess">
 </p>
 
 <p align="center">
-  <strong>A Lichess client for KOReader. Play live and by correspondence, solve puzzles and review your games on e-ink.</strong>
+  <strong>Chess on e-ink, offline and on Lichess. An engine, puzzles, lessons and a clock with no internet, and live and correspondence games with your Lichess account, all inside KOReader.</strong>
 </p>
 
 <p align="center">

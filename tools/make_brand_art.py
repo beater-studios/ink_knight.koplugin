@@ -14,8 +14,8 @@ BLACK, WHITE, FOLD = 0, 255, 170
 ICON_SIZE = 1024
 SUPERSAMPLE = 3
 KNIGHT = "♞"
-TAGLINE = "A Lichess client for KOReader."
-DETAILS = ["Play live and by correspondence, solve puzzles", "and review your games on e-ink.", "Not an official Lichess product."]
+TAGLINE = "Chess on e-ink, offline and on Lichess."
+DETAILS = ["An engine, puzzles, lessons and a clock with no internet,", "and live and correspondence games on Lichess.", "A KOReader plugin, not an official Lichess product."]
 # The sheet of paper, in icon coordinates.
 PAGE_LEFT, PAGE_TOP, PAGE_RIGHT, PAGE_BOTTOM, EAR = 222, 130, 802, 894, 170
 
@@ -72,7 +72,8 @@ def draw_header(width, height, fonts, icon, layout):
     image = Image.new("L", (width * k, height * k), BLACK)
     middle, screen_height, offset, text = layout["middle"], layout["screen_height"], layout["offset"], layout["text"]
     halftone(image, middle * k, height // 2 * k, round(layout["halftone"] * k), 26 * k)
-    place_screen(image, "games", ((middle - offset) * k, (height // 2 + 8) * k), screen_height * k, 6)
+    # The first screen, with both ways to play, beside a game, as the plugin is both offline and on Lichess.
+    place_screen(image, "start", ((middle - offset) * k, (height // 2 + 8) * k), screen_height * k, 6)
     place_screen(image, "game", ((middle + offset) * k, (height // 2 - 8) * k), screen_height * k, -5)
     margin = 58
     icon_size = round(112 * text)
@@ -108,7 +109,7 @@ def draw_screensaver(fonts, icon):
     image = Image.new("L", (w * k, h * k), BLACK)
     cx, cy = w // 2, 572
     halftone(image, cx * k, cy * k, 290 * k, 26 * k)
-    place_screen(image, "games", ((cx - 100) * k, (cy + 8) * k), 330 * k, 6)
+    place_screen(image, "start", ((cx - 100) * k, (cy + 8) * k), 330 * k, 6)
     place_screen(image, "game", ((cx + 100) * k, (cy - 8) * k), 330 * k, -5)
     icon_size = 150
     small = icon.resize((icon_size * k, icon_size * k), Image.LANCZOS)
