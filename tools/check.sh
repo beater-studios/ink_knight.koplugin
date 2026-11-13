@@ -14,6 +14,13 @@ for spec in tests/*_spec.lua; do
     luajit "$spec"
 done
 luajit tools/check_texts.lua s strings
+# The Stockfish for the Kindle is built by tools/stockfish/build.sh, which needs Docker; here only its checksum.
+expected="$(awk '$2 == "stockfish-armhf" { print $1 }' tools/stockfish/sources.sha256)"
+actual="$( (sha256sum bin/stockfish-armhf 2>/dev/null || shasum -a 256 bin/stockfish-armhf) | cut -d' ' -f1)"
+if [ "$actual" != "$expected" ]; then
+    echo "bin/stockfish-armhf differs from the one tools/stockfish/build.sh builds." >&2
+    exit 1
+fi
 if [ "${1:-}" = release ]; then
     sources="$(mktemp -d)"
     trap 'rm -rf "$sources"' EXIT

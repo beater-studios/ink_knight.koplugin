@@ -6,6 +6,7 @@ local Sleep = require("ink_knight/sleep")
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Broadcast = require("ink_knight/broadcast")
+local EngineAnalysis = require("ink_knight/ui/engine_analysis")
 local Chess = require("ink_knight/chess")
 local MoveList = require("ink_knight/ui/move_list")
 
@@ -38,6 +39,10 @@ function ReviewScreen.open(app, game, opts)
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
             self.closed = true
+            if self.analysis then
+                self.analysis:cancel()
+                self.analysis = nil
+            end
             if opts.on_closed then
                 opts.on_closed()
             end
@@ -145,6 +150,9 @@ function ReviewScreen:status_text()
     local s, game = self.s, self.game
     local move = game.moves[self.index]
     local parts = {}
+    if self.analysis then
+        return string.format(s.engine_progress, self.progress_done or 1, self.progress_total or 1)
+    end
     if self.index == 0 then
         parts[1] = game.intro or s.start_pos
     else
@@ -190,7 +198,7 @@ function ReviewScreen:render(what)
             { id = "previous", label = "<" },
             { id = "next", label = ">" },
             { id = "last", label = ">|" },
-            { id = "more", label = s.more },
+            self.analysis and { id = "stop", label = s.stop } or { id = "more", label = s.more },
         },
     }, what)
 end
@@ -216,6 +224,10 @@ function ReviewScreen:on_button(button)
         self:go(self.available)
     elseif button == "more" then
         self:more_menu()
+    elseif button == "stop" and self.analysis then
+        self.analysis:cancel()
+        self.analysis = nil
+        self:render()
     end
 end
 
@@ -229,6 +241,11 @@ function ReviewScreen:more_menu()
     if self.app.net then
         table.insert(rows, 1, { text = s.analysis, callback = function() self:show_analysis() end })
     end
+    -- A game the site did not analyze can be analyzed here, by the plugin's own Stockfish, and says so. Not one still
+    -- being played: its next refresh would replace what the analysis wrote.
+    if not self.game.summary and not opts.refresh and self.available > 0 and EngineAnalysis.available(self.app) then
+        rows[#rows + 1] = { text = s.analyze_plugin, detail = s.analyze_plugin_detail, callback = function() self:analyze_here() end }
+    end
     if opts.game_id then
         rows[#rows + 1] = {
             text = opts.bookmarked and s.bookmark_remove or s.bookmark_add,
@@ -238,9 +255,56 @@ function ReviewScreen:more_menu()
     self.app:choose(s.more, rows, { close_on_tap = true })
 end
 
+function ReviewScreen:analyze_here()
+    local moves = {}
+    for i = 1, self.available do
+        moves[i] = self.game.moves[i].uci
+    end
+    self.analysis = EngineAnalysis.start{
+        app = self.app,
+        window = self.screen,
+        initial_fen = self.game.initial_fen,
+        moves = moves,
+        on_progress = function(done, total)
+            self.progress_done, self.progress_total = done, total
+            self:render()
+        end,
+        on_done = function(result)
+            self.analysis = nil
+            if self.closed then
+                return
+            end
+            if not result then
+                self:render()
+                self.app:info(self.s.engine_stopped)
+                return
+            end
+            for i, entry in ipairs(result.moves) do
+                local move = self.game.moves[i]
+                if move then
+                    move.eval_text, move.judgment, move.best = entry.eval_text, entry.judgment, entry.best
+                end
+            end
+            self.game.summary = result.summary
+            self.game.intro = self.s.review_plugin_analysis
+            self:render()
+            self:show_summary()
+        end,
+    }
+    if not self.analysis then
+        self.app:info(self.s.engine_unavailable)
+        return
+    end
+    -- The first position was announced before the review knew it was analyzing.
+    self:render()
+end
+
 function ReviewScreen:show_summary()
     local s, game, summary = self.s, self.game, self.game.summary
     local rows = {}
+    if summary.source == "plugin" then
+        rows[1] = { kind = "text", text = s.review_plugin_analysis }
+    end
     for _, side in ipairs({ { "white", s.color_white, game.white }, { "black", s.color_black, game.black } }) do
         local data = summary[side[1]]
         rows[#rows + 1] = { kind = "section", text = string.format("%s · %s", side[2], side[3] or "?") }

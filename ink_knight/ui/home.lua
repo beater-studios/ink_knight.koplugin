@@ -410,6 +410,11 @@ function Home:forget_correspondence_move(id)
     end
 end
 
+-- A private folder for what Stockfish writes, beside the one of the requests.
+function Home:engine_dir()
+    return net_dir() .. "/engine"
+end
+
 -- Broadcasts kept on the device -----------------------------------------------------------------------------------
 
 function Home:broadcast_store()

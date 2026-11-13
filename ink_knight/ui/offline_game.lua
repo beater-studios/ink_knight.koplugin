@@ -8,6 +8,7 @@ local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local ChessClock = require("ink_knight/chess_clock")
 local Engine = require("ink_knight/engine")
+local EngineAnalysis = require("ink_knight/ui/engine_analysis")
 local Game = require("ink_knight/game")
 local GameReview = require("ink_knight/game_review")
 local MoveList = require("ink_knight/ui/move_list")
@@ -182,7 +183,9 @@ end
 
 function OfflineGame:status_text()
     local s = self.s
-    if self.analysis then
+    if self.analysis and self.analysis.stockfish then
+        return string.format(s.engine_progress, self.analysis.done or 1, self.analysis.total or 1)
+    elseif self.analysis then
         return string.format(s.analysis_progress, math.max(1, self.analysis.index), #self.analysis.list)
     end
     local turn = self.position.turn
@@ -303,11 +306,16 @@ function OfflineGame:is_over()
     return self.ending ~= nil or self.resigned == true
 end
 
--- The engine goes through the moves of the game, one search each, and the review opens with what it found. Against
--- the engine, only the reader's moves. Done once per game: a second tap opens the same review.
+-- The engine goes through the moves of the game, one search each, and the review opens with what it found: the
+-- Stockfish of the device when there is one, every move judged as Lichess judges them; otherwise the small engine,
+-- only the clear mistakes and, against the engine, only the reader's moves. Done once per game: a second tap opens the
+-- same review.
 function OfflineGame:analyze()
     if self.review_game then
         self:open_review()
+        return
+    end
+    if EngineAnalysis.available(self.app) and self:analyze_with_stockfish() then
         return
     end
     local only = not self.two_players and self.my_color or nil
@@ -354,7 +362,91 @@ function OfflineGame:analyze_next()
     end)
 end
 
+function OfflineGame:analyze_with_stockfish()
+    local moves = {}
+    for uci in self.moves:gmatch("%S+") do
+        moves[#moves + 1] = uci
+    end
+    if #moves == 0 then
+        return false
+    end
+    -- Marked before it starts, since the first position is announced while it does.
+    local analysis = { stockfish = true }
+    self.analysis = analysis
+    self.selected, self.targets = nil, nil
+    analysis.runner = EngineAnalysis.start{
+        app = self.app,
+        window = self.screen,
+        initial_fen = self.initial_fen,
+        moves = moves,
+        on_progress = function(done, total)
+            if self.analysis == analysis then
+                analysis.done, analysis.total = done, total
+                self:render()
+            end
+        end,
+        on_done = function(result)
+            if self.analysis ~= analysis then
+                return
+            end
+            if not result then
+                self.analysis = nil
+                self:render()
+                self.app:info(self.s.engine_stopped)
+                return
+            end
+            self:finish_stockfish_analysis(result, moves)
+        end,
+    }
+    if not analysis.runner then
+        self.analysis = nil
+        return false
+    end
+    return true
+end
+
+function OfflineGame:finish_stockfish_analysis(result, ucis)
+    local s = self.s
+    self.analysis = nil
+    self.san_cache = self.san_cache or {}
+    local sans = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
+    local moves = {}
+    for index, uci in ipairs(ucis) do
+        local entry = result.moves[index] or {}
+        moves[index] = { uci = uci, san = sans[index], eval_text = entry.eval_text, judgment = entry.judgment, best = entry.best }
+    end
+    local function line(name, data)
+        return string.format(s.review_side_full, name, data.blunder, data.mistake, data.inaccuracy)
+    end
+    local summary = result.summary
+    local notice
+    if self.two_players then
+        notice = line(s.color_white, summary.white) .. "\n" .. line(s.color_black, summary.black)
+    else
+        notice = line(s.you, self.my_color == "w" and summary.white or summary.black)
+    end
+    self:set_review_game(moves, notice, summary)
+end
+
+-- The review of the analyzed game: its moves, the notice of what was found (also its start, against the engine) and,
+-- when the analysis made one, the summary with figures.
+function OfflineGame:set_review_game(moves, notice, summary)
+    local s = self.s
+    local you, engine = s.you, string.format(s.offline_level, self.level or 1)
+    self.review_game = {
+        moves = moves, intro = not self.two_players and notice or nil, notice = notice, summary = summary,
+        initial_fen = self.initial_fen, result_text = self:status_text(),
+        white = self.two_players and s.color_white or (self.my_color == "w" and you or engine),
+        black = self.two_players and s.color_black or (self.my_color == "b" and you or engine),
+    }
+    self:render()
+    self:open_review()
+end
+
 function OfflineGame:cancel_analysis()
+    if self.analysis and self.analysis.runner then
+        self.analysis.runner:cancel()
+    end
     self.analysis = nil
     self:stop_search()
     self:render()
@@ -397,20 +489,13 @@ function OfflineGame:finish_analysis()
     if analysis.skipped > 0 then
         summary = summary .. "\n" .. string.format(s.analysis_skipped, analysis.skipped)
     end
-    local you, engine = s.you, string.format(s.offline_level, self.level or 1)
-    self.review_game = {
-        moves = moves, intro = not self.two_players and summary or nil, summary = summary,
-        initial_fen = self.initial_fen, result_text = self:status_text(),
-        white = self.two_players and s.color_white or (self.my_color == "w" and you or engine),
-        black = self.two_players and s.color_black or (self.my_color == "b" and you or engine),
-    }
-    self:render()
-    self:open_review()
+    -- The text goes in a notice; the summary of the review is for the figures of an analysis that has them.
+    self:set_review_game(moves, summary, nil)
 end
 
 function OfflineGame:open_review()
     require("ink_knight/ui/review_screen").open(self.app, self.review_game, { flipped = self.flipped })
-    self.app:info(self.review_game.summary, 6)
+    self.app:info(self.review_game.notice, 6)
 end
 
 function OfflineGame:apply(move)
@@ -644,6 +729,11 @@ function OfflineGame:on_button(button)
 end
 
 function OfflineGame:closed()
+    -- An analysis under way ends with the screen, and so does its Stockfish; nothing is drawn on a closing screen.
+    if self.analysis and self.analysis.runner then
+        self.analysis.runner:cancel()
+    end
+    self.analysis = nil
     if self.clock and not self:is_over() then
         self:stop_clock()
         self:save()

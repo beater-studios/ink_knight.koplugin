@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Stockfish on the device: the plugin carries Stockfish 11 built for the Kindle, at the lowest priority so the screen keeps answering. The analysis of a game played without internet uses it, judging every move as Lichess does (inaccuracies, mistakes and blunders, average loss and accuracy, in a summary under More); and a Lichess game the site did not analyze can be analyzed by it from More, the review saying it is the plugin's analysis, not Lichess's.
+- The summary of an offline game analyzed by the small engine no longer offers a summary page it did not have, which closed the review with an error.
 - Studies, in the online part: your studies (private ones too with the optional permission `study:read`, which the link for creating a token now marks, since it only reads), another player's, also from their profile, or one by its address or code. A study is kept on the device, downloaded in the background, to read without internet: a chapter as a commented game, with its comments and arrows, and an interactive chapter as a guided one, with the author's comments on wrong moves. Navigating the variations comes later.
 
 ## [0.5.0]
