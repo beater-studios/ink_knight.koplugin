@@ -563,6 +563,9 @@ test("the token only goes to the servers of Lichess that ask for it", function()
     net:tick()
     eq(record.spawned[1].headers.authorization, "Bearer lip_secret")
     assert(record.spawned[1].url:find("https://explorer.lichess.org/", 1, true) == 1)
+    -- Every request names the plugin and where it lives, the same address as its metadata.
+    assert(record.spawned[1].headers["user-agent"]:match("^InkKnight/%S+ %(%+https://github%.com/beater%-studios/ink_knight%.koplugin%)$"), record.spawned[1].headers["user-agent"])
+    eq(dofile("_meta.lua").homepage, Api.HOMEPAGE)
     local other, other_record = fake_net()
     other:request(Api.tablebase("x"), function() end)
     other:tick()
@@ -577,6 +580,12 @@ test("the token only goes to the servers of Lichess that ask for it", function()
     tricked:request({ method = "GET", base = "https://lichess.org:x@evil.com", path = "/" }, function() end)
     tricked:tick()
     eq(tricked_record.spawned[1].headers.authorization, nil)
+    -- A request marked anonymous goes without it, even to lichess.org: the broadcasts are refused with a token that
+    -- lacks study:read.
+    local anonymous, anonymous_record = fake_net()
+    anonymous:request(Api.broadcast_round("rxDKpvAV"), function() end)
+    anonymous:tick()
+    eq(anonymous_record.spawned[1].headers.authorization, nil)
 end)
 
 test("a game with no limit is never asked to be rated, and has no clock or days", function()

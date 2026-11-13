@@ -139,7 +139,7 @@ function Page:nav_text_width(row)
     return self.width - 2 * self:px(MARGIN) - chevron_w - value_w
 end
 
--- The name of a row with wrap, on as many lines as it needs.
+-- The name of a row with wrap, on as many lines as it needs, with its detail below when it has one.
 function Page:wrapped_box(row, color)
     return TextBoxWidget:new{
         text = row.text,
@@ -157,7 +157,7 @@ function Page:row_height(row)
         local box = self:wrapped_box(row)
         local height = box:getSize().h
         box:free()
-        return math.max(self:px(64), height + self:px(24))
+        return math.max(self:px(64), height + self:px(24) + (row.detail and self:px(22) or 0))
     elseif row.kind == "text" then
         local box = self:text_box(row)
         local height = box:getSize().h
@@ -344,7 +344,14 @@ function Page:paint_nav(bb, row, y, h)
     local detail_color = row.disabled and DISABLED or GRAY
     if row.wrap and not row.kind then
         local box = self:wrapped_box(row, color)
-        box:paintTo(bb, x, y + math.floor((h - box:getSize().h) / 2))
+        local box_h = box:getSize().h
+        if row.detail then
+            local top = y + math.floor((h - box_h - self:px(22)) / 2)
+            box:paintTo(bb, x, top)
+            self:paint_text(bb, row.detail, REGULAR, 15, x, top + box_h, text_w, self:px(22), "left", detail_color)
+        else
+            box:paintTo(bb, x, y + math.floor((h - box_h) / 2))
+        end
         box:free()
     elseif row.detail then
         self:paint_text(bb, row.text, name, 20, x, y + self:px(10), text_w, self:px(32), "left", color)

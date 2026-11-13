@@ -5,16 +5,21 @@ local Analysis = require("ink_knight/analysis")
 local Sleep = require("ink_knight/sleep")
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
+local Broadcast = require("ink_knight/broadcast")
 local Chess = require("ink_knight/chess")
 local MoveList = require("ink_knight/ui/move_list")
 
 local ReviewScreen = {}
 ReviewScreen.__index = ReviewScreen
 
--- game: { moves = { { uci, san, eval_text, judgment, best } }, intro, initial_fen, summary }, plus white, black and
--- result for the bars; best is the better move, in the usual notation, when the engine of the plugin found one, and
--- summary comes from Game.analysis_summary.
--- opts: flipped, game_id and bookmarked, for the favorites, and reader_color when the reader played the game.
+-- game: { moves = { { uci, san, eval_text, judgment, best, clock } }, intro, initial_fen, summary }, plus white,
+-- black and result for the bars; best is the better move, in the usual notation, when the engine of the plugin found
+-- one, summary comes from Game.analysis_summary, and clock the seconds left after the move, shown on the bars.
+-- opts: flipped, game_id and bookmarked, for the favorites, reader_color when the reader played the game, and
+-- refresh(on_game) for a game still being played: called every REFRESH_SECONDS, it gives on_game the game again,
+-- with the moves played since.
+local REFRESH_SECONDS = 60
+
 function ReviewScreen.open(app, game, opts)
     opts = opts or {}
     local self = setmetatable({ app = app, s = app.strings, game = game, flipped = opts.flipped == true, index = 0, opts = opts }, ReviewScreen)
@@ -23,9 +28,35 @@ function ReviewScreen.open(app, game, opts)
     self.first_number = tonumber(tostring(game.initial_fen or ""):match("%s(%d+)%s*$")) or 1
     self.positions = { [0] = start }
     self.last_moves = {}
-    local position = start
-    for i, move in ipairs(game.moves) do
-        local next_position, played = Chess.apply_uci(position, move.uci)
+    self.available = 0
+    self:extend()
+    -- A game being played opens on its last move, which is where it is now.
+    self.index = opts.refresh and self.available or 0
+    self.screen = BoardScreen:new{
+        state = { flipped = self.flipped },
+        on_square = function(square) self:on_square(square) end,
+        on_button = function(button) self:on_button(button) end,
+        on_closed = function()
+            self.closed = true
+            if opts.on_closed then
+                opts.on_closed()
+            end
+        end,
+        broken_text = app.strings.unexpected_error,
+    }
+    UIManager:show(self.screen)
+    self:render("full")
+    if opts.refresh then
+        self:schedule_refresh()
+    end
+    return self
+end
+
+-- Reads the moves of the game past the ones already on the board.
+function ReviewScreen:extend()
+    local position = self.positions[self.available]
+    for i = self.available + 1, #self.game.moves do
+        local next_position, played = Chess.apply_uci(position, self.game.moves[i].uci)
         if not next_position then
             break
         end
@@ -33,20 +64,65 @@ function ReviewScreen.open(app, game, opts)
         position = next_position
         self.available = i
     end
-    self.available = self.available or 0
-    self.index = math.min(self.index, self.available)
-    self.screen = BoardScreen:new{
-        state = { flipped = self.flipped },
-        on_square = function(square) self:on_square(square) end,
-        on_button = function(button) self:on_button(button) end,
-        on_closed = function() if opts.on_closed then opts.on_closed() end end,
-        broken_text = app.strings.unexpected_error,
-    }
-    UIManager:show(self.screen)
-    self:render("full")
-    return self
 end
 
+-- Asked again until the game has a result: a finished game changes no more.
+function ReviewScreen:schedule_refresh()
+    Sleep.schedule(self.screen, REFRESH_SECONDS, function()
+        self.opts.refresh(function(game)
+            if game then
+                self:update(game)
+            end
+            if not self.closed and not self.game.result_text then
+                self:schedule_refresh()
+            end
+        end)
+    end)
+end
+
+-- The game again, with the moves played since: a reader on the last move follows the new ones. A relay may also
+-- correct moves it misread, so the board keeps only the moves that are still the same and reads the rest again.
+function ReviewScreen:update(game)
+    if self.closed then
+        return
+    end
+    local following = self.index == self.available
+    local before, had_result = self.available, self.game.result_text
+    local same = 0
+    while same < self.available and game.moves[same + 1] and game.moves[same + 1].uci == self.game.moves[same + 1].uci do
+        same = same + 1
+    end
+    for i = same + 1, self.available do
+        self.positions[i], self.last_moves[i] = nil, nil
+    end
+    self.available = same
+    self.game = game
+    self:extend()
+    if following or self.index > self.available then
+        self.index = self.available
+    end
+    if self.available ~= before or same < before or game.result_text ~= had_result then
+        self:render()
+    end
+end
+
+-- The seconds left of each side at the position shown, from the last move each one played, or nil.
+function ReviewScreen:clocks()
+    local white, black
+    for i = self.index, 1, -1 do
+        local move = self.game.moves[i]
+        local mover = self.positions[i - 1].turn
+        if mover == "w" and white == nil then
+            white = move.clock or false
+        elseif mover == "b" and black == nil then
+            black = move.clock or false
+        end
+        if white ~= nil and black ~= nil then
+            break
+        end
+    end
+    return white or nil, black or nil
+end
 -- "18." or "18...": the move number of a half move, from the move number of the FEN and who moved first.
 function ReviewScreen:move_label(index)
     local ply = index + (self.positions[0].turn == "b" and 1 or 0)
@@ -93,7 +169,11 @@ end
 
 function ReviewScreen:render(what)
     local s = self.s
-    local top, bottom = self.game.black or "?", self.game.white or "?"
+    local white_clock, black_clock = self:clocks()
+    local turn = self.positions[self.index].turn
+    local white = { name = self.game.white or "?", clock = white_clock and Broadcast.clock_text(white_clock), active = white_clock and turn == "w" }
+    local black = { name = self.game.black or "?", clock = black_clock and Broadcast.clock_text(black_clock), active = black_clock and turn == "b" }
+    local top, bottom = black, white
     if self.flipped then
         top, bottom = bottom, top
     end
@@ -101,8 +181,8 @@ function ReviewScreen:render(what)
         flipped = self.flipped,
         position = self.positions[self.index],
         last_move = self.last_moves[self.index],
-        top = { name = top },
-        bottom = { name = bottom },
+        top = top,
+        bottom = bottom,
         status = self:status_text(),
         buttons = {
             { id = "back", label = s.back },

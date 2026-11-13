@@ -90,12 +90,12 @@ end
 -- connect to, read by Request.host, never by a pattern of this file.
 local function sends_token(request)
     local host = Request.host(url_of(request))
-    return host ~= nil and TOKEN_HOSTS[host] == true
+    return not request.anonymous and host ~= nil and TOKEN_HOSTS[host] == true
 end
 
 function Net:build_spec(request, prefix, accept, timeout)
     local headers = {
-        ["user-agent"] = "InkKnight/" .. self.version,
+        ["user-agent"] = Api.user_agent(self.version),
         accept = request.accept or accept,
     }
     if sends_token(request) then

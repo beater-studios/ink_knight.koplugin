@@ -2,6 +2,13 @@
 local Api = {}
 
 Api.BASE = "https://lichess.org"
+-- Where the plugin lives, in the User-Agent of every request, so Lichess knows which client it is and where to reach
+-- its makers. Never anything about the reader.
+Api.HOMEPAGE = "https://github.com/beater-studios/ink_knight.koplugin"
+
+function Api.user_agent(version)
+    return string.format("InkKnight/%s (+%s)", tostring(version), Api.HOMEPAGE)
+end
 -- The opening database asks for the token, and belongs to Lichess. The tablebase is public.
 Api.EXPLORER = "https://explorer.lichess.org"
 Api.TABLEBASE = "https://tablebase.lichess.org"
@@ -369,6 +376,33 @@ function Api.puzzle_activity(max, before)
         path = path .. string.format("&before=%d", before)
     end
     return { method = "GET", accept = "application/x-ndjson", path = path }
+end
+
+-- Broadcasts: over-the-board tournaments Lichess relays. None needs a token, and they go without one (anonymous):
+-- a round is a study on Lichess, so with a token that lacks study:read the tournament and the round are refused.
+function Api.broadcast_top(page)
+    return { method = "GET", anonymous = true, path = string.format("/api/broadcast/top?page=%d", page or 1) }
+end
+
+function Api.broadcast_search(term, page)
+    return { method = "GET", anonymous = true, path = string.format("/api/broadcast/search?q=%s&page=%d", encode(term), page or 1) }
+end
+
+function Api.broadcast_tournament(id)
+    return { method = "GET", anonymous = true, path = "/api/broadcast/" .. path_id(id) }
+end
+
+function Api.broadcast_players(id)
+    return { method = "GET", anonymous = true, path = "/broadcast/" .. path_id(id) .. "/players", accept = "application/json" }
+end
+
+-- The games of a round, each with its position, players and clocks; the slugs before the id may be anything.
+function Api.broadcast_round(id)
+    return { method = "GET", anonymous = true, path = "/api/broadcast/-/-/" .. path_id(id) }
+end
+
+function Api.broadcast_round_pgn(id)
+    return { method = "GET", anonymous = true, path = "/api/broadcast/round/" .. path_id(id) .. ".pgn", accept = "application/x-chess-pgn" }
 end
 
 -- The openings Lichess has puzzles of, by family, the way its app asks for them: a page of the site that answers

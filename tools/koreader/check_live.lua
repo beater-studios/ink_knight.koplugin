@@ -14,6 +14,8 @@ G_defaults = require("luadefaults"):open()
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
 G_reader_settings:saveSetting("language", os.getenv("UI_LANGUAGE") or "pt")
 package.path = plugin_dir .. "/?.lua;" .. package.path
+-- As main.lua does: the downloads keep the device awake.
+require("ink_knight/awake").install("ink_knight")
 os.execute('mkdir -p "' .. DataStorage:getDataDir() .. '/cache" "' .. DataStorage:getSettingsDir() .. '"')
 local Device = require("device")
 local Screen = Device.screen
@@ -290,6 +292,96 @@ do
         print("rankings rows: " .. #items_of(top_widget()))
         shot("rankings")
         close_top()
+    end
+    -- Broadcasts, read with no permission: the lists, the first tournament, its standings, its round going on (or the
+    -- one Lichess opens on), that round's games and the first game in the review, with its clocks.
+    local Broadcasts = require("ink_knight/ui/broadcasts")
+    -- A page or a board, not a notice: a refused request shows a notice on top.
+    local function opens(action, label)
+        local before = #UIManager._window_stack
+        action()
+        local ok = pump(function() return #UIManager._window_stack > before end, 30, label)
+        local widget = top_widget()
+        if ok and not (widget.lines or (widget.state and widget.state.position)) then
+            problem(label .. ": a notice instead of the screen")
+            return false
+        end
+        return ok
+    end
+    local function first_row(test)
+        for _, row in ipairs(items_of(top_widget())) do
+            if row.callback and test(row) then
+                return row
+            end
+        end
+    end
+    if opens(function() Broadcasts.menu(home) end, "broadcasts") then
+        print("broadcast rows: " .. #items_of(top_widget()))
+        shot("broadcasts")
+        local tour = first_row(function(row) return row.wrap end)
+        if not tour then
+            problem("broadcasts: no tournament listed")
+        elseif opens(tour.callback, "broadcast tournament") then
+            shot("broadcast_tournament")
+            local tournament = top_widget()
+            local standings = first_row(function(row) return row.text == s.broadcast_standings end)
+            if standings and opens(standings.callback, "broadcast standings") then
+                print("broadcast standings rows: " .. #items_of(top_widget()))
+                shot("broadcast_standings")
+                close_top()
+            end
+            local round = first_row(function(row) return row.bold end) or first_row(function(row) return row.detail == s.broadcast_finished end)
+            if round and top_widget() == tournament and opens(round.callback, "broadcast round") then
+                local games = {}
+                for _, row in ipairs(items_of(top_widget())) do
+                    if row.kind == "game" then games[#games + 1] = row end
+                end
+                print(string.format("broadcast round %s: %d games, first %s (%s)", round.text, #games, games[1] and games[1].text or "-", games[1] and games[1].detail or "-"))
+                shot("broadcast_round")
+                if games[1] and opens(games[1].callback, "broadcast game") then
+                    local board = top_widget()
+                    print(string.format("broadcast game: %s against %s, clocks %s / %s, %s", tostring(board.state.bottom and board.state.bottom.name),
+                        tostring(board.state.top and board.state.top.name), tostring(board.state.bottom and board.state.bottom.clock),
+                        tostring(board.state.top and board.state.top.clock), tostring(board.state.status)))
+                    shot("broadcast_game")
+                    close_top()
+                elseif not games[1] then
+                    problem("broadcast round: no games")
+                end
+            end
+        end
+    end
+    home:close_pages()
+    -- Keeping a finished tournament for real, through the download pattern, then deleting it.
+    local BroadcastStore = require("ink_knight/broadcast_store")
+    local Api = require("ink_knight/api")
+    local top, tour_data
+    home.net:request(Api.broadcast_top(1), function(status, body) top = status == 200 and home.decode(body) or false end)
+    pump(function() return top ~= nil end, 30, "broadcast top")
+    local past = top and top.past and top.past.currentPageResults and top.past.currentPageResults[1]
+    if past then
+        home.net:request(Api.broadcast_tournament(past.tour.id), function(status, body) tour_data = status == 200 and home.decode(body) or false end)
+        pump(function() return tour_data ~= nil end, 30, "broadcast tournament data")
+    end
+    local entry = tour_data and BroadcastStore.entry_of(tour_data, os.time())
+    if entry then
+        local kept_before = home.settings:readSetting("saved_broadcasts")
+        home:save_broadcast_index(BroadcastStore.with_entry(home:saved_broadcasts(), entry))
+        local started = os.time()
+        home:download_broadcast(entry)
+        pump(function() return not home.downloads:active() end, 300, "broadcast download")
+        local have, all = home:broadcast_store():count(entry)
+        print(string.format("broadcast kept: %s, %d of %d rounds in %d s, result %s", entry.name, have, all, os.time() - started, tostring((home.download_results or {})[entry.id])))
+        if have ~= all then
+            problem("broadcast kept: rounds missing")
+        end
+        local games = home:broadcast_store():round_games(entry, entry.rounds[1], s)
+        print("kept round 1 games: " .. tostring(games and #games))
+        home:broadcast_store():delete(entry)
+        home.settings:saveSetting("saved_broadcasts", kept_before)
+        home.settings:flush()
+    else
+        problem("broadcast kept: no finished tournament to keep")
     end
     home:close_pages()
 end

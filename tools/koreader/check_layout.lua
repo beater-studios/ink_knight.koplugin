@@ -70,6 +70,25 @@ ANSWERS["/lichess"] = EXPLORER
 ANSWERS["/masters"] = EXPLORER
 ANSWERS["/api/account/preferences"] = '{"prefs":{"autoQueen":3,"coords":1,"submitMove":2,"pieceSet":"merida"},"language":"en-US"}'
 ANSWERS["/api/cloud-eval"] = '{"depth":99,"pvs":[{"moves":"e2e4 e7e5 g1f3 b8c6 f1b5 a7a6","mate":-12}]}'
+-- Broadcasts with the longest names: a tournament live, coming and past, its rounds and standings, a round of 16
+-- games and one game in PGN with clocks.
+local BROADCAST_TOUR = "FIDE World Senior Chess Championships 2026 | Open 50+ | Group Stage | Combined Standings"
+local BROADCAST_NAME = "Vasconcelos, Alessandra Bartholomew Maximiliana"
+local BROADCAST_ITEM = '{"tour":{"id":"BcastTour","name":"' .. BROADCAST_TOUR .. '"},"round":{"id":"BcastRnd1","name":"Round 10 (Tiebreaks)","startsAt":1794600000000}}'
+ANSWERS["/api/broadcast/top"] = '{"active":[' .. BROADCAST_ITEM .. '],"upcoming":[' .. BROADCAST_ITEM .. '],"past":{"currentPageResults":[' .. BROADCAST_ITEM .. '],"nextPage":2}}'
+local rounds = {}
+for index = 1, 11 do
+    rounds[index] = string.format('{"id":"BcastRnd%d","name":"Round %d (Tiebreaks)","finished":%s,"ongoing":%s,"startsAt":1794600000000}', index, index, index < 10 and "true" or "false", index == 10 and "true" or "false")
+end
+ANSWERS["/api/broadcast/BcastTour"] = '{"tour":{"id":"BcastTour","name":"' .. BROADCAST_TOUR .. '","info":{"format":"11-round Swiss with Armageddon tiebreaks","tc":"90 min / 40 moves + 30 min + 30 sec / move","location":"Banja Koviljaca, Loznica, Serbia"}},"rounds":[' .. table.concat(rounds, ",") .. '],"defaultRoundId":"BcastRnd10"}'
+local standings, round_games = {}, {}
+for index = 1, 16 do
+    standings[index] = string.format('{"name":"%s","title":"WGM","rating":2999,"score":10.5,"played":11,"rank":%d}', BROADCAST_NAME, index)
+    round_games[index] = string.format('{"id":"Game%d","status":"%s","players":[{"name":"%s","title":"WGM","rating":2999,"clock":3599900},{"name":"%s","title":"WCM","rating":2999,"clock":3599900}]}', index, index % 2 == 0 and "*" or "1/2-1/2", BROADCAST_NAME, BROADCAST_NAME)
+end
+ANSWERS["/broadcast/BcastTour/players"] = "[" .. table.concat(standings, ",") .. "]"
+ANSWERS["/api/broadcast/-/-/BcastRnd10"] = '{"round":{"id":"BcastRnd10","name":"Round 10"},"games":[' .. table.concat(round_games, ",") .. ']}'
+ANSWERS["/api/broadcast/round/BcastRnd10.pgn"] = '[Event "Round 10"]\n[White "' .. BROADCAST_NAME .. '"]\n[Black "' .. BROADCAST_NAME .. '"]\n[WhiteTitle "WGM"]\n[BlackTitle "WCM"]\n[WhiteElo "2999"]\n[BlackElo "2999"]\n[Result "*"]\n[Opening "Nimzo-Indian Defense: Sämisch Variation, Keres Variation"]\n[GameURL "https://lichess.org/broadcast/x/round-10/BcastRnd10/Game2"]\n\n1. d4 { [%clk 9:59:59] } 1... Nf6 { [%clk 9:59:58] } 2. c4 { [%clk 1:28:54] } *\n'
 ANSWERS["/api/player"] = '{"correspondence":[{"id":"' .. OTHER:lower() .. '","username":"' .. OTHER .. '","title":"WCM","perfs":{"correspondence":{"rating":2999}}}]}'
 
 local real_new = Net.new
@@ -506,6 +525,116 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     settle()
     check_page(top_page(), language .. " rankings")
     UIManager:close(top_page())
+    -- The broadcasts: the lists, a tournament, its standings, a round being played and a game with its clocks.
+    local Broadcasts = require("ink_knight/ui/broadcasts")
+    Broadcasts.menu(home)
+    settle()
+    check_page(top_page(), language .. " broadcasts")
+    Broadcasts.tournament(home, "BcastTour")
+    settle()
+    check_page(top_page(), language .. " broadcast tournament")
+    Broadcasts.standings(home, "BcastTour", BROADCAST_TOUR)
+    settle()
+    check_page(top_page(), language .. " broadcast standings")
+    Broadcasts.round(home, "BcastRnd10", "Round 10 (Tiebreaks)")
+    settle()
+    local round_page = top_page()
+    check_page(round_page, language .. " broadcast round")
+    Broadcasts.game(home, "BcastRnd10", { id = "Game2" })
+    settle()
+    local review = top_page()
+    if not (review.state and review.state.bottom and review.state.bottom.clock == "1:28:54" and review.state.top.clock == "9:59:58") then
+        problem(language .. " broadcast game: the clocks of each side should show on the bars")
+    end
+    check_board(review, language .. " broadcast game")
+    UIManager:close(review)
+    home:close_pages()
+    -- Keeping a tournament: the row to keep it, its progress, a download cut short to resume, and the kept pages with
+    -- no network. The download is invented: a child writes the files and its progress at once.
+    local Downloader = require("ink_knight/download")
+    local tournament_data = home.decode(ANSWERS["/api/broadcast/BcastTour"])
+    local store = home:broadcast_store()
+    home:save_broadcast_index({})
+    -- Files a previous run left would count as kept.
+    store:delete(require("ink_knight/broadcast_store").entry_of(tournament_data, 0))
+    local cut_short = true
+    home.downloads = Downloader.new{ work_dir = out_dir .. "/downloads", hosts = { "lichess.org" },
+        spawn = function(list, progress)
+            local count, done = 0, 0
+            for line in io.lines(list) do
+                count = count + 1
+                local path = line:match("\t(.+)$")
+                -- The first download stops after one file, as when the Wi-Fi drops.
+                if not (cut_short and done >= 1) then
+                    local file = io.open(path, "wb")
+                    file:write(ANSWERS["/api/broadcast/round/BcastRnd10.pgn"])
+                    file:close()
+                    done = done + 1
+                end
+            end
+            local file = io.open(progress, "wb")
+            file:write(string.format("%d %d %d end%s", done, count - done, count, cut_short and " stopped" or ""))
+            file:close()
+            return 1
+        end,
+        is_done = function() return true end,
+        kill = function() end,
+    }
+    home.downloads.parts = 1
+    local save = Broadcasts.save_row(home, tournament_data, function() end)
+    if save.text ~= home.strings.broadcast_save then
+        problem(language .. " keep broadcast: the row should offer to keep the tournament: " .. tostring(save.text))
+    end
+    save.callback()
+    for _ = 1, 5 do home.downloads:tick() end
+    home:tick_downloads()
+    local resume = Broadcasts.save_row(home, tournament_data, function() end)
+    if resume.text ~= string.format(home.strings.broadcast_resume, 9) or resume.detail ~= home.strings.broadcast_stopped then
+        problem(language .. " keep broadcast: a download cut short should offer to resume: " .. tostring(resume.text) .. " / " .. tostring(resume.detail))
+    end
+    cut_short = false
+    resume.callback()
+    for _ = 1, 5 do home.downloads:tick() end
+    local kept = Broadcasts.save_row(home, tournament_data, function() end)
+    if kept.text ~= home.strings.broadcast_saved then
+        problem(language .. " keep broadcast: everything kept: " .. tostring(kept.text))
+    end
+    Broadcasts.saved_menu(home)
+    check_page(top_page(), language .. " kept broadcasts")
+    Broadcasts.saved_tournament(home, home:saved_broadcasts()[1], function() end)
+    check_page(top_page(), language .. " kept tournament")
+    Broadcasts.saved_round(home, home:saved_broadcasts()[1], home:saved_broadcasts()[1].rounds[1])
+    check_page(top_page(), language .. " kept round")
+    top_page().lines[1].callback()
+    check_board(top_page(), language .. " kept game")
+    UIManager:close(top_page())
+    home:close_pages()
+    store:delete(home:saved_broadcasts()[1])
+    home:save_broadcast_index({})
+    home.downloads = nil
+    -- A game being played: new moves are followed from the last move, and left alone from an earlier one.
+    local ReviewScreen = require("ink_knight/ui/review_screen")
+    local live_game = { moves = { { uci = "e2e4", san = "e4", clock = 600 }, { uci = "e7e5", san = "e5", clock = 590 } }, white = "A", black = "B" }
+    local live = ReviewScreen.open(home, live_game, { refresh = function() end })
+    if live.index ~= 2 then
+        problem(language .. " live review: should open on the last move, at " .. live.index)
+    end
+    live:update({ moves = { live_game.moves[1], live_game.moves[2], { uci = "g1f3", san = "Nf3", clock = 580 } }, white = "A", black = "B" })
+    if live.index ~= 3 or live.screen.state.bottom.clock ~= "9:40" or live.screen.state.top.clock ~= "9:50" then
+        problem(language .. " live review: a new move should be followed, with the clocks")
+    end
+    live:go(1)
+    live:update({ moves = { live_game.moves[1], live_game.moves[2], { uci = "g1f3", san = "Nf3" }, { uci = "b8c6", san = "Nc6" } }, white = "A", black = "B", result_text = "1-0" })
+    if live.index ~= 1 or live.available ~= 4 then
+        problem(language .. " live review: a reader looking back should stay where they are")
+    end
+    -- The relay corrects a move it misread: the board keeps only the moves still the same.
+    live:go(4)
+    live:update({ moves = { live_game.moves[1], live_game.moves[2], { uci = "b1c3", san = "Nc3" } }, white = "A", black = "B" })
+    if live.available ~= 3 or live.index ~= 3 or live.game.moves[3].san ~= "Nc3" or not live.positions[3].board[19] then
+        problem(language .. " live review: a corrected move should replace the old ones")
+    end
+    UIManager:close(live.screen)
     -- The summary of the analysis of a game, with the longest names Lichess allows.
     local summary_moves = {}
     for index = 1, 300 do

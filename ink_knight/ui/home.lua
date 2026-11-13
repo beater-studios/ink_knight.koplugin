@@ -32,12 +32,16 @@ local OfflineGame = require("ink_knight/ui/offline_game")
 local Page = require("ink_knight/ui/page")
 local Pgn = require("ink_knight/pgn")
 local Players = require("ink_knight/ui/players")
+local Broadcasts = require("ink_knight/ui/broadcasts")
 local PuzzleScreen = require("ink_knight/ui/puzzle_screen")
 local PuzzlePack = require("ink_knight/puzzle_pack")
 local Puzzles = require("ink_knight/puzzles")
 local ReviewScreen = require("ink_knight/ui/review_screen")
 local SavedState = require("ink_knight/saved_state")
 local Sleep = require("ink_knight/sleep")
+local Awake = require("ink_knight/awake")
+local BroadcastStore = require("ink_knight/broadcast_store")
+local Downloader = require("ink_knight/download")
 local State = require("ink_knight/state")
 local TokenAccess = require("ink_knight/token_access")
 local TokenScreen = require("ink_knight/ui/token_screen")
@@ -59,6 +63,7 @@ local ACCOUNT_RETRY = 30
 -- The chess symbols of FreeSerif, which comes with KOReader, stand in for icons.
 local ICON_KING, ICON_QUEEN, ICON_ROOK, ICON_BISHOP, ICON_KNIGHT, ICON_PAWN =
     "\226\153\154", "\226\153\155", "\226\153\156", "\226\153\157", "\226\153\158", "\226\153\159"
+local ICON_WHITE_KNIGHT = "\226\153\152"
 local MAX_GAMES_ON_HOME = 4
 
 local Home = Page:extend{
@@ -403,6 +408,102 @@ function Home:forget_correspondence_move(id)
     end
 end
 
+-- Broadcasts kept on the device -----------------------------------------------------------------------------------
+
+function Home:broadcast_store()
+    if not self.store then
+        local dir = DataStorage:getDataDir() .. "/ink_knight/broadcasts"
+        self.store = BroadcastStore.new{
+            dir = dir,
+            exists = function(path) return lfs.attributes(path, "mode") ~= nil end,
+            remove = os.remove,
+            rename = os.rename,
+            make_dir = function(path) os.execute("mkdir -p '" .. path:gsub("'", "'\\''") .. "'") end,
+            read = function(path)
+                local file = io.open(path, "rb")
+                if not file then
+                    return nil
+                end
+                local text = file:read("*a")
+                file:close()
+                return text
+            end,
+        }
+    end
+    return self.store
+end
+
+function Home:saved_broadcasts()
+    return BroadcastStore.read_index(self.settings:readSetting("saved_broadcasts"))
+end
+
+function Home:save_broadcast_index(index)
+    self.settings:saveSetting("saved_broadcasts", index)
+    self.settings:flush()
+end
+
+-- The downloads in the background, made the first time one is asked for (or given before, by a check).
+function Home:downloader()
+    if not self.downloads then
+        self.downloads = Downloader.new{
+            work_dir = net_dir() .. "/downloads",
+            hosts = { "lichess.org" },
+            user_agent = Api.user_agent(self.version),
+            -- Lichess answers 429 to requests made at the same time, so one round at a time, and after a 429 it asks
+            -- for a full minute before the next request.
+            parts = 1,
+            wait_429 = 60,
+        }
+        self.downloads:reset_work_dir()
+    end
+    self.download_tick = self.download_tick or function() self:tick_downloads() end
+    return self.downloads
+end
+
+-- Every second and a half while something downloads; the device stays awake meanwhile.
+function Home:tick_downloads()
+    local busy = self.downloads:tick()
+    Awake.set(self.downloads:active(), self.downloads)
+    for _, page in ipairs(self.pages) do
+        if page.on_download then
+            page.on_download()
+        end
+    end
+    if busy then
+        Sleep.schedule(self, 1.5, self.download_tick)
+    end
+end
+
+-- Downloads the rounds of a kept tournament that are not on the device yet. The result stays in
+-- self.download_results[id]: "done", or "stopped" when the network gave up.
+function Home:download_broadcast(tour)
+    local store = self:broadcast_store()
+    store.make_dir(store:tour_dir(tour))
+    local files = store:files(tour)
+    if #files == 0 then
+        return
+    end
+    local downloads = self:downloader()
+    self.download_results = self.download_results or {}
+    self.download_results[tour.id] = nil
+    downloads:add{ id = "broadcast_" .. tour.id, files = files, on_done = function(_, failed, _, cancelled, stopped)
+        self.download_results[tour.id] = (stopped or failed > 0) and "stopped" or (not cancelled and "done" or nil)
+        store:settle(tour)
+    end }
+    self:tick_downloads()
+end
+
+-- "running" with the rounds done and the total, or nil.
+function Home:broadcast_download_state(tour)
+    local downloads = self.downloads
+    local state = downloads and downloads:busy_with("broadcast_" .. tour.id)
+    if state == "running" then
+        local done, total = downloads:progress("broadcast_" .. tour.id)
+        return "running", done or 0, total or 0
+    end
+    return state
+end
+
 -- The pages under a board show what changed there, such as a move now waiting or a level done.
 function Home:reload_pages()
     for _, page in ipairs(self.pages) do
@@ -672,6 +773,7 @@ function Home:hub_rows()
         { icon = ICON_QUEEN, text = s.profile, callback = function() self:when_connected(function() Players.show(self, self.my_id) end) end },
         { icon = ICON_PAWN, text = s.players, callback = function() self:when_connected(function() Players.menu(self) end) end },
         { icon = ICON_BISHOP, text = s.settings_short, callback = function() self:settings_menu() end },
+        { icon = ICON_WHITE_KNIGHT, text = s.broadcasts, callback = function() self:when_connected(function() Broadcasts.menu(self) end) end },
     } }
     if self.token_rejected then
         Page.disable_rows(rows)
@@ -1387,6 +1489,12 @@ function Home:offline_rows(page)
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
         rows[#rows + 1] = row
+    end
+    local kept = #self:saved_broadcasts()
+    if kept > 0 then
+        rows[#rows + 1] = { text = s.broadcast_saved_menu, detail = string.format(kept == 1 and s.broadcast_saved_count_one or s.broadcast_saved_count, kept), callback = function()
+            Broadcasts.saved_menu(self)
+        end }
     end
     local saved_puzzles = #self:puzzle_pile()
     local saved_reviews = #self:puzzle_pile(Puzzles.REVIEW)
@@ -2743,6 +2851,12 @@ end
 function Home:onCloseWidget()
     self.is_closed = true
     Toast.close_all(self)
+    -- Closing the plugin stops the downloads; what came down stays, and the rest comes when the reader resumes.
+    if self.downloads then
+        Sleep.unschedule(self, self.download_tick)
+        self.downloads:stop()
+        Awake.set(false, self.downloads)
+    end
     self:stop_network()
     BoardScreen.clear_art_cache()
     PuzzlePack.release()
