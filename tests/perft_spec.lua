@@ -1,6 +1,6 @@
 -- The positions of tests/perft (from scalachess, MIT), of standard chess and of Chess960: each depth's count of move
 -- sequences must match, so any mistake in the rules shows. Only the depths up to PERFT_LIMIT sequences run: 20000 by
--- default, about 3 s on a Kindle, where the install runs the tests; tools/check.sh runs them to 1000000, and
+-- default, about 5 s on a Kindle with the Chess960 part, where the install runs the tests; tools/check.sh runs them to 1000000, and
 -- PERFT_LIMIT=10000000 runs them deep. The first depth listed always runs, so no limit turns a file into a pass that
 -- checked nothing.
 package.path = "./?.lua;" .. package.path
@@ -8,9 +8,10 @@ local Chess = require("ink_knight/chess")
 
 local LIMIT = tonumber(os.getenv("PERFT_LIMIT")) or 20000
 -- The 960 starting positions of Chess960 are many, so by default one in CHESS960_EVERY runs, to CHESS960_LIMIT
--- sequences (the first two depths); tools/check.sh runs all of them deeper.
+-- sequences: only the first depth, since the second adds 6 to 7 s on a Kindle and its castling is checked by the
+-- positions of tricky.perft. tools/check.sh runs all of them to the second depth.
 local CHESS960_EVERY = tonumber(os.getenv("CHESS960_EVERY")) or 4
-local CHESS960_LIMIT = tonumber(os.getenv("CHESS960_LIMIT")) or 1000
+local CHESS960_LIMIT = tonumber(os.getenv("CHESS960_LIMIT")) or 100
 -- What each file must run: a change of a file that loses a position fails here.
 local EXPECTED = { ["tricky.perft"] = 18, ["chess960.perft"] = 960 }
 

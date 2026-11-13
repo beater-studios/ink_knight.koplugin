@@ -406,6 +406,17 @@ function Chess.same_move(a, b)
     return a.from == b.from and a.to == b.to and a.promotion == b.promotion and (a.castle ~= nil) == (b.castle ~= nil)
 end
 
+-- The legal move a UCI names, or nil, since parse_uci reads the squares without the rules.
+function Chess.legal_uci(position, uci)
+    local wanted = Chess.parse_uci(position, uci)
+    for _, legal in ipairs(wanted and Chess.legal_moves(position) or {}) do
+        if Chess.same_move(legal, wanted) then
+            return legal
+        end
+    end
+    return nil
+end
+
 -- The square tapped to play a move: in Chess960 a castling is tapped on its rook, as on Lichess, since the king may
 -- also go to g or c by a plain move.
 function Chess.target_square(position, move)

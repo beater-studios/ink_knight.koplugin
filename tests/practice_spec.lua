@@ -43,11 +43,12 @@ test("the lessons: the chapters the plugin can judge, in their studies", functio
         kinds[chapter.kind] = (kinds[chapter.kind] or 0) + 1
     end)
     eq(#sections, 5)
-    eq(kinds.goal, 165)
+    -- 165 judged by the engine or the rules, 103 by a tree of moves and 3 by the table of king and pawn.
+    eq(kinds.goal, 271)
     eq(kinds.guided, 36)
     eq(kinds.lesson, 1)
-    -- The tactics studies judged only by evaluation are left out whole: 27 of the 32.
-    eq(studies, 27)
+    -- Every study has chapters the plugin can judge.
+    eq(studies, 32)
 end)
 
 test("every position, line, wrong move and drawing can be played and drawn", function()
@@ -56,8 +57,10 @@ test("every position, line, wrong move and drawing can be played and drawn", fun
         assert(Chess.ending(position) == nil, chapter.id .. " starts over")
         assert(english[chapter.id .. ".n"], chapter.id .. " has no name")
         if chapter.kind == "goal" then
-            assert(chapter.goal == "mate" or chapter.goal == "mate_in" or chapter.goal == "promotion", chapter.id)
-            assert((chapter.goal == "mate_in") == (chapter.moves ~= nil) and (chapter.goal == "promotion") == (chapter.cp ~= nil), chapter.id)
+            local scripted = Practice.SCRIPTED_GOALS[chapter.goal] == true
+            assert(chapter.goal == "mate" or chapter.goal == "mate_in" or chapter.goal == "promotion" or scripted, chapter.id)
+            assert((chapter.goal == "mate_in" or scripted) == (chapter.moves ~= nil), chapter.id)
+            assert((chapter.goal == "promotion" or chapter.goal == "eval_in") == (chapter.cp ~= nil), chapter.id)
             for _, shape in ipairs(Practice.shapes(chapter.shapes)) do
                 assert(shape.brush and shape.from, chapter.id .. " has a shape it cannot draw")
             end
@@ -260,6 +263,187 @@ test("a promotion is judged on the score the engine gives, for white as on Liche
     eq(Practice.play(state, chapter, move(state.position, "b2b1q")), "judge")
     Practice.judge_promotion(state, chapter, -850)
     eq(state.status, "solved")
+end)
+
+-- The chapters judged without the engine ---------------------------------------------------------------------------
+
+local trees = require("ink_knight/data/practice_trees")
+local Kpk = require("ink_knight/kpk")
+
+local legal_named = Chess.legal_uci
+
+test("every tree: legal moves, the reader to move, a way to the goal from every position", function()
+    local count = 0
+    local function walk(node, position, where)
+        local solvable = false
+        for _, entry in ipairs(node) do
+            local reader = assert(legal_named(position, entry[1]), where .. ": " .. entry[1])
+            if entry[2] == true then
+                solvable = true
+            elseif entry[3] then
+                local after = Chess.play(position, reader)
+                local reply = assert(legal_named(after, entry[2]), where .. ": reply " .. entry[2])
+                walk(entry[3], Chess.play(after, reply), where .. " " .. entry[1])
+                solvable = true
+            else
+                eq(entry[2], false)
+            end
+        end
+        assert(solvable, where .. ": no way to the goal")
+        for uci in tostring(node.o or ""):gmatch("%S+") do
+            assert(legal_named(position, uci), where .. ": other " .. uci)
+        end
+    end
+    each_chapter(function(chapter)
+        if Practice.TREE_GOALS[chapter.goal] then
+            local tree = assert(trees[chapter.id], chapter.id .. " has no tree")
+            local position = Chess.parse_fen(chapter.fen)
+            if tree.first then
+                position = Chess.play(position, assert(legal_named(position, tree.first), chapter.id))
+            end
+            eq(position.turn, chapter.color)
+            walk(tree.tree, position, chapter.id)
+            count = count + 1
+        end
+    end)
+    for id in pairs(trees) do
+        assert(Practice.find(sections, id), "a tree of no chapter: " .. id)
+    end
+    assert(count > 90, "too few trees: " .. count)
+end)
+
+-- Plays a chapter judged without the engine: the reader's moves from pick(state), the opponent's from the script.
+local function play_scripted(chapter, pick)
+    local state = Practice.start_goal(chapter)
+    if not Practice.is_player_turn(state) then
+        Practice.play(state, chapter, Practice.scripted_reply(state, chapter))
+    end
+    local guard = 0
+    while state.status == "playing" do
+        guard = guard + 1
+        assert(guard < 100, chapter.id .. " never ends")
+        local step = Practice.play(state, chapter, pick(state))
+        if step == "reply" then
+            Practice.play(state, chapter, assert(Practice.scripted_reply(state, chapter), chapter.id .. ": no reply"))
+        end
+    end
+    return state
+end
+
+test("the best moves of every tree solve its chapter, within its moves", function()
+    each_chapter(function(chapter)
+        if Practice.TREE_GOALS[chapter.goal] then
+            local state = play_scripted(chapter, function(s) return Practice.best_move(s, chapter) end)
+            if state.status ~= "solved" then
+                error(chapter.id .. ": " .. tostring(state.reason))
+            end
+            assert(state.played <= chapter.moves, chapter.id .. " took " .. state.played)
+        end
+    end)
+end)
+
+test("a move the tree calls a mistake fails it, naming a better one; a fair one it did not follow is tried again", function()
+    local mistakes, others = 0, 0
+    each_chapter(function(chapter)
+        local tree = Practice.TREE_GOALS[chapter.goal] and trees[chapter.id]
+        if not tree then
+            return
+        end
+        local state = Practice.start_goal(chapter)
+        if not Practice.is_player_turn(state) then
+            Practice.play(state, chapter, Practice.scripted_reply(state, chapter))
+        end
+        local known = {}
+        for _, entry in ipairs(state.node) do
+            known[entry[1]] = true
+        end
+        for uci in tostring(state.node.o or ""):gmatch("%S+") do
+            known[uci] = true
+            if others == 0 then
+                local before = Chess.epd(state.position)
+                eq(Practice.play(state, chapter, legal_named(state.position, uci)), "move")
+                eq(state.notice, "other")
+                eq(Chess.epd(state.position), before)
+                eq(state.status, "playing")
+                others = others + 1
+            end
+        end
+        for _, legal in ipairs(Chess.legal_moves(state.position)) do
+            if not known[Chess.move_to_uci(legal)] then
+                local copy = Practice.start_goal(chapter)
+                if not Practice.is_player_turn(copy) then
+                    Practice.play(copy, chapter, Practice.scripted_reply(copy, chapter))
+                end
+                Practice.play(copy, chapter, legal)
+                if copy.status ~= "solved" then
+                    eq(copy.status, "failed")
+                    assert(copy.reason == "mistake" or copy.reason == "draw" or copy.reason == "lost", chapter.id .. ": " .. tostring(copy.reason))
+                    if copy.reason == "mistake" then
+                        assert(copy.better, chapter.id .. ": no better move named")
+                        mistakes = mistakes + 1
+                    end
+                end
+                break
+            end
+        end
+    end)
+    assert(mistakes > 50 and others > 0, string.format("mistakes %d, others %d", mistakes, others))
+end)
+
+test("a mistake fails even when it draws, as in the app", function()
+    -- A made-up chapter to equalize, whose tree knows only the mate; the stalemate is not in it.
+    trees.test_stalemate = { tree = { { "c1c8", true } } }
+    local chapter = goal_chapter({ id = "test_stalemate", fen = "k7/8/1K6/8/8/8/8/2Q5 w - - 0 1", goal = "equal_in", moves = 1 })
+    local state = Practice.start_goal(chapter)
+    Practice.play(state, chapter, move(state.position, "c1c7"))
+    eq(state.status, "failed")
+    eq(state.reason, "mistake")
+    eq(state.better, "Qc8#")
+    state = Practice.start_goal(chapter)
+    Practice.play(state, chapter, move(state.position, "c1c8"))
+    eq(state.status, "solved")
+    trees.test_stalemate = nil
+end)
+
+test("king and pawn against king: the table knows the opposition, both ways and on both wings", function()
+    -- Checked against Stockfish: the king ahead of its pawn wins with the move, and the other king holds with it.
+    eq(Kpk.result(Chess.parse_fen("4k3/8/8/4K3/4P3/8/8/8 w - - 0 1")), "win")
+    eq(Kpk.result(Chess.parse_fen("4k3/8/8/4K3/4P3/8/8/8 b - - 0 1")), "draw")
+    -- The same for black, and a pawn on the other wing with the defending king in front of it.
+    eq(Kpk.result(Chess.parse_fen("8/8/8/4p3/4k3/8/8/4K3 b - - 0 1")), "win")
+    eq(Kpk.result(Chess.parse_fen("8/8/8/4p3/4k3/8/8/4K3 w - - 0 1")), "draw")
+    eq(Kpk.result(Chess.parse_fen("8/8/8/8/2k5/2p5/8/2K5 b - - 0 1")), "draw")
+    -- A rook pawn with the other king in the corner is a draw whoever moves.
+    eq(Kpk.result(Chess.parse_fen("k7/8/K7/P7/8/8/8/8 w - - 0 1")), "draw")
+    eq(Kpk.result(Chess.parse_fen("k7/8/K7/P7/8/8/8/8 b - - 0 1")), "draw")
+    eq(Kpk.result(Chess.parse_fen("4k3/8/4K3/4P3/8/8/8/7Q w - - 0 1")), nil)
+end)
+
+test("holding the draw in king and pawn: the drawing moves solve it, a losing one fails it", function()
+    local count = 0
+    each_chapter(function(chapter)
+        if chapter.goal == "draw_in" then
+            count = count + 1
+            local state = play_scripted(chapter, function(s) return Practice.best_move(s, chapter) end)
+            eq(state.status, "solved")
+            -- Any move that lets the pawn through fails at once.
+            local lost = Practice.start_goal(chapter)
+            local losing
+            for _, legal in ipairs(Chess.legal_moves(lost.position)) do
+                if Kpk.result(Chess.play(lost.position, legal)) == "win" then
+                    losing = legal
+                    break
+                end
+            end
+            if losing then
+                Practice.play(lost, chapter, losing)
+                eq(lost.status, "failed")
+                eq(lost.reason, "mistake")
+                assert(lost.better, "a better move is named")
+            end
+        end
+    end)
+    eq(count, 3)
 end)
 
 local function find(id)

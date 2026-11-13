@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 export PERFT_LIMIT="${PERFT_LIMIT:-1000000}"
 # Every one of the 960 starting positions of Chess960, to the second depth.
 export CHESS960_EVERY="${CHESS960_EVERY:-1}"
+export CHESS960_LIMIT="${CHESS960_LIMIT:-1000}"
 for spec in tests/*_spec.lua; do
     luajit "$spec"
 done

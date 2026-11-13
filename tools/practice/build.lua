@@ -1,15 +1,20 @@
--- Builds ink_knight/data/practice.lua and ink_knight/data/practice_texts_en.lua from the practice lessons of the
--- official Lichess app (lichess-org/mobile, GPL-3.0), which the app generates from lichess.org/practice. Only the
--- chapters the plugin can judge come in: the ones to mate, to mate in so many moves or to promote, played against
--- the engine, and the guided ones and the commented game, which need no engine. The moves of the guided chapters are
--- read with the rules of the plugin itself, so a move it cannot read stops the build.
+-- Builds ink_knight/data/practice.lua, ink_knight/data/practice_texts_en.lua and ink_knight/data/practice_trees.lua
+-- from the practice lessons of the official Lichess app (lichess-org/mobile, GPL-3.0), which the app generates from
+-- lichess.org/practice. Only the chapters the plugin can judge come in: the ones to mate, to mate in so many moves or
+-- to promote, played against the engine; the ones judged by an evaluation that have a tree of moves in
+-- tools/practice/eval_trees.json, worked out with Stockfish by tools/practice/eval_trees.py; and the guided ones and
+-- the commented game, which need no engine. Every move is read with the rules of the plugin itself, so a move it
+-- cannot read stops the build.
 -- Usage, from the plugin folder: luajit tools/practice/build.lua <folder with practice.json>
 package.path = "./?.lua;" .. package.path
 local Chess = require("ink_knight/chess")
+local Kpk = require("ink_knight/kpk")
 
 local sources = assert(arg[1], "usage: luajit tools/practice/build.lua <folder with practice.json>")
 local OUT = "ink_knight/data/practice.lua"
 local OUT_TEXTS = "ink_knight/data/practice_texts_en.lua"
+local OUT_TREES = "ink_knight/data/practice_trees.lua"
+local TREES = "tools/practice/eval_trees.json"
 
 local function fail(text)
     io.stderr:write(text, "\n")
@@ -188,6 +193,7 @@ local STUDIES = {
     wS23j5Tm = { "practiceStNamPracticalRookEndings", "practiceStDesRookEndingsWithSeveralPawns" },
 }
 local GOALS = { mate = "mate", mateIn = "mate_in", promotion = "promotion" }
+local TREE_GOALS = { evalIn = "eval_in", equalIn = "equal_in" }
 local BRUSHES = { G = true, R = true, Y = true, B = true }
 
 -- The text of a comment or description as the reader sees it: no drawing commands, no links (nothing opens them
@@ -386,7 +392,49 @@ local file = assert(io.open(sources .. "/practice.json", "rb"))
 local data = decode_json(file:read("*a"))
 file:close()
 
-local sections, counts, seen = {}, { goal = 0, guided = 0, lesson = 0, left = 0 }, {}
+file = assert(io.open(TREES, "rb"))
+local tree_data = decode_json(file:read("*a"))
+file:close()
+
+local function legal_uci(position, uci, where)
+    return Chess.legal_uci(position, uci) or fail(where .. ": not a legal move " .. tostring(uci))
+end
+
+-- A position of a tree as the plugin keeps it: { uci, true } solves, { uci, false } can no longer reach the goal,
+-- { uci, reply, node } goes on; o lists the fair moves the tree did not follow, to be tried again.
+local function tree_node(node, position, where)
+    local out, solvable = { entries = {} }, false
+    for _, item in ipairs(node.m or fail(where .. ": a position with no moves")) do
+        local uci, result = item[1], item[2]
+        local move = legal_uci(position, uci, where)
+        local after = Chess.play(position, move)
+        if result == "s" then
+            out.entries[#out.entries + 1] = { uci, true }
+            solvable = true
+        elseif result == "x" then
+            out.entries[#out.entries + 1] = { uci, false }
+        elseif type(result) == "table" then
+            local reply = legal_uci(after, result.r, where)
+            local child = tree_node(result.n, Chess.play(after, reply), where .. " " .. uci .. " " .. result.r)
+            out.entries[#out.entries + 1] = { uci, result.r, child }
+            solvable = true
+        else
+            fail(where .. ": unknown result for " .. uci)
+        end
+    end
+    if not solvable then
+        fail(where .. ": a position the goal cannot be reached from")
+    end
+    for _, uci in ipairs(node.o or {}) do
+        legal_uci(position, uci, where)
+    end
+    out.other = node.o and #node.o > 0 and table.concat(node.o, " ") or nil
+    return out
+end
+
+local trees, tree_ids = {}, {}
+
+local sections, counts, seen = {}, { goal = 0, tree = 0, table = 0, guided = 0, lesson = 0, left = 0 }, {}
 for _, section in ipairs(data.sections or fail("no sections")) do
     local section_key = SECTIONS[section.id] or fail("unknown section " .. tostring(section.id))
     local out_section = { id = section.id, name = section_key, studies = {} }
@@ -414,6 +462,38 @@ for _, section in ipairs(data.sections or fail("no sections")) do
                     if (goal.result == "mateIn") ~= (type(goal.moves) == "number") or (goal.result == "promotion") ~= (type(goal.cp) == "number") then
                         fail(where .. ": goal without its number")
                     end
+                    counts.goal = counts.goal + 1
+                elseif TREE_GOALS[goal.result] and (tree_data.chapters[chapter.id] or {}).tree then
+                    if type(goal.moves) ~= "number" or (goal.result == "evalIn") ~= (type(goal.cp) == "number") then
+                        fail(where .. ": goal without its number")
+                    end
+                    out = { kind = "goal", goal = TREE_GOALS[goal.result], moves = goal.moves, cp = goal.cp }
+                    local tree, start = tree_data.chapters[chapter.id].tree, position
+                    local first
+                    if tree.r then
+                        first = tree.r
+                        start = Chess.play(position, legal_uci(position, first, where))
+                        tree = tree.n
+                    end
+                    if start.turn ~= (chapter.orientation == "white" and "w" or "b") then
+                        fail(where .. ": the tree does not start with the reader to move")
+                    end
+                    trees[chapter.id] = { first = first, tree = tree_node(tree, start, where) }
+                    tree_ids[#tree_ids + 1] = chapter.id
+                    counts.tree = counts.tree + 1
+                elseif goal.result == "drawIn" and Kpk.result(position) == "draw" and type(goal.moves) == "number" then
+                    -- King and pawn against king, judged exactly with the table of that ending; the plugin takes the
+                    -- reader to be the side without the pawn.
+                    local pawn = chapter.fen:match("^%S+"):find(chapter.orientation == "white" and "P" or "p", 1, true)
+                    if pawn then
+                        fail(where .. ": the reader has the pawn in a chapter to hold the draw")
+                    end
+                    out = { kind = "goal", goal = "draw_in", moves = goal.moves }
+                    counts.table = counts.table + 1
+                else
+                    counts.left = counts.left + 1
+                end
+                if out then
                     local list = {}
                     for _, item in ipairs(chapter.shapes or {}) do
                         for _, shape in ipairs(shapes_of((#tostring(item) == 3 and "[%csl " or "[%cal ") .. tostring(item) .. "]", where)) do
@@ -421,9 +501,6 @@ for _, section in ipairs(data.sections or fail("no sections")) do
                         end
                     end
                     out.shapes = #list > 0 and table.concat(list, ",") or nil
-                    counts.goal = counts.goal + 1
-                else
-                    counts.left = counts.left + 1
                 end
             elseif chapter.kind == "gamebook" then
                 out = guided(chapter, "guided", where)
@@ -545,6 +622,40 @@ text_out[#text_out + 1] = ""
 file = assert(io.open(OUT_TEXTS, "wb"))
 file:write(table.concat(text_out, "\n"))
 file:close()
-print(string.format("%s: %d chapters with a goal, %d guided, %d commented game; %d left out (judged by evaluation)",
-    OUT, counts.goal, counts.guided, counts.lesson, counts.left))
+-- Written tight, a chapter to a line, since it is only read by the plugin.
+local function tree_text(node)
+    local parts = {}
+    for _, entry in ipairs(node.entries) do
+        if entry[3] then
+            parts[#parts + 1] = string.format("{%s,%s,%s}", quote(entry[1]), quote(entry[2]), tree_text(entry[3]))
+        else
+            parts[#parts + 1] = string.format("{%s,%s}", quote(entry[1]), tostring(entry[2]))
+        end
+    end
+    if node.other then
+        parts[#parts + 1] = "o=" .. quote(node.other)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+table.sort(tree_ids)
+local tree_out = {
+    "-- Generated by tools/practice/build.lua from tools/practice/eval_trees.json, worked out with " .. tostring(tree_data.engine),
+    "-- by tools/practice/eval_trees.py on the chapters of lichess.org/practice judged by an evaluation. Do not edit by",
+    "-- hand. Each chapter: first, the opponent's opening move when it starts; tree, the reader's moves (see",
+    "-- Practice.play).",
+    "return {",
+}
+for _, id in ipairs(tree_ids) do
+    local tree = trees[id]
+    tree_out[#tree_out + 1] = string.format("    [%s] = { first = %s, tree = %s },", quote(id), tree.first and quote(tree.first) or "nil", tree_text(tree.tree))
+end
+tree_out[#tree_out + 1] = "}"
+tree_out[#tree_out + 1] = ""
+file = assert(io.open(OUT_TREES, "wb"))
+file:write(table.concat(tree_out, "\n"))
+file:close()
+
+print(string.format("%s: %d chapters with a goal, %d judged by a tree of moves, %d by the table of king and pawn, %d guided, %d commented game; %d left out (judged by evaluation)",
+    OUT, counts.goal, counts.tree, counts.table, counts.guided, counts.lesson, counts.left))
 print(string.format("%s: %d texts", OUT_TEXTS, #text_keys))

@@ -2,7 +2,8 @@
 -- and studies, the chapters of a study, a mate in one given and kept, the same chapter failed and tried again, the
 -- engine answering a move and giving a hint, a guided chapter with a wrong move taken back by itself and the
 -- opponent's moves coming by themselves, the whole text a tap away, the commented game from comment to comment, and
--- the end of a study leading to the next one.
+-- the end of a study leading to the next one, a chapter judged by a tree of moves and one to hold the draw in king and
+-- pawn against king.
 -- Usage: OUTPUT_DIR=<folder> KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_practice.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -254,6 +255,84 @@ home:practice_study(mate_study)
 local solved_row = row_of(home.pages[#home.pages], texts[chapter.id .. ".n"])
 check(solved_row and solved_row.value == "\226\156\147", "a chapter done should be checked: " .. tostring(solved_row and solved_row.value))
 UIManager:close(home.pages[#home.pages])
+
+-- A chapter judged by a tree of moves: the goal with its advantage, the hint from the tree at once, a fair move the
+-- tree did not follow taken back, the opponent answering from the tree after a moment, and a mistake failing it with
+-- a better move named.
+local tree_study, tree_index
+for _, section in ipairs(sections) do
+    for _, study in ipairs(section.studies) do
+        for index, item in ipairs(study.chapters) do
+            local tree = Practice.tree_of(item)
+            if not tree_study and item.goal == "eval_in" and item.moves >= 2 and tree and not tree.first and tree.tree.o then
+                tree_study, tree_index = study, index
+            end
+        end
+    end
+end
+practice = PracticeScreen.open(home, tree_study, tree_index)
+local tree_chapter = practice.chapter
+check(practice:goal_text():find(practice:advantage_text(), 1, true) and practice:advantage_text():match("^%+%d"), "the goal names the advantage: " .. practice:goal_text())
+check(practice.screen.state.status == string.format(s.practice_moves_of, practice:goal_text(), 1, tree_chapter.moves), "the status counts the moves: " .. tostring(practice.screen.state.status))
+shot(practice.screen, "practice_tree")
+practice.screen.on_button("hint")
+local best = practice.hint_move
+check(best and not practice.hinting, "the hint comes from the tree at once")
+local other = practice.state.node.o:match("%S+")
+local before = Chess.epd(practice.state.position)
+practice:play_goal(Chess.parse_uci(practice.state.position, other))
+check(practice.screen.state.status == s.practice_other_move and Chess.epd(practice.state.position) == before, "a fair move the tree did not follow is taken back: " .. tostring(practice.screen.state.status))
+practice.screen.on_button("hint")
+check(practice.screen.state.status == string.format(s.hint_status, Chess.to_san(practice.state.position, best)), "after it, the hint names its move: " .. tostring(practice.screen.state.status))
+practice:play_goal(best)
+check(practice.thinking and practice.state.played == 1, "the opponent answers after a moment")
+run_queue()
+check(not practice.thinking and Practice.is_player_turn(practice.state) and practice.state.status == "playing", "the opponent answered from the tree")
+practice.screen.on_button("retry")
+run_queue()
+local known = {}
+for _, entry in ipairs(practice.state.node) do
+    known[entry[1]] = true
+end
+for uci in practice.state.node.o:gmatch("%S+") do
+    known[uci] = true
+end
+for _, candidate in ipairs(Chess.legal_moves(practice.state.position)) do
+    if not known[Chess.move_to_uci(candidate)] and not Chess.ending(Chess.play(practice.state.position, candidate)) then
+        practice:play_goal(candidate)
+        break
+    end
+end
+check(practice.state.reason == "mistake" and practice.screen.state.status == string.format(s.practice_failed_mistake_better, practice.state.better), "a mistake fails it, naming a better move: " .. tostring(practice.screen.state.status))
+shot(practice.screen, "practice_tree_mistake")
+UIManager:close(practice.screen)
+run_queue()
+
+-- Holding the draw in king and pawn against king: the drawing moves, the opponent's tries, done at the end.
+local draw_study, draw_index
+for _, section in ipairs(sections) do
+    for _, study in ipairs(section.studies) do
+        for index, item in ipairs(study.chapters) do
+            if not draw_study and item.goal == "draw_in" then
+                draw_study, draw_index = study, index
+            end
+        end
+    end
+end
+practice = PracticeScreen.open(home, draw_study, draw_index)
+local draw_chapter = practice.chapter
+check(practice.screen.state.status == string.format(s.practice_moves_of, string.format(s.practice_goal_draw_in, draw_chapter.moves), 1, draw_chapter.moves), "the goal to hold the draw: " .. tostring(practice.screen.state.status))
+shot(practice.screen, "practice_draw")
+for _ = 1, draw_chapter.moves do
+    if practice.state.status ~= "playing" then
+        break
+    end
+    practice:play_goal(Practice.best_move(practice.state, draw_chapter))
+    run_queue()
+end
+check(practice.state.status == "solved" and home:practice_progress()[draw_chapter.id], "holding the draw solves it and keeps it: " .. tostring(practice.screen.state.status))
+UIManager:close(practice.screen)
+run_queue()
 
 home.settings:delSetting("practice_progress")
 if failures > 0 then

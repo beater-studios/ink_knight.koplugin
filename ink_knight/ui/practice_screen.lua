@@ -93,8 +93,20 @@ function PracticeScreen:goal_text()
     local s, chapter = self.s, self.chapter
     if chapter.goal == "mate_in" then
         return string.format(s.practice_goal_mate_in, chapter.moves)
+    elseif chapter.goal == "eval_in" then
+        return string.format(chapter.moves == 1 and s.practice_goal_eval_in_one or s.practice_goal_eval_in, self:advantage_text(), chapter.moves)
+    elseif chapter.goal == "equal_in" then
+        return string.format(chapter.moves == 1 and s.practice_goal_equal_in_one or s.practice_goal_equal_in, chapter.moves)
+    elseif chapter.goal == "draw_in" then
+        return string.format(chapter.moves == 1 and s.practice_goal_draw_in_one or s.practice_goal_draw_in, chapter.moves)
     end
     return s["practice_goal_" .. chapter.goal]
+end
+
+-- The advantage a chapter asks for, in pawns for the reader, as Lichess writes evaluations: "+3", "+2.5".
+function PracticeScreen:advantage_text()
+    local pawns = math.abs(self.chapter.cp or 0) / 100
+    return pawns == math.floor(pawns) and string.format("+%d", pawns) or string.format("+%.1f", pawns)
 end
 
 function PracticeScreen:banner_text()
@@ -130,15 +142,21 @@ function PracticeScreen:status_text()
         elseif state.status == "failed" then
             if state.reason == "slow" then
                 return string.format(s.practice_failed_slow, chapter.moves)
+            elseif state.reason == "mistake" then
+                return state.better and string.format(s.practice_failed_mistake_better, state.better) or s.practice_failed_mistake
+            elseif state.reason == "short" then
+                return chapter.goal == "eval_in" and string.format(s.practice_failed_short, self:advantage_text()) or s.practice_failed_not_equal
             end
             return s["practice_failed_" .. state.reason]
+        elseif state.notice == "other" then
+            return s.practice_other_move
         elseif self.thinking then
             return s.status_thinking
         elseif self.hinting then
             return s.hint_thinking
         elseif self.hint_move then
             return string.format(s.hint_status, Chess.to_san(state.position, self.hint_move))
-        elseif chapter.goal == "mate_in" then
+        elseif chapter.goal == "mate_in" or (Practice.SCRIPTED_GOALS[chapter.goal] and chapter.moves > 1) then
             return string.format(s.practice_moves_of, self:goal_text(), state.played + 1, chapter.moves)
         end
         return self:goal_text()
@@ -301,8 +319,26 @@ function PracticeScreen:finish_goal()
     end
 end
 
+-- The opponent's answer without the engine comes after a moment, so the reader sees their own move first.
+local SCRIPTED_REPLY_SECONDS = 0.6
+
 function PracticeScreen:engine_reply()
     self.thinking = true
+    -- Without a scripted answer (data built without the chapter's tree), the engine answers instead of nobody.
+    local scripted = Practice.SCRIPTED_GOALS[self.chapter.goal] and Practice.scripted_reply(self.state, self.chapter)
+    if scripted then
+        local state = self.state
+        Sleep.schedule(self.screen, SCRIPTED_REPLY_SECONDS, function()
+            if self.is_closed or self.state ~= state then
+                return
+            end
+            self.thinking = false
+            Practice.play(state, self.chapter, scripted)
+            self:finish_goal()
+            self:render()
+        end)
+        return
+    end
     self:run_engine(Practice.ENGINE, function(result)
         self.thinking = false
         local state = self.state
@@ -341,6 +377,13 @@ function PracticeScreen:hint()
         return
     end
     if not Practice.is_player_turn(self.state) or self.thinking or self.hinting then
+        return
+    end
+    local best = Practice.SCRIPTED_GOALS[self.chapter.goal] and Practice.best_move(self.state, self.chapter)
+    if best then
+        self.selected, self.targets, self.state.notice = nil, nil, nil
+        self.hint_move = best
+        self:render()
         return
     end
     self.hinting = true

@@ -1,9 +1,13 @@
 -- The practice lessons of Lichess (lichess.org/practice, by way of the official app): sections of studies of
 -- chapters, in ink_knight/data/practice.lua. A chapter with a goal is played against the engine of the plugin until
--- it mates, mates in so many moves or promotes, as the app judges them, apart from what needs a strong engine; a
--- guided chapter is a line to find move by move, with the author's comments; the commented game is only shown. No
--- KOReader here, so the tests can use it.
+-- it mates, mates in so many moves or promotes, as the app judges them, apart from what needs a strong engine. One
+-- judged by an evaluation (reach an advantage or equalize in so many moves) follows a tree worked out with Stockfish
+-- when the data is built (ink_knight/data/practice_trees.lua): the reader's moves it accepts, with the opponent's
+-- answer to each. One to hold the draw in king and pawn against king is judged exactly, with the table of that
+-- ending (ink_knight/kpk.lua). A guided chapter is a line to find move by move, with the author's comments; the
+-- commented game is only shown. No KOReader here, so the tests can use it.
 local Chess = require("ink_knight/chess")
+local Kpk = require("ink_knight/kpk")
 
 local Practice = {}
 
@@ -76,15 +80,136 @@ end
 
 -- A chapter with a goal ------------------------------------------------------------------------------------------
 
+Practice.TREE_GOALS = { eval_in = true, equal_in = true }
+Practice.SCRIPTED_GOALS = { eval_in = true, equal_in = true, draw_in = true }
+local DRAW_GOALS = { equal_in = true, draw_in = true }
+
+function Practice.tree_of(chapter)
+    return Practice.TREE_GOALS[chapter.goal] and require("ink_knight/data/practice_trees")[chapter.id] or nil
+end
+
 function Practice.start_goal(chapter)
     local position = Chess.parse_fen(chapter.fen)
-    return {
+    local state = {
         position = position,
         player = chapter.color,
         played = 0,
         status = "playing",
         seen = { [Chess.epd(position)] = 1 },
     }
+    local tree = Practice.tree_of(chapter)
+    if tree then
+        state.node, state.reply = tree.tree, tree.first
+    end
+    return state
+end
+
+-- The entry of the move in a position of the tree: { uci, true } solves the chapter, { uci, false } can no longer
+-- reach the goal, { uci, reply, node } goes on with the opponent's answer.
+local function tree_entry(node, uci)
+    for _, entry in ipairs(node) do
+        if entry[1] == uci then
+            return entry
+        end
+    end
+    return nil
+end
+
+-- The best move the tree knows for the reader: the first that still reaches the goal.
+function Practice.tree_best(state)
+    for _, entry in ipairs(state.node or {}) do
+        if entry[2] ~= false then
+            return Chess.parse_uci(state.position, entry[1])
+        end
+    end
+    return nil
+end
+
+function Practice.tree_reply(state)
+    return state.reply and Chess.parse_uci(state.position, state.reply) or nil
+end
+
+-- Whether the side with the pawn wins a position of king and pawn against king, or what is left of it: a pawn
+-- taken leaves a draw, and a new queen or rook wins unless the other king takes it at once.
+local function strong_wins(position, strong)
+    local result = Kpk.result(position)
+    if result then
+        return result == "win"
+    end
+    local piece_square, count = nil, 0
+    for square = 1, 64 do
+        local piece = position.board[square]
+        if piece then
+            count = count + 1
+            if piece:lower() ~= "k" then
+                piece_square = square
+            end
+        end
+    end
+    if count ~= 3 or not piece_square then
+        return false
+    end
+    local piece = position.board[piece_square]:lower()
+    if piece ~= "q" and piece ~= "r" then
+        return false
+    end
+    if position.turn ~= strong then
+        for _, move in ipairs(Chess.legal_moves(position)) do
+            if move.to == piece_square then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+local function strong_side(state)
+    return state.player == "w" and "b" or "w"
+end
+
+local function drawing_moves(state)
+    local list = {}
+    for _, move in ipairs(Chess.legal_moves(state.position)) do
+        if not strong_wins(Chess.play(state.position, move), strong_side(state)) then
+            list[#list + 1] = move
+        end
+    end
+    return list
+end
+
+function Practice.best_move(state, chapter)
+    if chapter.goal == "draw_in" then
+        return drawing_moves(state)[1]
+    end
+    return Practice.tree_best(state)
+end
+
+-- The opponent's move in a chapter judged without the engine. To hold the draw, a winning move if the reader let one
+-- in, or else the drawing one that leaves the reader the fewest moves that still draw.
+function Practice.scripted_reply(state, chapter)
+    if chapter.goal ~= "draw_in" then
+        return Practice.tree_reply(state)
+    end
+    local strong = strong_side(state)
+    local best, fewest
+    for _, move in ipairs(Chess.legal_moves(state.position)) do
+        local after = Chess.play(state.position, move)
+        if strong_wins(after, strong) then
+            return move
+        end
+        local holding = 0
+        for _, reply in ipairs(Chess.legal_moves(after)) do
+            if not strong_wins(Chess.play(after, reply), strong) then
+                holding = holding + 1
+            end
+        end
+        -- A new piece the other king takes at once is no try; it is played only when nothing else is left.
+        local score = holding + (move.promotion and 100 or 0)
+        if not fewest or score < fewest then
+            best, fewest = move, score
+        end
+    end
+    return best
 end
 
 function Practice.is_player_turn(state)
@@ -96,6 +221,27 @@ end
 -- for the engine's move, "move" for the reader's, or "over".
 function Practice.play(state, chapter, move)
     local by_player = state.position.turn == state.player
+    local entry, better
+    local before = state.position
+    if state.node then
+        state.notice = nil
+        if by_player then
+            local uci = Chess.move_to_uci(move)
+            entry = tree_entry(state.node, uci)
+            if not entry then
+                -- A fair move the tree did not follow is taken back, so the reader tries another; any other is a
+                -- mistake, as the app calls it.
+                if state.node.o and (" " .. state.node.o .. " "):find(" " .. uci .. " ", 1, true) then
+                    state.notice = "other"
+                    return "move"
+                end
+                local best = Practice.tree_best(state)
+                better = best and Chess.to_san(state.position, best)
+            end
+        else
+            state.reply = nil
+        end
+    end
     local san = Chess.to_san(state.position, move)
     state.position = Chess.play(state.position, move)
     state.last_move = move
@@ -118,8 +264,38 @@ function Practice.play(state, chapter, move)
             state.status, state.reason = "failed", "lost"
         end
         return "over"
+    elseif by_player and state.node and not entry then
+        -- As in the app, a mistake fails even when it happens to draw the game.
+        state.status, state.reason, state.better = "failed", "mistake", better
+        return "over"
     elseif ending or (state.seen[key] >= 3 and chapter.goal ~= "promotion") then
-        state.status, state.reason = "failed", "draw"
+        if DRAW_GOALS[chapter.goal] then
+            state.status = "solved"
+        else
+            state.status, state.reason = "failed", "draw"
+        end
+        return "over"
+    end
+    if by_player and chapter.goal == "draw_in" then
+        if strong_wins(state.position, strong_side(state)) then
+            local best = drawing_moves({ position = before, player = state.player })[1]
+            state.status, state.reason, state.better = "failed", "mistake", best and Chess.to_san(before, best)
+            return "over"
+        elseif state.played >= chapter.moves then
+            state.status = "solved"
+            return "over"
+        end
+        return "reply"
+    end
+    if by_player and state.node then
+        if entry[2] == true then
+            state.status = "solved"
+        elseif entry[2] == false then
+            state.status, state.reason = "failed", state.played >= chapter.moves and "short" or "astray"
+        else
+            state.reply, state.node = entry[2], entry[3]
+            return "reply"
+        end
         return "over"
     end
     if by_player then
