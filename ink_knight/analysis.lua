@@ -39,10 +39,11 @@ local function eval_section(s, position, cloud)
     return string.format(s.analysis_eval, Api.eval_text(line.cp, line.mate), cloud.depth or 0, line_text(position, line.moves))
 end
 
-local function explorer_section(s, data)
-    local moves = data and data.moves
-    if not moves or #moves == 0 then
-        return s.analysis_no_games
+-- The most played moves of an answer of the explorer, of any of its databases; empty_text without games.
+function Analysis.games_text(s, data, empty_text)
+    local moves = type(data) == "table" and data.moves
+    if type(moves) ~= "table" or #moves == 0 then
+        return empty_text
     end
     local lines = {}
     if data.opening and data.opening.name then
@@ -76,7 +77,7 @@ end
 
 -- answers: cloud, explorer and tablebase, each one nil when it did not come.
 function Analysis.text(s, position, answers)
-    local sections = { eval_section(s, position, answers.cloud), explorer_section(s, answers.explorer) }
+    local sections = { eval_section(s, position, answers.cloud), Analysis.games_text(s, answers.explorer, s.analysis_no_games) }
     local ending = tablebase_section(s, position, answers.tablebase)
     if ending then
         table.insert(sections, 1, ending)

@@ -464,6 +464,84 @@ home.net = net_before
 UIManager:close(puzzles_page)
 home.settings:delSetting("puzzle_results")
 
+-- The analysis of a position offers the games of masters and the reader's own games, asked only when chosen; the
+-- reader's come as lines while Lichess indexes them, and what has come is shown when it is still at it.
+do
+    local ReviewScreen = require("ink_knight/ui/review_screen")
+    local explorer_line = '{"moves":[{"uci":"e2e4","san":"e4","white":%d,"draws":10,"black":10}]}'
+    answers["/api/cloud-eval"] = { 404, '{"error":"No cloud evaluation available for that position"}' }
+    answers["/lichess"] = { 200, string.format(explorer_line, 80) }
+    answers["/masters"] = { 200, string.format(explorer_line, 30) }
+    answers["/player"] = { 200, string.format(explorer_line, 5) .. "\n" .. string.format(explorer_line, 40) .. "\n" }
+    asked = {}
+    ReviewScreen.analyze(home, Chess.parse_fen(Chess.START_FEN), "black")
+    run_all()
+    local analysis_page = home.pages[#home.pages]
+    check(table.concat(asked, " ") == "/api/cloud-eval /lichess", "only the usual questions are asked at first: " .. table.concat(asked, " "))
+    local masters_row, own_row = row_of(analysis_page, s.analysis_masters), row_of(analysis_page, s.analysis_own_black)
+    check(masters_row and own_row, "the page should offer the masters and the reader's games as black")
+    masters_row.callback()
+    run_all()
+    local masters_page = home.pages[#home.pages]
+    check(masters_page.lines[1].text:find("e4: 60%", 1, true), "the masters' moves: " .. tostring(masters_page.lines[1].text))
+    UIManager:close(masters_page)
+    asked_urls = {}
+    own_row.callback()
+    run_all()
+    local own_page = home.pages[#home.pages]
+    local own_url = table.concat(asked_urls, " ")
+    check(own_url:find("/player?player=Reader&color=black", 1, true), "the reader's games as black: " .. own_url)
+    check(own_page.lines[1].text:find("e4: 67%", 1, true) and #own_page.lines == 1, "the last line, complete: " .. tostring(own_page.lines[1].text))
+    UIManager:close(own_page)
+    -- Lichess still indexing when the time is up: what came so far, and a note.
+    local real_done = home.net.done
+    home.net.done = function() return false end
+    own_row.callback()
+    local own_stream_seen = home.own_games_stream
+    run_all()
+    home.net.done = real_done
+    own_page = home.pages[#home.pages]
+    check(#own_page.lines == 2 and own_page.lines[2].text == s.analysis_own_partial, "a partial answer should say so")
+    local still_open = false
+    for _, stream in ipairs(home.net.streams) do
+        still_open = still_open or stream == own_stream_seen
+    end
+    check(home.own_games_stream == nil and own_stream_seen and not still_open, "the stream should be closed when the time is up")
+    UIManager:close(own_page)
+    -- Nothing yet when the time is up: Lichess is still at it, which is not the same as no games.
+    answers["/player"] = { 200, "" }
+    home.net.done = function() return false end
+    own_row.callback()
+    run_all()
+    home.net.done = real_done
+    own_page = home.pages[#home.pages]
+    check(#own_page.lines == 1 and own_page.lines[1].text == s.analysis_own_waiting, "nothing yet should say Lichess is still at it: " .. tostring(own_page.lines[1].text))
+    UIManager:close(own_page)
+    -- An error of the server is reported, not taken for no games.
+    answers["/player"] = { 429, "Too many requests" }
+    local pages_before = #home.pages
+    own_row.callback()
+    run_all()
+    check(#home.pages == pages_before, "an error should open no page of games")
+    -- A second tap while the first is on its way asks nothing more.
+    answers["/player"] = { 200, string.format(explorer_line, 40) }
+    home.net.done = function() return false end
+    asked_urls = {}
+    own_row.callback()
+    own_row.callback()
+    local players_asked = 0
+    for _, url in ipairs(asked_urls) do
+        players_asked = players_asked + (url:find("/player?", 1, true) and 1 or 0)
+    end
+    check(players_asked == 1, "a second tap should not ask again: " .. players_asked)
+    -- The analysis closed before the answer: nothing opens over what the reader went on to.
+    UIManager:close(analysis_page)
+    pages_before = #home.pages
+    run_all()
+    home.net.done = real_done
+    check(#home.pages == pages_before and home.own_games_stream == nil, "nothing should open once the analysis is closed")
+end
+
 -- Offline: the color changes, nothing is asked, and the kept puzzles still play.
 UIManager:close(home.hub)
 asked = {}

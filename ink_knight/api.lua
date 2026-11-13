@@ -271,6 +271,18 @@ function Api.explorer(fen)
     return { method = "GET", base = Api.EXPLORER, path = "/lichess?moves=5&topGames=0&recentGames=0&fen=" .. encode(fen) }
 end
 
+function Api.explorer_masters(fen)
+    return { method = "GET", base = Api.EXPLORER, path = "/masters?moves=5&topGames=0&fen=" .. encode(fen) }
+end
+
+-- Lichess sends a new line as it indexes the player's games, the last one complete.
+function Api.explorer_player(fen, player, color)
+    return {
+        method = "GET", base = Api.EXPLORER, accept = "application/x-ndjson",
+        path = string.format("/player?player=%s&color=%s&moves=5&recentGames=0&fen=%s", encode(player), color, encode(fen)),
+    }
+end
+
 function Api.tablebase(fen)
     return { method = "GET", base = Api.TABLEBASE, path = "/standard?fen=" .. encode(fen) }
 end

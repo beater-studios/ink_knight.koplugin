@@ -159,7 +159,8 @@ function Net:request(request, on_done)
     end
 end
 
--- on_line(text) gets each line of the answer. on_end() is called once when the connection ends by itself.
+-- on_line(text) gets each line of the answer. on_end(status) is called once when the connection ends by itself,
+-- with the HTTP code, or nil when there was no answer.
 function Net:stream(request, on_line, on_end)
     local prefix = self:next_prefix()
     local pid = self.spawn(self:build_spec(request, prefix, "application/x-ndjson", STREAM_BLOCK_TIMEOUT))
@@ -256,11 +257,21 @@ function Net:tick()
             self:read_stream(stream)
             if self.streams[index] == stream and self:has_ended(stream.pid) then
                 self:read_stream(stream)
+                -- The last line may have no line break after it.
+                if stream.partial:match("%S") then
+                    stream.on_line(stream.partial)
+                end
+                stream.partial = ""
+                local file = io.open(Request.paths(stream.prefix).code_path, "rb")
+                local code = file and tonumber(file:read("*a") or "")
+                if file then
+                    file:close()
+                end
                 table.remove(self.streams, index)
                 self:collect(stream.pid)
                 self:cleanup(stream.prefix)
                 if stream.on_end then
-                    stream.on_end()
+                    stream.on_end(code ~= 0 and code or nil)
                 end
             end
         end

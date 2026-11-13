@@ -200,7 +200,8 @@ function EditorScreen:done()
     }
     if app.net then
         rows[#rows + 1] = { text = s.analysis, callback = function()
-            require("ink_knight/ui/review_screen").analyze(app, Chess.parse_fen(fen))
+            local position = Chess.parse_fen(fen)
+            require("ink_knight/ui/review_screen").analyze(app, position, position.turn == "b" and "black" or "white")
         end }
     end
     app:open_list(s.editor_play_title, rows)

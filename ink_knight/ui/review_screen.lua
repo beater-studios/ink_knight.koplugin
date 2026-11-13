@@ -2,6 +2,7 @@
 local UIManager = require("ui/uimanager")
 
 local Analysis = require("ink_knight/analysis")
+local Sleep = require("ink_knight/sleep")
 local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
@@ -13,7 +14,7 @@ ReviewScreen.__index = ReviewScreen
 -- game: { moves = { { uci, san, eval_text, judgment, best } }, intro, initial_fen, summary }, plus white, black and
 -- result for the bars; best is the better move, in the usual notation, when the engine of the plugin found one, and
 -- summary comes from Game.analysis_summary.
--- opts: flipped, game_id and bookmarked, for the favorites.
+-- opts: flipped, game_id and bookmarked, for the favorites, and reader_color when the reader played the game.
 function ReviewScreen.open(app, game, opts)
     opts = opts or {}
     local self = setmetatable({ app = app, s = app.strings, game = game, flipped = opts.flipped == true, index = 0, opts = opts }, ReviewScreen)
@@ -221,13 +222,20 @@ function ReviewScreen:toggle_bookmark()
 end
 
 -- One question at a time, as Lichess asks. Only a game already finished gets here, never one under way.
+-- The reader's own games are asked with the color they played, or in a game of someone else with the side to move.
 function ReviewScreen:show_analysis()
-    ReviewScreen.analyze(self.app, self.positions[self.index])
+    local position = self.positions[self.index]
+    ReviewScreen.analyze(self.app, position, self.opts.reader_color or (position.turn == "b" and "black" or "white"))
+end
+
+local function own_games_title(s, color)
+    return color == "black" and s.analysis_own_black or s.analysis_own_white
 end
 
 -- What Lichess knows about a position: the cloud evaluation, the most played moves and, with few pieces, the
--- tablebase. For a finished game in the review, and for a position set up in the editor.
-function ReviewScreen.analyze(app, position)
+-- tablebase. For a finished game in the review, and for a position set up in the editor. Below it, on request, the
+-- games of masters and the reader's own games with color ("white" or "black").
+function ReviewScreen.analyze(app, position, color)
     local s, net = app.strings, app.net
     local fen = Chess.to_fen(position)
     local answers, reached = {}, false
@@ -240,7 +248,17 @@ function ReviewScreen.analyze(app, position)
             app:info(s.no_network)
             return
         end
-        app:open_list(s.analysis_title, { { kind = "text", text = Analysis.text(s, position, answers) } })
+        local rows = {
+            { kind = "text", text = Analysis.text(s, position, answers) },
+            { text = s.analysis_masters, callback = function() ReviewScreen.masters(app, position) end },
+        }
+        local page
+        if app.my_name and color then
+            rows[#rows + 1] = { text = own_games_title(s, color), callback = function()
+                ReviewScreen.own_games(app, position, color, page)
+            end }
+        end
+        page = app:open_list(s.analysis_title, rows)
     end
     app:info(s.analysis_loading, 2)
     net:request(Api.cloud_eval(fen), function(status, body)
@@ -256,6 +274,89 @@ function ReviewScreen.analyze(app, position)
                 finish()
             end)
         end)
+    end)
+end
+
+function ReviewScreen.masters(app, position)
+    local s = app.strings
+    if not app.net then
+        app:info(s.no_network)
+        return
+    end
+    app:info(s.analysis_loading, 2)
+    app.net:request(Api.explorer_masters(Chess.to_fen(position)), function(status, body)
+        app:report_or(status, function()
+            app:open_list(s.analysis_masters, { { kind = "text", text = Analysis.games_text(s, app.decode(body), s.analysis_masters_none) } })
+        end)
+    end)
+end
+
+-- How long the reader's games are waited for: Lichess indexes them on the first request, which can take minutes for
+-- a busy account, so what has come by then is shown.
+ReviewScreen.OWN_GAMES_WAIT = 20
+
+local function is_open(app, page)
+    for _, other in ipairs(app.pages or {}) do
+        if other == page then
+            return true
+        end
+    end
+    return false
+end
+
+-- One at a time, and only shown while the analysis it came from is still open.
+function ReviewScreen.own_games(app, position, color, page)
+    local s = app.strings
+    local net = app.net
+    if not net then
+        app:info(s.no_network)
+        return
+    end
+    if app.own_games_stream then
+        app:info(s.analysis_loading, 2)
+        return
+    end
+    local latest, stream
+    local function finish(status, ended)
+        if app.own_games_stream ~= stream then
+            return
+        end
+        app.own_games_stream = nil
+        if not ended and app.net == net then
+            -- What reached the file since the last tick counts too.
+            net:read_stream(stream)
+            net:close_stream(stream)
+        end
+        if page and not is_open(app, page) then
+            return
+        end
+        if ended and status ~= 200 then
+            app:info(app:error_text(status))
+            return
+        elseif type(latest) == "table" and latest.error then
+            app:info(s.unexpected_error)
+            return
+        end
+        local rows
+        if latest then
+            rows = { { kind = "text", text = Analysis.games_text(s, latest, s.analysis_own_none) } }
+            if not ended then
+                rows[#rows + 1] = { kind = "text", text = s.analysis_own_partial }
+            end
+        else
+            rows = { { kind = "text", text = ended and s.analysis_own_none or s.analysis_own_waiting } }
+        end
+        app:open_list(own_games_title(s, color), rows)
+    end
+    app:info(s.analysis_loading, 2)
+    stream = net:stream(Api.explorer_player(Chess.to_fen(position), app.my_name, color), function(line)
+        latest = app.decode(line) or latest
+    end, function(status)
+        finish(status, true)
+    end)
+    app.own_games_stream = stream
+    Sleep.schedule(app, ReviewScreen.OWN_GAMES_WAIT, function()
+        finish(nil, false)
     end)
 end
 

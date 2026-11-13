@@ -973,6 +973,26 @@ test("the openings with puzzles keep the order of Lichess, without keys that can
     assert(Api.puzzle_batch(15, "Sicilian_Defense_Najdorf_Variation").path == "/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation?nb=15")
 end)
 
+test("the masters and the reader's own games in a position, from the explorer", function()
+    local fen = Chess.START_FEN
+    local masters = Api.explorer_masters(fen)
+    assert(masters.base == Api.EXPLORER and masters.path:find("^/masters%?moves=5&topGames=0&fen="))
+    local own = Api.explorer_player(fen, "Some One", "black")
+    assert(own.base == Api.EXPLORER and own.accept == "application/x-ndjson")
+    assert(own.path:find("player=Some%20One&color=black", 1, true) or own.path:find("player=Some+One&color=black", 1, true), own.path)
+    local s = I18n.en
+    local text = Analysis.games_text(s, { moves = { { san = "e4", white = 60, draws = 20, black = 20 } } }, "none")
+    assert(text:find("e4: 60% / 20% / 20%", 1, true), text)
+    assert(Analysis.games_text(s, { moves = {} }, "none") == "none")
+    assert(Analysis.games_text(s, nil, "none") == "none")
+end)
+
+test("the color the reader played, only in a game they played", function()
+    local game = { players = { white = { user = { id = "me" } }, black = { user = { id = "other" } } } }
+    assert(Game.color_of(game, "me") == "white" and Game.color_of(game, "other") == "black")
+    assert(Game.color_of(game, "someone") == nil and Game.color_of(game, nil) == nil and Game.color_of(nil, "me") == nil)
+end)
+
 test("the analysis of the site: each side's accuracy and marks, and where the phases begin", function()
     local game = { players = {
         white = { user = { name = "A" }, analysis = { inaccuracy = 2, mistake = 1, blunder = 0, acpl = 25, accuracy = 91 } },

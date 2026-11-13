@@ -238,6 +238,16 @@ local function player_id_of(player)
     return player and player.user and player.user.id
 end
 
+-- "white" or "black" when my_id played the game, nil otherwise.
+function Game.color_of(game, my_id)
+    local players = type(game) == "table" and type(game.players) == "table" and game.players or {}
+    if my_id and player_id_of(players.white) == my_id then
+        return "white"
+    elseif my_id and player_id_of(players.black) == my_id then
+        return "black"
+    end
+end
+
 -- What a row of finished games says, from the side of player_id. Only the reader is called "you":
 -- the list may be someone else's, and a favorite may be a game neither of them played.
 -- Returns the title, the detail and whether player_id had the black pieces.
