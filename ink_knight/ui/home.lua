@@ -1232,6 +1232,10 @@ end
 -- Every board screen reads these when it paints, so a change shows in the next game without reopening anything.
 function Home:apply_board_look()
     BoardScreen.style = self:option("board_style")
+    -- The pictures of the set left are let go, so trying sets does not keep them all in memory.
+    if BoardScreen.piece_set ~= self:option("piece_set") then
+        BoardScreen.clear_art_cache()
+    end
     BoardScreen.piece_set = self:option("piece_set")
     BoardScreen.coordinates = self:option("board_coordinates")
 end

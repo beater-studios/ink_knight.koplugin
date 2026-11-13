@@ -198,6 +198,47 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The choice of piece sets, each with its sample, and a board with each set.
+    home:offline_menu()
+    local offline_page = top_page()
+    local piece_row
+    for _, line in ipairs(offline_page.lines) do
+        piece_row = piece_row or (line.text == home.strings.piece_style and line)
+    end
+    if not piece_row then
+        problem(language .. " offline menu: no row to choose the pieces")
+    else
+        piece_row.callback()
+        check_page(top_page(), language .. " piece sets")
+        UIManager:close(top_page())
+    end
+    UIManager:close(offline_page)
+    if language == "pt" then
+        -- A picture that does not load falls back to the classic pieces without a word, so each one is drawn here.
+        local RenderImage = require("ui/renderimage")
+        for _, set in ipairs(BoardScreen.piece_set_names()) do
+            if set ~= "classic" then
+                for _, name in ipairs({ "wK", "wQ", "wR", "wB", "wN", "wP", "bK", "bQ", "bR", "bB", "bN", "bP" }) do
+                    local ok, image = pcall(RenderImage.renderSVGImageFile, RenderImage, plugin_dir .. "/ink_knight/pieces/" .. set .. "/" .. name .. ".svg", 64, 64)
+                    if not ok or not image then
+                        problem("pieces " .. set .. ": " .. name .. " does not draw")
+                    else
+                        image:free()
+                    end
+                end
+            end
+        end
+        for _, set in ipairs(BoardScreen.piece_set_names()) do
+            home.settings:saveSetting("piece_set", set)
+            home:apply_board_look()
+            local sample_game = OfflineGame.open(home, { two_players = true, initial_fen = "r1bqkb1r/pp3ppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQK2R w KQkq - 0 7" })
+            check_board(sample_game.screen, "pieces " .. set)
+            UIManager:close(sample_game.screen)
+            home.settings:delSetting("two_player_game")
+        end
+        home.settings:delSetting("piece_set")
+        home:apply_board_look()
+    end
     -- Correspondence kept offline, with the longest names, one game with a move waiting.
     local Correspondence = require("ink_knight/correspondence")
     local kept = {}
