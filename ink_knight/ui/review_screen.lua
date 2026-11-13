@@ -10,8 +10,9 @@ local MoveList = require("ink_knight/ui/move_list")
 local ReviewScreen = {}
 ReviewScreen.__index = ReviewScreen
 
--- game: { moves = { { uci, san, eval_text, judgment, best } }, intro, initial_fen }, plus white, black and result
--- for the bars; best is the better move, in the usual notation, when the engine of the plugin found one.
+-- game: { moves = { { uci, san, eval_text, judgment, best } }, intro, initial_fen, summary }, plus white, black and
+-- result for the bars; best is the better move, in the usual notation, when the engine of the plugin found one, and
+-- summary comes from Game.analysis_summary.
 -- opts: flipped, game_id and bookmarked, for the favorites.
 function ReviewScreen.open(app, game, opts)
     opts = opts or {}
@@ -45,6 +46,24 @@ function ReviewScreen.open(app, game, opts)
     return self
 end
 
+-- "18." or "18...": the move number of a half move, from the move number of the FEN and who moved first.
+function ReviewScreen:move_label(index)
+    local ply = index + (self.positions[0].turn == "b" and 1 or 0)
+    return string.format("%d%s", self.first_number - 1 + math.ceil(ply / 2), ply % 2 == 1 and "." or "...")
+end
+
+-- The phase a half move starts, as the analysis of the site divides the game, when it is one the review has.
+function ReviewScreen:phase_at(index)
+    local summary = self.game.summary
+    if not summary or index < 1 or index > self.available then
+        return nil
+    elseif summary.middle == index then
+        return self.s.review_middlegame
+    elseif summary.ending == index then
+        return self.s.review_endgame
+    end
+end
+
 function ReviewScreen:status_text()
     local s, game = self.s, self.game
     local move = game.moves[self.index]
@@ -52,9 +71,9 @@ function ReviewScreen:status_text()
     if self.index == 0 then
         parts[1] = game.intro or s.start_pos
     else
-        -- Counted from who moved first: black, in a game from a position set up with black to move.
-        local ply = self.index + (self.positions[0].turn == "b" and 1 or 0)
-        parts[1] = string.format("%d%s %s", self.first_number - 1 + math.ceil(ply / 2), ply % 2 == 1 and "." or "...", move.san or move.uci)
+        parts[1] = self:move_label(self.index) .. " " .. (move.san or move.uci)
+        -- Right after the move, since the line has room for one line only and the end is what gets cut.
+        parts[#parts + 1] = self:phase_at(self.index)
         if move.eval_text then
             parts[#parts + 1] = move.eval_text
         end
@@ -122,6 +141,9 @@ end
 function ReviewScreen:more_menu()
     local s, opts = self.s, self.opts
     local rows = { { text = s.moves, callback = function() self:show_moves() end } }
+    if self.game.summary then
+        table.insert(rows, 1, { text = s.review_summary, callback = function() self:show_summary() end })
+    end
     -- What Lichess knows needs the online part, which a game played offline is reviewed without.
     if self.app.net then
         table.insert(rows, 1, { text = s.analysis, callback = function() self:show_analysis() end })
@@ -135,6 +157,33 @@ function ReviewScreen:more_menu()
     self.app:choose(s.more, rows, { close_on_tap = true })
 end
 
+function ReviewScreen:show_summary()
+    local s, game, summary = self.s, self.game, self.game.summary
+    local rows = {}
+    for _, side in ipairs({ { "white", s.color_white, game.white }, { "black", s.color_black, game.black } }) do
+        local data = summary[side[1]]
+        local lines = { string.format("%s: %s", side[2], side[3] or "?") }
+        if data.accuracy then
+            lines[#lines + 1] = string.format(s.review_accuracy, data.accuracy)
+        end
+        lines[#lines + 1] = string.format(s.review_counts, data.inaccuracy, data.mistake, data.blunder)
+        if data.acpl then
+            lines[#lines + 1] = string.format(s.review_acpl, data.acpl)
+        end
+        rows[#rows + 1] = { kind = "text", text = table.concat(lines, "\n") }
+    end
+    local phases = {}
+    for _, phase in ipairs({ { summary.middle, s.review_middlegame_from }, { summary.ending, s.review_endgame_from } }) do
+        if phase[1] and self:phase_at(phase[1]) then
+            phases[#phases + 1] = string.format(phase[2], self:move_label(phase[1]))
+        end
+    end
+    if #phases > 0 then
+        rows[#rows + 1] = { kind = "text", text = table.concat(phases, "\n") }
+    end
+    self.app:open_list(s.review_summary, rows)
+end
+
 -- The moves already read for the board, with the one shown marked. A tap on a move goes to it. The notation comes
 -- with the game from Lichess, and is only written here for a move that lacks it.
 function ReviewScreen:show_moves()
@@ -143,8 +192,13 @@ function ReviewScreen:show_moves()
         sans[index] = self.game.moves[index].san or Chess.to_san(self.positions[index - 1], self.last_moves[index])
         ucis[index] = self.game.moves[index].uci
     end
+    local marks = {}
+    for index = 1, self.available do
+        marks[index] = self:phase_at(index)
+    end
     MoveList.show(self.app, sans, self.first_number, self.positions[0].turn, {
         current = self.index,
+        marks = marks,
         on_pick = function(index) self:go(index) end,
         -- The name Lichess gave the game, so the list and the start of the review agree.
         opening = self.game.opening,

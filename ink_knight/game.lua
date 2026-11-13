@@ -282,4 +282,29 @@ function Game.format_clock(ms)
     return string.format("%d:%02d", minutes, seconds)
 end
 
+local function count(value)
+    return type(value) == "number" and value >= 0 and math.floor(value) or nil
+end
+
+-- { white = { accuracy, inaccuracy, mistake, blunder, acpl }, black = ..., middle, ending }, nil for a game the site
+-- did not analyze.
+function Game.analysis_summary(game)
+    local players = type(game) == "table" and type(game.players) == "table" and game.players or {}
+    local summary = {}
+    for _, color in ipairs({ "white", "black" }) do
+        local player = type(players[color]) == "table" and players[color] or {}
+        local analysis = type(player.analysis) == "table" and player.analysis or {}
+        local inaccuracy, mistake, blunder = count(analysis.inaccuracy), count(analysis.mistake), count(analysis.blunder)
+        if inaccuracy and mistake and blunder then
+            summary[color] = { accuracy = count(analysis.accuracy), inaccuracy = inaccuracy, mistake = mistake, blunder = blunder, acpl = count(analysis.acpl) }
+        end
+    end
+    if not summary.white or not summary.black then
+        return nil
+    end
+    local division = type(game.division) == "table" and game.division or {}
+    summary.middle, summary.ending = count(division.middle), count(division["end"])
+    return summary
+end
+
 return Game

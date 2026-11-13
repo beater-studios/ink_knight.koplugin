@@ -307,6 +307,26 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The summary of the analysis of a game, with the longest names Lichess allows.
+    local summary_review = require("ink_knight/ui/review_screen").open(home, { moves = { { uci = "e2e4", san = "e4" } }, white = LONG_NAME, black = LONG_NAME, summary = {
+        white = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999 },
+        black = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999 },
+        middle = 199, ending = 299,
+    } })
+    summary_review:show_summary()
+    check_page(top_page(), language .. " review summary")
+    UIManager:close(top_page())
+    UIManager:close(summary_review.screen)
+    -- The longest status line of a review: a move that starts a phase, with its evaluation, mark and better move.
+    local busy = require("ink_knight/ui/review_screen").open(home, {
+        moves = { { uci = "e2e4", san = "e4" }, { uci = "e7e5", san = "e5" }, { uci = "g1f3", san = "Nf3" }, { uci = "b8c6", san = "Nc6" },
+            { uci = "f1c4", san = "Bc4" }, { uci = "f8c5", san = "Bc5" }, { uci = "b2b4", san = "b4" }, { uci = "c5b4", san = "Bxb4", eval_text = "#-12", judgment = "Inaccuracy", best = "Qxb4+" } },
+        white = "A", black = "B",
+        summary = { white = { inaccuracy = 0, mistake = 0, blunder = 0 }, black = { inaccuracy = 1, mistake = 0, blunder = 0 }, middle = 8 },
+    })
+    busy:go(8)
+    check_board(busy.screen, language .. " review phase status")
+    UIManager:close(busy.screen)
     -- The puzzles by opening, with the longest names of the list of Lichess, the largest count and a recent one.
     home.puzzle_openings = {
         { key = "Sicilian_Defense", name = "Sicilian Defense", count = 207281, openings = {} },

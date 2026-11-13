@@ -247,14 +247,14 @@ end
 function Api.past_games(username, max)
     return {
         method = "GET", accept = "application/x-ndjson",
-        path = string.format("/api/games/user/%s?max=%d&moves=true&clocks=false&evals=true&opening=true&finished=true", path_id(username), max or 30),
+        path = string.format("/api/games/user/%s?max=%d&moves=true&clocks=false&evals=true&accuracy=true&division=true&opening=true&finished=true", path_id(username), max or 30),
     }
 end
 
 function Api.bookmarks(max)
     return {
         method = "GET", accept = "application/x-ndjson",
-        path = string.format("/api/games/export/bookmarks?max=%d&moves=true&clocks=false&evals=true&opening=true", max or 30),
+        path = string.format("/api/games/export/bookmarks?max=%d&moves=true&clocks=false&evals=true&accuracy=true&division=true&opening=true", max or 30),
     }
 end
 

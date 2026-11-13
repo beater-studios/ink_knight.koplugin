@@ -973,6 +973,24 @@ test("the openings with puzzles keep the order of Lichess, without keys that can
     assert(Api.puzzle_batch(15, "Sicilian_Defense_Najdorf_Variation").path == "/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation?nb=15")
 end)
 
+test("the analysis of the site: each side's accuracy and marks, and where the phases begin", function()
+    local game = { players = {
+        white = { user = { name = "A" }, analysis = { inaccuracy = 2, mistake = 1, blunder = 0, acpl = 25, accuracy = 91 } },
+        black = { user = { name = "B" }, analysis = { inaccuracy = 4, mistake = 2, blunder = 1, acpl = 60 } },
+    }, division = { middle = 18, ["end"] = 61 } }
+    local summary = Game.analysis_summary(game)
+    assert(summary.white.accuracy == 91 and summary.white.mistake == 1 and summary.black.blunder == 1 and summary.black.acpl == 60)
+    assert(summary.black.accuracy == nil, "accuracy is not always there")
+    assert(summary.middle == 18 and summary.ending == 61)
+    game.division = nil
+    assert(Game.analysis_summary(game).middle == nil)
+    -- A game the site did not analyze has no summary.
+    assert(Game.analysis_summary({ players = { white = {}, black = {} } }) == nil)
+    assert(Game.analysis_summary(nil) == nil)
+    assert(Api.past_games("someone", 30).path:find("accuracy=true&division=true", 1, true))
+    assert(Api.bookmarks(30).path:find("accuracy=true&division=true", 1, true))
+end)
+
 test("a puzzle of the history is solved again from its position, with the last move shown", function()
     local entry = { date = 1793058159900, win = false, puzzle = { id = "0haqU", rating = 1167, plays = 24913,
         solution = { "d4d3", "e4c5", "d3c2", "c5b7", "c2c1q" }, themes = { "endgame" },

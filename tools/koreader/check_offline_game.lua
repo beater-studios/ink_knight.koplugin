@@ -288,6 +288,55 @@ do
     check(review.index ~= 40, "a tap on a move should go to it, still at " .. review.index)
     check(home.pages[#home.pages] ~= page, "the list should close after the tap")
     UIManager:close(review.screen)
+
+    -- A game the site analyzed: the start of the middlegame marked on its move, and the summary of both sides.
+    local s = home.strings
+    local analyzed = ReviewScreen.open(home, { moves = moves, white = "A", black = "B", summary = {
+        white = { accuracy = 91, inaccuracy = 2, mistake = 1, blunder = 0, acpl = 25 },
+        black = { inaccuracy = 4, mistake = 2, blunder = 1, acpl = 60 },
+        middle = 18, ending = 61,
+    } })
+    analyzed:go(18)
+    check(analyzed.screen.state.status:find(s.review_middlegame, 1, true), "the move where the middlegame begins says so: " .. analyzed.screen.state.status)
+    analyzed:go(19)
+    check(not analyzed.screen.state.status:find(s.review_middlegame, 1, true), "only on that move")
+    analyzed:more_menu()
+    local more = home.pages[#home.pages]
+    check(more.lines[1].text == s.review_summary, "the summary comes first in More")
+    UIManager:close(more)
+    analyzed:show_summary()
+    local summary_page = home.pages[#home.pages]
+    local text = summary_page.lines[1].text .. summary_page.lines[2].text .. summary_page.lines[3].text
+    check(text:find(string.format(s.review_accuracy, 91), 1, true) and text:find(string.format(s.review_counts, 4, 2, 1), 1, true)
+        and text:find(string.format(s.review_middlegame_from, "9..."), 1, true) and text:find(string.format(s.review_endgame_from, "31."), 1, true), "the summary of both sides and the phases: " .. text)
+    summary_page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/review_summary.png")
+    UIManager:close(summary_page)
+    -- The list of moves has a heading before the row where each phase begins.
+    analyzed:show_moves()
+    local list = home.pages[#home.pages]
+    local heading_before
+    for index, line in ipairs(list.lines) do
+        if line.kind == "section" and line.text == s.review_middlegame then
+            heading_before = list.lines[index + 1]
+        end
+    end
+    check(heading_before and heading_before.number == "9." and heading_before.black == moves[18].san, "the middlegame heading should come before the row of 9...")
+    UIManager:close(list)
+    UIManager:close(analyzed.screen)
+    -- A phase past the moves the review has is not named.
+    local short = ReviewScreen.open(home, { moves = { moves[1], moves[2], moves[3] }, white = "A", black = "B", summary = {
+        white = { inaccuracy = 0, mistake = 0, blunder = 0 }, black = { inaccuracy = 0, mistake = 0, blunder = 0 }, middle = 2, ending = 61,
+    } })
+    short:show_summary()
+    local short_text = ""
+    for _, line in ipairs(home.pages[#home.pages].lines) do
+        short_text = short_text .. (line.text or "")
+    end
+    check(short_text:find(string.format(s.review_middlegame_from, "1..."), 1, true) and not short_text:find(string.format(s.review_endgame_from, "31."), 1, true),
+        "only the phases the review has: " .. short_text)
+    UIManager:close(home.pages[#home.pages])
+    UIManager:close(short.screen)
 end
 
 

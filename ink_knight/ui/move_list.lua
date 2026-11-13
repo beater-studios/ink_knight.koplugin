@@ -7,6 +7,7 @@ local MoveList = {}
 -- sans: the moves in the usual notation. first_number and first_turn: where the game started.
 -- opts.current: the half move to mark, 1 for the first one, or 0 at the start, where the list opens on its first sheet.
 -- Without it, nothing is marked and the list opens on the last move. opts.on_pick(index): what a tap on a move does.
+-- opts.marks: { [half move] = text }, a heading before the row of that move, such as where the endgame begins.
 function MoveList.rows(sans, first_number, first_turn, opts)
     opts = opts or {}
     local rows = {}
@@ -28,6 +29,12 @@ function MoveList.rows(sans, first_number, first_turn, opts)
             end
         end
         row.focus = row.white_current or row.black_current
+        for _, index in ipairs({ white_index, black_index }) do
+            local mark = opts.marks and opts.marks[index]
+            if mark and sans[index] then
+                rows[#rows + 1] = { kind = "section", text = mark }
+            end
+        end
         rows[#rows + 1] = row
     end
     if #rows > 0 and opts.current == 0 then
