@@ -1,9 +1,12 @@
 #!/bin/sh
 # Every check that runs without KOReader. The CI runs tools/check.sh; the release runs tools/check.sh release,
 # which also downloads the list of openings, the texts of Learn chess and the practice lessons, builds them again and
-# fails if they differ from the repository, and downloads the piece sets and fails if they differ from ink_knight/pieces. The puzzles in the package come from a database with no version, so they are not built again.
+# fails if they differ from the repository, and downloads the piece sets and the positions of the rule tests and fails
+# if they differ from ink_knight/pieces and tests/perft. The puzzles in the package come from a database with no version, so they are not built again.
 set -eu
 cd "$(dirname "$0")/.."
+# Deeper than on a Kindle, where the install runs the tests too.
+export PERFT_LIMIT="${PERFT_LIMIT:-1000000}"
 for spec in tests/*_spec.lua; do
     luajit "$spec"
 done
@@ -11,7 +14,7 @@ luajit tools/check_texts.lua s strings
 if [ "${1:-}" = release ]; then
     sources="$(mktemp -d)"
     trap 'rm -rf "$sources"' EXIT
-    mkdir "$sources/openings" "$sources/learn" "$sources/practice" "$sources/pieces"
+    mkdir "$sources/openings" "$sources/learn" "$sources/practice" "$sources/pieces" "$sources/perft"
     sh tools/openings/fetch_sources.sh "$sources/openings"
     luajit tools/openings/build.lua "$sources/openings"
     sh tools/learn/fetch_sources.sh "$sources/learn"
@@ -21,6 +24,11 @@ if [ "${1:-}" = release ]; then
     sh tools/pieces/fetch_sources.sh "$sources/pieces"
     if ! diff -rq -x .DS_Store -x '._*' "$sources/pieces" ink_knight/pieces; then
         echo "ink_knight/pieces/ differs from the piece sets of the sources." >&2
+        exit 1
+    fi
+    sh tools/perft/fetch_sources.sh "$sources/perft"
+    if ! diff -rq -x .DS_Store -x '._*' "$sources/perft" tests/perft; then
+        echo "tests/perft/ differs from the positions of the sources." >&2
         exit 1
     fi
     # Also catches new files, which git diff leaves out.
