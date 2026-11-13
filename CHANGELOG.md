@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0]
 
 - Broadcasts, in the online part: the over-the-board tournaments Lichess relays, live, coming and finished, with search; each tournament with its rounds and standings; a round with its games, kept up to date; and a game with the clocks of both players that follows the moves while it is played. A tournament can be kept on the device, downloaded in the background, to see with no network; a download cut short resumes with what is missing.
 - Every request to Lichess names the plugin and the address of its repository in its User-Agent.
