@@ -306,6 +306,12 @@ function Api.puzzle_by_id(id)
     return { method = "GET", path = "/api/puzzle/" .. path_id(id) }
 end
 
+-- The openings Lichess has puzzles of, by family, the way its app asks for them: a page of the site that answers
+-- JSON when asked to.
+function Api.puzzle_openings()
+    return { method = "GET", path = "/training/openings" }
+end
+
 function Api.puzzle_dashboard(days)
     return { method = "GET", path = string.format("/api/puzzle/dashboard/%d", days) }
 end

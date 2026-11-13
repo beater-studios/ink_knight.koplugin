@@ -956,5 +956,35 @@ test("a rating Lichess is not sure of has a question mark, and the computer has 
     eq(against_computer:rating_text("b"), "1612")
 end)
 
+test("the openings with puzzles keep the order of Lichess, without keys that cannot go into a path", function()
+    local families = Puzzles.read_openings({ openings = {
+        { family = { key = "Sicilian_Defense", name = "Sicilian Defense", count = 207281 },
+            openings = { { key = "Sicilian_Defense_Najdorf_Variation", name = "Najdorf Variation", count = 11197 }, { key = "bad/key", name = "X", count = 1 } } },
+        { family = { key = "Hippopotamus_Defense", name = "Hippopotamus Defense", count = 77 } },
+        { family = { key = "../account", name = "Bad", count = 5 } },
+        { family = { key = "No_Name", count = 5 } },
+    } })
+    assert(#families == 2, "two families: " .. #families)
+    assert(families[1].key == "Sicilian_Defense" and families[1].count == 207281)
+    assert(#families[1].openings == 1 and families[1].openings[1].name == "Najdorf Variation")
+    assert(#families[2].openings == 0)
+    assert(#Puzzles.read_openings(nil) == 0 and #Puzzles.read_openings({ openings = "x" }) == 0)
+    -- The batch of an opening goes to its key, as a theme does.
+    assert(Api.puzzle_batch(15, "Sicilian_Defense_Najdorf_Variation").path == "/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation?nb=15")
+end)
+
+test("the recent openings keep the last five, the last first, and say which fell off", function()
+    local recent = {}
+    for index = 1, 5 do
+        recent = Puzzles.remember_opening(recent, "O" .. index, "Opening " .. index)
+    end
+    assert(recent[1].key == "O5" and #recent == 5)
+    local dropped
+    recent, dropped = Puzzles.remember_opening(recent, "O3", "Opening 3")
+    assert(recent[1].key == "O3" and #recent == 5 and #dropped == 0, "opening one again moves it up")
+    recent, dropped = Puzzles.remember_opening(recent, "O6", "Opening 6")
+    assert(recent[1].key == "O6" and #recent == 5 and #dropped == 1 and dropped[1] == "O1", "the oldest falls off: " .. tostring(dropped[1]))
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

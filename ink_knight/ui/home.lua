@@ -1765,6 +1765,9 @@ end
 
 function Home:return_puzzle(puzzle)
     local key = puzzle.pile or puzzle.angle
+    if not self:keeps_pile(key) then
+        return
+    end
     local pile = self:puzzle_pile(key)
     table.insert(pile, 1, puzzle)
     self.settings:saveSetting(pile_key(key), pile)
@@ -1874,7 +1877,7 @@ function Home:ensure_puzzles(angle, on_done)
     self.net:request(Api.puzzle_batch(Puzzles.BATCH_SIZE, angle, difficulty, color), function(status, body)
         self.puzzle_waiting[key] = nil
         local data = status == 200 and decode(body)
-        if data and data.puzzles then
+        if data and data.puzzles and self:keeps_pile(angle) then
             local pile = self:puzzle_pile(angle)
             local incoming = {}
             for _, raw in ipairs(data.puzzles) do
@@ -1908,8 +1911,11 @@ end
 
 -- Opens the puzzles of a theme, or the mix without one. With none of the chosen difficulty and color kept, it waits
 -- for a batch first, and if none can come, the ones kept are used.
-function Home:open_puzzles(angle)
+function Home:open_puzzles(angle, on_opened)
     if Puzzles.count_wanted(self:puzzle_pile(angle), self:puzzle_wanted()) > 0 then
+        if on_opened then
+            on_opened()
+        end
         PuzzleScreen.open(self, { angle = angle })
         return
     end
@@ -1918,6 +1924,9 @@ function Home:open_puzzles(angle)
     end
     self:ensure_puzzles(angle, function(status)
         if status == nil or status == 200 or #self:puzzle_pile(angle) > 0 then
+            if on_opened then
+                on_opened()
+            end
             PuzzleScreen.open(self, { angle = angle })
         else
             self:info(self:error_text(status))
@@ -1983,6 +1992,7 @@ function Home:puzzles_menu()
                 self:with_feature("puzzles", function() self:open_review() end)
             end },
             { text = s.puzzle_by_theme, callback = function() self:with_feature("puzzles", function() self:puzzle_themes_menu() end) end },
+            { text = s.puzzle_by_opening, callback = function() self:with_feature("puzzles", function() self:puzzle_openings_menu() end) end },
             { text = s.puzzle_stats, callback = function() self:with_feature("puzzles", function() self:show_puzzle_stats() end) end },
             { kind = "section", text = s.options_section },
             { splice = self:puzzle_option_rows(page) },
@@ -1998,6 +2008,126 @@ function Home:puzzle_themes_menu()
         rows[#rows + 1] = { text = s.puzzle_themes[angle], callback = function() self:open_puzzles(angle) end }
     end
     self:open_list(s.puzzle_by_theme, { { kind = "tiles", columns = 2, items = rows } })
+end
+
+local function grouped(count, separator)
+    local text = tostring(math.floor(count))
+    local result = text:reverse():gsub("(%d%d%d)", "%1" .. separator:reverse()):reverse()
+    return (result:gsub("^" .. separator:gsub("%p", "%%%0"), ""))
+end
+
+-- The page opens at once with the last openings, whose puzzles are kept for when there is no network, and the list
+-- of Lichess comes into it when it arrives, asked once a session.
+function Home:puzzle_openings_menu()
+    self:show_puzzle_openings()
+    self:fetch_puzzle_openings()
+end
+
+function Home:fetch_puzzle_openings()
+    if self.puzzle_openings or self.fetching_openings or not self.net then
+        return
+    end
+    self.fetching_openings = true
+    self.openings_problem = nil
+    self.net:request(Api.puzzle_openings(), function(status, body)
+        self.fetching_openings = false
+        local families = status == 200 and Puzzles.read_openings(decode(body)) or {}
+        if #families > 0 then
+            self.puzzle_openings = families
+        else
+            self.openings_problem = status == 200 and self.strings.unexpected_error or self:error_text(status)
+        end
+        self:reload_pages()
+    end)
+end
+
+function Home:recent_openings()
+    return State.read_recent_openings(self.settings:readSetting("puzzle_openings_recent"))
+end
+
+-- Whether a pile stays on the device: the mix, the missed ones, a theme, one of the last openings, or the one being
+-- opened. A batch or a puzzle put back for an opening that fell off the recent ones is let go.
+function Home:keeps_pile(angle)
+    if angle == nil or angle == Puzzles.REVIEW or angle == self.opening_wanted then
+        return true
+    end
+    for _, theme in ipairs(Api.PUZZLE_THEMES) do
+        if theme == angle then
+            return true
+        end
+    end
+    for _, item in ipairs(self:recent_openings()) do
+        if item.key == angle then
+            return true
+        end
+    end
+    return false
+end
+
+-- An opening goes to the top of the recent ones only once its puzzles open, so a tap with no network takes no pile
+-- away; then the pile of the one that falls off goes.
+function Home:open_opening_puzzles(key, name)
+    self.opening_wanted = key
+    self:open_puzzles(key, function()
+        local recent, dropped = Puzzles.remember_opening(self:recent_openings(), key, name)
+        self.settings:saveSetting("puzzle_openings_recent", recent)
+        self.opening_wanted = nil
+        for _, old in ipairs(dropped) do
+            self.settings:delSetting(pile_key(old))
+        end
+        self.settings:flush()
+        self:reload_pages()
+    end)
+end
+
+function Home:show_puzzle_openings()
+    local s = self.strings
+    self:open_page{ title = s.puzzle_by_opening, build = function()
+        local rows = {}
+        local recent = self:recent_openings()
+        if #recent > 0 then
+            rows[#rows + 1] = { kind = "section", text = s.puzzle_openings_recent }
+            for _, item in ipairs(recent) do
+                rows[#rows + 1] = { wrap = true, text = item.name, callback = function() self:open_opening_puzzles(item.key, item.name) end }
+            end
+            rows[#rows + 1] = { kind = "section", text = s.puzzle_openings_all }
+        end
+        if not self.puzzle_openings then
+            local waiting = self.fetching_openings or (self.net and not self.openings_problem)
+            rows[#rows + 1] = { kind = "text", text = waiting and s.loading or (self.openings_problem or s.no_network), center = true }
+            return rows
+        end
+        for _, family in ipairs(self.puzzle_openings) do
+            rows[#rows + 1] = {
+                wrap = true,
+                text = family.name,
+                value = grouped(family.count, s.thousands),
+                callback = function()
+                    if #family.openings == 0 then
+                        self:open_opening_puzzles(family.key, family.name)
+                    else
+                        self:show_opening_family(family)
+                    end
+                end,
+            }
+        end
+        return rows
+    end }
+end
+
+function Home:show_opening_family(family)
+    local s = self.strings
+    local rows = {
+        { wrap = true, text = s.puzzle_opening_whole, value = grouped(family.count, s.thousands), callback = function()
+            self:open_opening_puzzles(family.key, family.name)
+        end },
+    }
+    for _, opening in ipairs(family.openings) do
+        rows[#rows + 1] = { wrap = true, text = opening.name, value = grouped(opening.count, s.thousands), callback = function()
+            self:open_opening_puzzles(opening.key, family.name .. ": " .. opening.name)
+        end }
+    end
+    self:open_page{ title = family.name, rows = rows }
 end
 
 function Home:show_puzzle_stats()
@@ -2300,8 +2430,10 @@ end
 function Home:stop_network()
     Sleep.unschedule(self, self.tick_callback)
     self.events, self.seek = nil, nil
-    -- Moves being sent wait for answers that will not come now; they stay saved for the next list.
+    -- Moves being sent wait for answers that will not come now; they stay saved for the next list. The list of
+    -- openings being asked for is asked again next time.
     self.sending_correspondence = false
+    self.fetching_openings = false
     if self.net then
         self.net:stop()
         self.net = nil

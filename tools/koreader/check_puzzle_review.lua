@@ -287,6 +287,87 @@ end
 home.puzzle_in_play = nil
 UIManager:close(puzzles_page)
 
+-- By opening: the list comes once a session, a family opens on its variations, and a variation asks for a batch
+-- with its key, keeps its pile and goes to the top of the recent ones.
+home.puzzle_openings = nil
+home.settings:delSetting("puzzle_openings_recent")
+answers["/training/openings"] = { 200, '{"openings":[{"family":{"key":"Sicilian_Defense","name":"Sicilian Defense","count":207281},'
+    .. '"openings":[{"key":"Sicilian_Defense_Najdorf_Variation","name":"Najdorf Variation","count":11197}]},'
+    .. '{"family":{"key":"Hippopotamus_Defense","name":"Hippopotamus Defense","count":77}}]}' }
+answers["/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation"] = batch_of("open1", "open2", "open3", "open4", "open5")
+local function close_boards()
+    local boards = {}
+    for _, widget in ipairs(UIManager._window_stack or {}) do
+        if widget.widget and widget.widget.on_square and widget.widget ~= home.hub then
+            boards[#boards + 1] = widget.widget
+        end
+    end
+    for _, board in ipairs(boards) do
+        UIManager:close(board)
+    end
+    home.puzzle_in_play = nil
+end
+asked = {}
+home:puzzles_menu()
+puzzles_page = home.pages[#home.pages]
+row_of(puzzles_page, s.puzzle_by_opening).callback()
+local openings_page = home.pages[#home.pages]
+check(openings_page.lines[1] and openings_page.lines[1].text == s.loading, "the page should open at once, waiting for the list")
+run_all()
+local sicilian = row_of(openings_page, "Sicilian Defense")
+check(sicilian and sicilian.value == "207" .. s.thousands .. "281", "the families should come with their counts: " .. tostring(sicilian and sicilian.value))
+check(row_of(openings_page, s.puzzle_openings_recent) == nil, "no recent openings yet")
+sicilian.callback()
+local family_page = home.pages[#home.pages]
+check(row_of(family_page, s.puzzle_opening_whole) and row_of(family_page, "Najdorf Variation"), "the family should offer itself whole and its variations")
+row_of(family_page, "Najdorf Variation").callback()
+run_all()
+check(table.concat(asked, " "):find("/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation", 1, true), "the batch should be asked by the key of the opening: " .. table.concat(asked, " "))
+check(home.puzzle_in_play and home.puzzle_in_play.angle == "Sicilian_Defense_Najdorf_Variation", "a puzzle of the opening should open")
+check(#home:puzzle_pile("Sicilian_Defense_Najdorf_Variation") > 0, "the opening keeps its pile")
+close_boards()
+UIManager:close(family_page)
+check(row_of(openings_page, s.puzzle_openings_recent) and row_of(openings_page, "Sicilian Defense: Najdorf Variation"), "the opening should be on top as recent")
+-- The list is asked once a session.
+asked = {}
+UIManager:close(openings_page)
+row_of(puzzles_page, s.puzzle_by_opening).callback()
+check(#asked == 0, "the list should not be asked again: " .. table.concat(asked, " "))
+UIManager:close(home.pages[#home.pages])
+-- Five more openings: the first falls off the recent ones, and its pile goes.
+for index = 1, 5 do
+    home.settings:saveSetting("puzzles_Other_" .. index, { old_puzzle("other" .. index) })
+    home:open_opening_puzzles("Other_" .. index, "Other " .. index)
+    run_all()
+    close_boards()
+end
+check(#home:recent_openings() == 5 and home:recent_openings()[1].key == "Other_5", "five recent openings, the last first")
+check(home.settings:readSetting("puzzles_Sicilian_Defense_Najdorf_Variation") == nil, "the pile of the opening that fell off should go")
+-- A late batch of the opening that fell off does not bring its pile back.
+answers["/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation"] = batch_of("late1")
+home:ensure_puzzles("Sicilian_Defense_Najdorf_Variation")
+run_all()
+check(home.settings:readSetting("puzzles_Sicilian_Defense_Najdorf_Variation") == nil, "a late batch should not keep a pile for it")
+-- An opening that cannot open, with no puzzles and Lichess failing, takes nothing away.
+answers["/api/puzzle/batch/Failing_Opening"] = { 500, "" }
+home:open_opening_puzzles("Failing_Opening", "Failing")
+run_all()
+close_boards()
+check(home:recent_openings()[1].key == "Other_5" and home.settings:readSetting("puzzles_Other_1") ~= nil, "a failed opening should not change the recent ones or drop a pile")
+-- Without the network, the page still offers the recent ones, whose puzzles are kept.
+local saved_net, saved_list = home.net, home.puzzle_openings
+home.net, home.puzzle_openings = nil, nil
+home:puzzle_openings_menu()
+local offline_openings = home.pages[#home.pages]
+check(row_of(offline_openings, "Other 5") and row_of(offline_openings, s.no_network), "offline, the recent ones and a note: " .. tostring(offline_openings.lines[2] and offline_openings.lines[2].text))
+UIManager:close(offline_openings)
+home.net, home.puzzle_openings = saved_net, saved_list
+for index = 1, 5 do
+    home.settings:delSetting("puzzles_Other_" .. index)
+end
+home.settings:delSetting("puzzle_openings_recent")
+UIManager:close(puzzles_page)
+
 -- Offline: the color changes, nothing is asked, and the kept puzzles still play.
 UIManager:close(home.hub)
 asked = {}

@@ -1,4 +1,5 @@
 -- Puzzles and their results, kept so they work with no network. It knows nothing about the screen.
+local Api = require("ink_knight/api")
 local Chess = require("ink_knight/chess")
 local Pgn = require("ink_knight/pgn")
 
@@ -211,6 +212,48 @@ function Puzzles.first_group(results)
         count = count + 1
     end
     return angle, count
+end
+
+-- The openings with puzzles, from /training/openings: families in the order Lichess gives (most puzzles first), each
+-- { key, name, count, openings = { { key, name, count } } }, without what could not go into a path.
+local function read_opening(item)
+    if type(item) == "table" and Api.is_safe_id(item.key) and type(item.name) == "string" and item.name ~= "" then
+        return { key = item.key, name = item.name, count = tonumber(item.count) or 0 }
+    end
+end
+
+function Puzzles.read_openings(data)
+    local families = {}
+    for _, item in ipairs(type(data) == "table" and type(data.openings) == "table" and data.openings or {}) do
+        local family = type(item) == "table" and read_opening(item.family)
+        if family then
+            family.openings = {}
+            for _, raw in ipairs(type(item.openings) == "table" and item.openings or {}) do
+                family.openings[#family.openings + 1] = read_opening(raw)
+            end
+            families[#families + 1] = family
+        end
+    end
+    return families
+end
+
+-- How many openings keep their puzzles on the device, the last ones opened. Each has its pile, and there are hundreds.
+Puzzles.RECENT_OPENINGS = 5
+
+-- recent: { { key, name } }, the last first. Returns the list with this one first, and the keys that fell off it.
+function Puzzles.remember_opening(recent, key, name)
+    local list = { { key = key, name = name } }
+    local dropped = {}
+    for _, item in ipairs(recent) do
+        if item.key ~= key then
+            if #list < Puzzles.RECENT_OPENINGS then
+                list[#list + 1] = item
+            else
+                dropped[#dropped + 1] = item.key
+            end
+        end
+    end
+    return list, dropped
 end
 
 return Puzzles

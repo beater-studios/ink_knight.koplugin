@@ -144,5 +144,14 @@ test("the puzzle choices fall back to normal and either color, and a pile keeps 
     eq(pile[2].wanted, nil)
 end)
 
+test("the recent openings keep five good ones, without repeats", function()
+    local list = State.read_recent_openings({
+        { key = "A", name = "a" }, { key = "A", name = "again" }, { key = "bad/key", name = "x" }, { key = "B" }, "x",
+        { key = "C", name = "c" }, { key = "D", name = "d" }, { key = "E", name = "e" }, { key = "F", name = "f" }, { key = "G", name = "g" },
+    })
+    assert(#list == 5 and list[1].key == "A" and list[1].name == "a" and list[2].key == "C" and list[5].key == "F")
+    assert(#State.read_recent_openings(nil) == 0 and #State.read_recent_openings("x") == 0)
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

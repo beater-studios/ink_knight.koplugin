@@ -2,7 +2,9 @@
 -- the games without internet and the puzzles kept for when there is no connection. Whatever does not make sense
 -- any more is left out, so an update or a damaged file never stops the plugin from opening. No KOReader here, so
 -- the tests can use it.
+local Api = require("ink_knight/api")
 local Chess = require("ink_knight/chess")
+local Puzzles = require("ink_knight/puzzles")
 local SavedState = require("ink_knight/saved_state")
 
 local State = {}
@@ -133,6 +135,18 @@ local function is_text_list(list)
         end
     end
     return true
+end
+
+function State.read_recent_openings(saved)
+    local list, seen = {}, {}
+    for _, item in ipairs(type(saved) == "table" and saved or {}) do
+        if type(item) == "table" and Api.is_safe_id(item.key) and type(item.name) == "string" and not seen[item.key]
+            and #list < Puzzles.RECENT_OPENINGS then
+            seen[item.key] = true
+            list[#list + 1] = { key = item.key, name = item.name }
+        end
+    end
+    return list
 end
 
 -- A pile of puzzles, in its order, without the ones that cannot be played and without repeated ids.

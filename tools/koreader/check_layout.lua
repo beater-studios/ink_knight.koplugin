@@ -307,6 +307,22 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The puzzles by opening, with the longest names of the list of Lichess, the largest count and a recent one.
+    home.puzzle_openings = {
+        { key = "Sicilian_Defense", name = "Sicilian Defense", count = 207281, openings = {} },
+        { key = "Vienna_Gambit_with_Max_Lange_Defense", name = "Vienna Gambit, with Max Lange Defense", count = 1037, openings = {} },
+        { key = "Queens_Gambit_Accepted", name = "Queen's Gambit Accepted", count = 13899, openings = {
+            { key = "Queens_Gambit_Accepted_Accelerated_Mannheim_Variation", name = "Accelerated Mannheim Variation", count = 197 },
+        } },
+    }
+    home.settings:saveSetting("puzzle_openings_recent", { { key = "Queens_Gambit_Accepted_Accelerated_Mannheim_Variation", name = "Queen's Gambit Accepted: Accelerated Mannheim Variation" } })
+    home:show_puzzle_openings()
+    check_page(top_page(), language .. " puzzle openings")
+    UIManager:close(top_page())
+    home:show_opening_family(home.puzzle_openings[3])
+    check_page(top_page(), language .. " puzzle opening family")
+    UIManager:close(top_page())
+    home.settings:delSetting("puzzle_openings_recent")
 
     -- The board with the longest bar of buttons a live game has, and a name as long as Lichess allows.
     local live = LiveGame.open(home, "layoutgm")
