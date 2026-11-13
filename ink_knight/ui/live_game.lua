@@ -304,7 +304,7 @@ function LiveGame:choose_move(moves)
     if #moves == 1 then
         self:prepare_move(moves[1])
     else
-        self.app:choose_promotion(moves, function(move) self:prepare_move(move) end)
+        self.app:choose_game_promotion(moves, function(move) self:prepare_move(move) end)
     end
 end
 

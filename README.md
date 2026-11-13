@@ -73,13 +73,15 @@ Ink Knight uses a personal token, which only you can create and revoke.
 1. In Ink Knight, tap **Connect account** and **Create a token on Lichess**. A QR code opens [the page that creates a token](https://lichess.org/account/oauth/token/create) on your phone with the permissions marked. With no camera, turn on only these there:
    - External play: `board:play`, the only one needed to play online
    - Interactions: `follow:read` and `follow:write`, for who you follow and who you block
-   - Puzzles: `puzzle:read` and `puzzle:write`
+   - Puzzles: `puzzle:read`, for batches, themes, openings and your puzzle history, and `puzzle:write`, to send your results
    - Play games: `challenge:write`, only to give time to an opponent
-   - Only to add or remove favorites: `preference:write`. It comes unmarked, because it also allows changing your account preferences, which Ink Knight never does.
+   - Optional, only to add or remove favorites: `preference:write`. It comes unmarked, because it also allows changing your account preferences, which Ink Knight never does.
+   - Optional, only for your private notes about players: `note:write`, which Lichess asks for even to read them. It comes unmarked.
+   - Optional, only to bring your preferences from the site (always promote to a queen, coordinates, confirming moves and the piece set): `preference:read`. It only reads, so it comes marked.
 2. Create the token, copy it and tap **Done: paste the token**.
 3. On the same Wi-Fi network, point your phone at the QR code or type the address shown below it in any browser, tap **Allow** on the e-reader and paste the token.
 
-Without a permission, the rest keeps working, and what depends on it says what is missing. **Settings > Token permissions** shows what your token allows. Lichess does not change an existing token, so adding a permission means creating another.
+Without a permission, the rest keeps working, and what depends on it says what is missing when you tap it, optional ones included. **Settings > Token permissions** shows what your token allows. Lichess does not change an existing token, so adding a permission means creating another.
 
 > [!WARNING]
 > On a Kindle, the token stays in the system partition, out of reach over USB, where Ink Knight keeps it private. The Kindle's own services can reach it after a reboot, until you open Ink Knight. On other devices, Ink Knight checks whether the file can really be protected, and warns you when it cannot, since shared storage ignores file permissions. Anything running as root can still read it, including other plugins, so if you lose the device or suspect a leak, revoke the token on Lichess. Never publish it.

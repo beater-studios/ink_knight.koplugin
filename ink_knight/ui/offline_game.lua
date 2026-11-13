@@ -563,7 +563,7 @@ function OfflineGame:on_square(square)
 end
 
 function OfflineGame:choose_promotion(moves)
-    self.app:choose_promotion(moves, function(move)
+    self.app:choose_game_promotion(moves, function(move)
         self:apply(move)
         self:maybe_think()
         self:render()

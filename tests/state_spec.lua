@@ -144,6 +144,19 @@ test("the puzzle choices fall back to normal and either color, and a pile keeps 
     eq(pile[2].wanted, nil)
 end)
 
+test("the preferences of the site the plugin also has", function()
+    local sets = { "classic", "cburnett", "merida" }
+    local all = State.from_site_preferences({ prefs = { autoQueen = 3, coords = 1, submitMove = 2, pieceSet = "merida", theme = "brown" } }, sets)
+    assert(all.auto_queen == true and all.board_coordinates == true and all.confirm_moves == true and all.piece_set == "merida")
+    -- Promoting only when premoving is not always, and a piece set the plugin does not draw is told apart.
+    local other = State.from_site_preferences({ prefs = { autoQueen = 2, coords = 0, submitMove = 0, pieceSet = "alpha" } }, sets)
+    assert(other.auto_queen == false and other.board_coordinates == false and other.confirm_moves == false and other.piece_set == nil and other.piece_set_other)
+    -- Blitz is played in challenges, so confirming only blitz counts.
+    local blitz = State.from_site_preferences({ prefs = { submitMove = 16 } }, sets)
+    assert(blitz.confirm_moves == true and blitz.auto_queen == nil and not blitz.piece_set_other)
+    assert(next(State.from_site_preferences(nil, sets)) == nil)
+end)
+
 test("the recent openings keep five good ones, without repeats", function()
     local list = State.read_recent_openings({
         { key = "A", name = "a" }, { key = "A", name = "again" }, { key = "bad/key", name = "x" }, { key = "B" }, "x",

@@ -10,6 +10,9 @@
 -- "moves": number, white, black, white_current, black_current, white_callback, black_callback, as on a score sheet.
 -- focus, on any row: the page opens on the sheet that holds it.
 -- "buttons": items of { text, callback, primary }, side by side in equal parts, the text made smaller if it does not fit.
+-- "split": text, white, draws, black, value: a move of an explorer, with a bar of how its games ended.
+-- "metric": text, value, detail: a number in large, with what it is and a line below it.
+-- "figures": items of { value, label }: numbers side by side over what they count, without borders.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -35,11 +38,12 @@ local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
 local GRAY = Blitbuffer.Color8(0x55)
 local LINE = Blitbuffer.Color8(0xBB)
 local DISABLED = Blitbuffer.Color8(0x99)
+local DRAW_GRAY = Blitbuffer.Color8(0xAA)
 
 local HEADER_H, FOOTER_H, MARGIN = 66, 58, 16
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
 local MAX_FILL_EXTRA = 110
-local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48, buttons = 80 }
+local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48, buttons = 80, split = 58, metric = 76, figures = 82 }
 
 local Page = InputContainer:extend{
     name = "ink_knight_page",
@@ -428,6 +432,56 @@ function Page:paint_line(bb, row, y, h)
                 self:add_hit(x, y, column_w, h, row[side .. "_callback"])
             end
         end
+        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+    elseif row.kind == "split" then
+        -- A move of an explorer: its name, a bar of how its games ended (white, draws, black, as on Lichess) and
+        -- how many games.
+        local name_w, value_w, gap = self:px(110), self:px(90), self:px(12)
+        self:paint_text(bb, row.text, BOLD, 20, m, y, name_w - self:px(8), h, "left")
+        local bar_x, bar_w = m + name_w, self.width - 2 * m - name_w - value_w - gap
+        local bar_h = self:px(32)
+        local bar_y = y + math.floor((h - bar_h) / 2)
+        local total = math.max(1, row.white + row.draws + row.black)
+        -- Each part ends where the games so far end, rounded once, so the parts fill the bar exactly.
+        local x, counted = bar_x, 0
+        for _, part in ipairs({ { row.white, WHITE, BLACK }, { row.draws, DRAW_GRAY, BLACK }, { row.black, BLACK, WHITE } }) do
+            counted = counted + part[1]
+            local w = bar_x + math.floor(bar_w * counted / total + 0.5) - x
+            if w > 0 then
+                bb:paintRect(x, bar_y, w, bar_h, part[2])
+                if w >= self:px(48) then
+                    self:paint_text(bb, string.format("%d%%", math.floor(part[1] / total * 100 + 0.5)), BOLD, 15, x, bar_y, w, bar_h, "center", part[3])
+                end
+            end
+            x = x + w
+        end
+        bb:paintBorder(bar_x, bar_y, bar_w, bar_h, self:px(2), BLACK)
+        self:paint_text(bb, row.value, REGULAR, 16, self.width - m - value_w, y, value_w, h, "right", GRAY)
+        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+    elseif row.kind == "figures" then
+        -- Numbers side by side, each over what it counts; not buttons, so no borders.
+        local count = #row.items
+        local w = math.floor((self.width - 2 * m) / count)
+        local pad = self:px(4)
+        for index, item in ipairs(row.items) do
+            local x = m + (index - 1) * w
+            if index > 1 then
+                bb:paintRect(x, y + self:px(14), 1, h - self:px(28), LINE)
+            end
+            self:paint_text(bb, item.value, BOLD, 26, x + pad, y + self:px(8), w - 2 * pad, self:px(40), "center")
+            self:paint_text(bb, item.label, REGULAR, 14, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", GRAY)
+        end
+        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+    elseif row.kind == "metric" then
+        -- A number that matters, large, with what it is beside it.
+        local value_w = self:px(140)
+        if row.detail then
+            self:paint_text(bb, row.text, REGULAR, 20, m, y + self:px(10), self.width - 2 * m - value_w, self:px(32), "left")
+            self:paint_text(bb, row.detail, REGULAR, 15, m, y + self:px(42), self.width - 2 * m - value_w, self:px(24), "left", GRAY)
+        else
+            self:paint_text(bb, row.text, REGULAR, 20, m, y, self.width - 2 * m - value_w, h, "left")
+        end
+        self:paint_text(bb, row.value, BOLD, 34, self.width - m - value_w, y, value_w, h, "right")
         bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
     elseif row.kind == "stat" then
         self:paint_text(bb, row.text, REGULAR, 18, m, y, self.width - 2 * m - self:px(180), h, "left")

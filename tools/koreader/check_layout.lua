@@ -62,6 +62,14 @@ ANSWERS["/api/user/" .. OTHER:lower() .. "/activity"] = '[{"interval":{"start":1
 ANSWERS["/api/user/" .. OTHER:lower() .. "/note"] = '[{"text":"' .. string.rep("A note long enough to wrap over several lines. ", 6) .. '","date":1790000000000}]'
 ANSWERS["/api/fide/player/35009192"] = '{"id":35009192,"name":"Vasconcelos Alessandra Bartholomew","federation":"BRA","title":"WGM","standard":2999,"rapid":2999,"blitz":2999,"year":1999}'
 ANSWERS["/api/storm/dashboard/" .. OTHER:lower()] = '{"high":{"day":99,"week":99,"month":99,"allTime":99},"days":[{"_id":"2026/11/12","score":99,"runs":999}]}'
+-- The explorers, with the longest opening name of the list of Lichess, large counts and a draw-heavy move.
+local EXPLORER = '{"opening":{"name":"Queen\'s Gambit Declined: Semi-Tarrasch Defense, Pillsbury Variation"},"moves":['
+    .. '{"san":"Nxe5+","white":9999999,"draws":5000000,"black":4000000},{"san":"O-O-O","white":1,"draws":98,"black":1},'
+    .. '{"san":"exd8=Q+","white":0,"draws":0,"black":120000},{"san":"Kf1","white":50000,"draws":0,"black":0}]}'
+ANSWERS["/lichess"] = EXPLORER
+ANSWERS["/masters"] = EXPLORER
+ANSWERS["/api/account/preferences"] = '{"prefs":{"autoQueen":3,"coords":1,"submitMove":2,"pieceSet":"merida"},"language":"en-US"}'
+ANSWERS["/api/cloud-eval"] = '{"depth":99,"pvs":[{"moves":"e2e4 e7e5 g1f3 b8c6 f1b5 a7a6","mate":-12}]}'
 ANSWERS["/api/player"] = '{"correspondence":[{"id":"' .. OTHER:lower() .. '","username":"' .. OTHER .. '","title":"WCM","perfs":{"correspondence":{"rating":2999}}}]}'
 
 local real_new = Net.new
@@ -320,6 +328,34 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The preferences of the site brought into the options, and what they now are.
+    home:settings_menu()
+    local settings_page = top_page()
+    local import_row
+    for _, line in ipairs(settings_page.lines) do
+        import_row = import_row or (line.text == home.strings.import_preferences and line)
+    end
+    if not import_row then
+        problem(language .. " settings: no row to bring the preferences")
+    else
+        import_row.callback()
+        for _ = 1, 20 do
+            home.net:tick()
+        end
+        while top_page() and not top_page().content_top do
+            UIManager:close(top_page())
+        end
+        check_page(top_page(), language .. " preferences brought")
+        if not (home:option("auto_queen") and home:option("board_coordinates") and home:option("confirm_moves") and home:option("piece_set") == "merida") then
+            problem(language .. " the preferences of the site should be in the options")
+        end
+        UIManager:close(top_page())
+        for _, key in ipairs({ "auto_queen", "board_coordinates", "confirm_moves", "piece_set" }) do
+            home.settings:delSetting(key)
+        end
+        home:apply_board_look()
+    end
+    UIManager:close(settings_page)
     -- The profile of another player with every part, each part, and the rankings.
     local Players = require("ink_knight/ui/players")
     local function settle()
@@ -422,15 +458,45 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     check_page(top_page(), language .. " rankings")
     UIManager:close(top_page())
     -- The summary of the analysis of a game, with the longest names Lichess allows.
-    local summary_review = require("ink_knight/ui/review_screen").open(home, { moves = { { uci = "e2e4", san = "e4" } }, white = LONG_NAME, black = LONG_NAME, summary = {
-        white = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999 },
-        black = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999 },
+    local summary_moves = {}
+    for index = 1, 300 do
+        summary_moves[index] = index % 2 == 1 and { uci = "g1f3", san = "Nf3" } or { uci = "g8f6", san = "Nf6" }
+        if index % 4 == 3 then
+            summary_moves[index] = { uci = "f3g1", san = "Ng1" }
+        elseif index % 4 == 0 then
+            summary_moves[index] = { uci = "f6g8", san = "Ng8" }
+        end
+    end
+    local phases = { opening = 100, middlegame = 100, endgame = 100 }
+    local summary_review = require("ink_knight/ui/review_screen").open(home, { moves = summary_moves, white = LONG_NAME, black = LONG_NAME, summary = {
+        white = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999, phases = phases },
+        black = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999, phases = phases },
         middle = 199, ending = 299,
     } })
     summary_review:show_summary()
     check_page(top_page(), language .. " review summary")
     UIManager:close(top_page())
     UIManager:close(summary_review.screen)
+    -- The analysis of a position, with the evaluation, the bars of the moves and the way to the other explorers,
+    -- and the page of masters.
+    local ReviewScreen = require("ink_knight/ui/review_screen")
+    local function settle_page()
+        for _ = 1, 40 do
+            home.net:tick()
+        end
+        -- The notice that it is asking is not a page.
+        while top_page() and not top_page().content_top do
+            UIManager:close(top_page())
+        end
+    end
+    ReviewScreen.analyze(home, Chess.parse_fen(Chess.START_FEN), "white")
+    settle_page()
+    check_page(top_page(), language .. " analysis")
+    UIManager:close(top_page())
+    ReviewScreen.masters(home, Chess.parse_fen(Chess.START_FEN))
+    settle_page()
+    check_page(top_page(), language .. " analysis masters")
+    UIManager:close(top_page())
     -- The longest status line of a review: a move that starts a phase, with its evaluation, mark and better move.
     local busy = require("ink_knight/ui/review_screen").open(home, {
         moves = { { uci = "e2e4", san = "e4" }, { uci = "e7e5", san = "e5" }, { uci = "g1f3", san = "Nf3" }, { uci = "b8c6", san = "Nc6" },

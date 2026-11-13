@@ -91,7 +91,7 @@ function CorrespondenceScreen:on_square(square)
         if #moves == 1 then
             self:play(moves[1])
         else
-            self.app:choose_promotion(moves, function(move) self:play(move) end)
+            self.app:choose_game_promotion(moves, function(move) self:play(move) end)
         end
         return
     end

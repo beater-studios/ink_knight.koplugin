@@ -743,6 +743,20 @@ function Home:ask(args)
     return self:open_page{ title = args.title, rows = rows, close_on_tap = true }
 end
 
+-- The promotion of a game: a queen at once when the reader asked for it, otherwise the choice. Lessons, practice and
+-- puzzles always ask, since promoting to another piece is sometimes the point there.
+function Home:choose_game_promotion(moves, on_move)
+    if self:option("auto_queen") then
+        for _, move in ipairs(moves) do
+            if move.promotion == "q" then
+                on_move(move)
+                return
+            end
+        end
+    end
+    self:choose_promotion(moves, on_move)
+end
+
 function Home:choose_promotion(moves, on_move)
     local s = self.strings
     local function tile(label, letter, icon)
@@ -1264,6 +1278,10 @@ function Home:board_look_rows(page)
         { kind = "toggle", text = s.show_coordinates, on = BoardScreen.coordinates, on_text = s.yes, off_text = s.no, callback = function()
             self:save_setting("board_coordinates", not BoardScreen.coordinates)
             self:apply_board_look()
+            page:reload()
+        end },
+        { kind = "toggle", text = s.auto_queen, on = self:option("auto_queen"), on_text = s.yes, off_text = s.no, callback = function()
+            self:save_setting("auto_queen", not self:option("auto_queen"))
             page:reload()
         end },
     }
@@ -2383,6 +2401,9 @@ function Home:settings_menu()
             { kind = "section", text = s.board_section },
             { splice = self:board_look_rows(page) },
             { kind = "section", text = s.account_section },
+            { text = s.import_preferences, detail = s.import_preferences_detail, callback = function()
+                self:with_feature("preferences", function() self:import_preferences(page) end)
+            end },
             { text = s.token_scopes, value = self:scopes_summary(), callback = function() self:show_token_scopes() end },
             { text = s.token_status, value = self.token_protected and s.token_status_protected or s.token_status_shared, callback = function()
                 self:open_list(s.token_status, { { kind = "text", text = self.token_protected and s.token_protected_text or s.token_unprotected } })
@@ -2391,6 +2412,54 @@ function Home:settings_menu()
             { text = s.disconnect, callback = function() self:ask_disconnect() end },
         })
     end }
+end
+
+-- Brings the preferences of the site that the plugin also has, and says what each is now; one request at a time, and
+-- the answer only shown while the settings it came from are open.
+function Home:import_preferences(page)
+    local s = self.strings
+    if self.importing_preferences then
+        return
+    end
+    self.importing_preferences = true
+    self:info(s.loading, 2)
+    self.net:request(Api.preferences(), function(status, body)
+        self.importing_preferences = false
+        local open = false
+        for _, other in ipairs(self.pages) do
+            open = open or other == page
+        end
+        if not open then
+            return
+        end
+        self:report_or(status, function()
+            local imported = State.from_site_preferences(decode(body), BoardScreen.piece_set_names())
+            local piece_set_other = imported.piece_set_other
+            imported.piece_set_other = nil
+            if next(imported) == nil then
+                self:info(s.unexpected_error)
+                return
+            end
+            for key, value in pairs(imported) do
+                self.settings:saveSetting(key, value)
+            end
+            self.settings:flush()
+            self:apply_board_look()
+            local yes_no = function(value) return value and s.yes or s.no end
+            local rows = {
+                { kind = "text", text = s.import_preferences_done },
+                { kind = "stat", text = s.auto_queen, value = yes_no(self:option("auto_queen")) },
+                { kind = "stat", text = s.show_coordinates, value = yes_no(self:option("board_coordinates")) },
+                { kind = "stat", text = s.confirm_moves, value = yes_no(self:option("confirm_moves")) },
+                { kind = "stat", text = s.piece_style, value = s.piece_styles[self:option("piece_set")] or self:option("piece_set") },
+            }
+            if piece_set_other then
+                rows[#rows + 1] = { kind = "text", text = s.import_preferences_pieces }
+            end
+            page:reload()
+            self:open_list(s.import_preferences, rows)
+        end)
+    end)
 end
 
 function Home:scopes_summary()

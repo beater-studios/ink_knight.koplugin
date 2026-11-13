@@ -2,9 +2,10 @@
 local TokenScopes = {}
 
 TokenScopes.CREATE_URL = "https://lichess.org/account/oauth/token/create"
--- What the page for creating a token comes with already marked. preference:write stays out, because it
--- also allows changing the preferences of the account and only favorites need it.
-TokenScopes.SUGGESTED = { "board:play", "challenge:write", "follow:read", "follow:write", "puzzle:read", "puzzle:write" }
+-- What the page for creating a token comes with already marked. preference:read is optional, but it only reads, so it
+-- comes marked. preference:write stays out, because it also allows changing the preferences of the account and only
+-- favorites need it, and so does note:write, which only the private notes about players need.
+TokenScopes.SUGGESTED = { "board:play", "challenge:write", "follow:read", "follow:write", "puzzle:read", "puzzle:write", "preference:read" }
 
 -- The first scope of each list is the one to ask for when none is there.
 TokenScopes.FEATURES = {
@@ -17,11 +18,14 @@ TokenScopes.FEATURES = {
     puzzle_results = { "puzzle:write" },
     give_time = { "challenge:write" },
     favorites = { "preference:write" },
+    -- Lichess asks for it even to read the notes.
+    notes = { "note:write" },
+    preferences = { "preference:read" },
 }
 
--- What the reader sees listed, in this order. Favorites do not count as something missing.
-TokenScopes.LISTED = { "play", "following", "follow_change", "puzzles", "puzzle_results", "give_time", "favorites" }
-TokenScopes.OPTIONAL = { favorites = true }
+-- What the reader sees listed, in this order. The optional ones do not count as something missing.
+TokenScopes.LISTED = { "play", "following", "follow_change", "puzzles", "puzzle_results", "give_time", "favorites", "notes", "preferences" }
+TokenScopes.OPTIONAL = { favorites = true, notes = true, preferences = true }
 
 -- text: the value of the header. Without it nothing is known, which is not the same as no scopes.
 function TokenScopes.parse(text)

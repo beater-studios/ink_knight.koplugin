@@ -18,6 +18,7 @@ State.OPTIONS = {
     rating_margin = { { 0, 100, 200, 300, 500 }, 0 },
     rated = { { true, false }, false },
     confirm_moves = { { true, false }, false },
+    auto_queen = { { true, false }, false },
     board_coordinates = { { true, false }, false },
     board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast" }, "plain" },
     piece_set = { { "classic", "cburnett", "merida" }, "classic" },
@@ -35,6 +36,40 @@ State.OPTIONS = {
     coordinates_time = { { "seconds", "none" }, "seconds" },
     coordinates_pieces = { { true, false }, true },
 }
+
+-- The preferences of the site that the plugin also has, from /api/account/preferences: promoting to a queen only
+-- when Lichess does it always (not only when premoving, which the plugin does not do), the coordinates when shown in
+-- any way, confirming moves when on for any kind of game the plugin plays (unlimited, correspondence, classical,
+-- rapid, and blitz in challenges), and the piece set when it is one the plugin draws, piece_set_other telling when the
+-- site has a set the plugin does not. nil for what the answer does not say.
+local SUBMIT_MOVE_PLAYED = { 1, 2, 4, 8, 16 }
+
+function State.from_site_preferences(data, piece_sets)
+    local prefs = type(data) == "table" and type(data.prefs) == "table" and data.prefs or {}
+    local result = {}
+    if type(prefs.autoQueen) == "number" then
+        result.auto_queen = prefs.autoQueen == 3
+    end
+    if type(prefs.coords) == "number" then
+        result.board_coordinates = prefs.coords ~= 0
+    end
+    if type(prefs.submitMove) == "number" then
+        local on = false
+        for _, flag in ipairs(SUBMIT_MOVE_PLAYED) do
+            on = on or math.floor(prefs.submitMove / flag) % 2 == 1
+        end
+        result.confirm_moves = on
+    end
+    for _, name in ipairs(piece_sets or {}) do
+        if prefs.pieceSet == name then
+            result.piece_set = name
+        end
+    end
+    if type(prefs.pieceSet) == "string" and not result.piece_set then
+        result.piece_set_other = true
+    end
+    return result
+end
 
 function State.option(key, saved)
     local option = assert(State.OPTIONS[key], "state: unknown option " .. tostring(key))

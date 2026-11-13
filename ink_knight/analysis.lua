@@ -1,4 +1,5 @@
--- Puts together what Lichess knows about a position, as text. It knows nothing about the screen or the network.
+-- What Lichess knows about a position, read from its answers into what the analysis page shows. It knows nothing
+-- about the screen or the network.
 local Api = require("ink_knight/api")
 local Chess = require("ink_knight/chess")
 
@@ -31,58 +32,46 @@ local function line_text(position, uci_line)
     return table.concat(parts, " ")
 end
 
-local function eval_section(s, position, cloud)
-    local line = cloud and cloud.pvs and cloud.pvs[1]
-    if not line then
-        return s.analysis_no_eval
+-- The cloud evaluation: { score, depth, line }, the score as Lichess writes it; nil without one.
+function Analysis.eval(position, cloud)
+    local line = type(cloud) == "table" and type(cloud.pvs) == "table" and cloud.pvs[1]
+    if type(line) ~= "table" then
+        return nil
     end
-    return string.format(s.analysis_eval, Api.eval_text(line.cp, line.mate), cloud.depth or 0, line_text(position, line.moves))
+    return { score = Api.eval_text(line.cp, line.mate), depth = tonumber(cloud.depth) or 0, line = line_text(position, line.moves) }
 end
 
--- The most played moves of an answer of the explorer, of any of its databases; empty_text without games.
-function Analysis.games_text(s, data, empty_text)
-    local moves = type(data) == "table" and data.moves
-    if type(moves) ~= "table" or #moves == 0 then
-        return empty_text
-    end
-    local lines = {}
-    if data.opening and data.opening.name then
-        lines[#lines + 1] = data.opening.name
-    end
-    lines[#lines + 1] = s.analysis_games_title
-    for index, move in ipairs(moves) do
-        if index > EXPLORER_MOVES then
+-- An answer of the explorer, of any of its databases: { opening, moves = { { san, white, draws, black, total } } },
+-- the most played first; nil without a game.
+function Analysis.games(data)
+    local list = type(data) == "table" and type(data.moves) == "table" and data.moves or {}
+    local moves = {}
+    for _, move in ipairs(list) do
+        if #moves >= EXPLORER_MOVES then
             break
         end
-        local white, draws, black = move.white or 0, move.draws or 0, move.black or 0
+        local white, draws, black = tonumber(move.white) or 0, tonumber(move.draws) or 0, tonumber(move.black) or 0
         local total = white + draws + black
         if total > 0 then
-            lines[#lines + 1] = string.format("%s: %d%% / %d%% / %d%% (%s)", move.san or move.uci or "?",
-                math.floor(white / total * 100 + 0.5), math.floor(draws / total * 100 + 0.5), math.floor(black / total * 100 + 0.5),
-                Api.format_count(total))
+            moves[#moves + 1] = { san = move.san or move.uci or "?", white = white, draws = draws, black = black, total = total }
         end
     end
-    return table.concat(lines, "\n")
+    if #moves == 0 then
+        return nil
+    end
+    local opening = type(data.opening) == "table" and type(data.opening.name) == "string" and data.opening.name or nil
+    return { opening = opening, moves = moves }
 end
 
-local function tablebase_section(s, position, data)
-    local winner = data and Api.tablebase_winner(data.category, position.turn)
+-- The result with perfect play, from the tablebase, as a sentence; nil when it does not know.
+function Analysis.ending(s, position, data)
+    local winner = type(data) == "table" and Api.tablebase_winner(data.category, position.turn)
     if not winner then
         return nil
     end
     local outcome = winner == "draw" and s.analysis_end_draw or (winner == "white" and s.analysis_end_white or s.analysis_end_black)
-    local best = data.moves and data.moves[1] and data.moves[1].san
+    local best = type(data.moves) == "table" and data.moves[1] and data.moves[1].san
     return best and string.format(s.analysis_end_best, outcome, best) or outcome
-end
-
--- answers: cloud, explorer and tablebase, each one nil when it did not come.
-function Analysis.text(s, position, answers)
-    local sections = { eval_section(s, position, answers.cloud), Analysis.games_text(s, answers.explorer, s.analysis_no_games) }
-    local ending = tablebase_section(s, position, answers.tablebase)
-    if ending then
-        table.insert(sections, 1, ending)
-    end
-    return table.concat(sections, "\n\n")
 end
 
 return Analysis

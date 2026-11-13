@@ -483,7 +483,8 @@ do
     masters_row.callback()
     run_all()
     local masters_page = home.pages[#home.pages]
-    check(masters_page.lines[1].text:find("e4: 60%", 1, true), "the masters' moves: " .. tostring(masters_page.lines[1].text))
+    local masters_move = masters_page.lines[3]
+    check(masters_move and masters_move.kind == "split" and masters_move.text == "e4" and masters_move.white == 30, "the masters' moves, each with its bar")
     UIManager:close(masters_page)
     asked_urls = {}
     own_row.callback()
@@ -491,7 +492,7 @@ do
     local own_page = home.pages[#home.pages]
     local own_url = table.concat(asked_urls, " ")
     check(own_url:find("/player?player=Reader&color=black", 1, true), "the reader's games as black: " .. own_url)
-    check(own_page.lines[1].text:find("e4: 67%", 1, true) and #own_page.lines == 1, "the last line, complete: " .. tostring(own_page.lines[1].text))
+    check(own_page.lines[3] and own_page.lines[3].white == 40 and #own_page.lines == 3, "the last line, complete, and no note")
     UIManager:close(own_page)
     -- Lichess still indexing when the time is up: what came so far, and a note.
     local real_done = home.net.done
@@ -501,7 +502,7 @@ do
     run_all()
     home.net.done = real_done
     own_page = home.pages[#home.pages]
-    check(#own_page.lines == 2 and own_page.lines[2].text == s.analysis_own_partial, "a partial answer should say so")
+    check(#own_page.lines == 4 and own_page.lines[4].text == s.analysis_own_partial, "a partial answer should say so")
     local still_open = false
     for _, stream in ipairs(home.net.streams) do
         still_open = still_open or stream == own_stream_seen

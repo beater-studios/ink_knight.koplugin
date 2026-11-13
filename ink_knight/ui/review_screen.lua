@@ -163,26 +163,40 @@ function ReviewScreen:show_summary()
     local rows = {}
     for _, side in ipairs({ { "white", s.color_white, game.white }, { "black", s.color_black, game.black } }) do
         local data = summary[side[1]]
-        local lines = { string.format("%s: %s", side[2], side[3] or "?") }
+        rows[#rows + 1] = { kind = "section", text = string.format("%s · %s", side[2], side[3] or "?") }
         if data.accuracy then
-            lines[#lines + 1] = string.format(s.review_accuracy, data.accuracy)
+            local phases = data.phases
+            rows[#rows + 1] = {
+                kind = "metric", text = s.review_accuracy_label, value = string.format("%d%%", data.accuracy),
+                detail = phases and string.format(s.review_phase_accuracy, phases.opening, phases.middlegame, phases.endgame) or nil,
+            }
         end
-        lines[#lines + 1] = string.format(s.review_counts, data.inaccuracy, data.mistake, data.blunder)
+        local figures = {
+            { value = tostring(data.inaccuracy), label = s.review_inaccuracies },
+            { value = tostring(data.mistake), label = s.review_mistakes },
+            { value = tostring(data.blunder), label = s.review_blunders },
+        }
         if data.acpl then
-            lines[#lines + 1] = string.format(s.review_acpl, data.acpl)
+            figures[#figures + 1] = { value = tostring(data.acpl), label = s.review_acpl_label }
         end
-        rows[#rows + 1] = { kind = "text", text = table.concat(lines, "\n") }
+        rows[#rows + 1] = { kind = "figures", items = figures }
     end
-    local phases = {}
-    for _, phase in ipairs({ { summary.middle, s.review_middlegame_from }, { summary.ending, s.review_endgame_from } }) do
+    -- The phases go to their move, so the summary leads back into the game.
+    local phase_rows = {}
+    for _, phase in ipairs({ { summary.middle, s.review_middlegame }, { summary.ending, s.review_endgame } }) do
         if phase[1] and self:phase_at(phase[1]) then
-            phases[#phases + 1] = string.format(phase[2], self:move_label(phase[1]))
+            phase_rows[#phase_rows + 1] = { text = phase[2], value = string.format(s.review_move_value, self:move_label(phase[1])), callback = function()
+                self:go(phase[1])
+            end }
         end
     end
-    if #phases > 0 then
-        rows[#rows + 1] = { kind = "text", text = table.concat(phases, "\n") }
+    if #phase_rows > 0 then
+        rows[#rows + 1] = { kind = "section", text = s.review_phases }
+        for _, row in ipairs(phase_rows) do
+            rows[#rows + 1] = row
+        end
     end
-    self.app:open_list(s.review_summary, rows)
+    self.app:open_page{ title = s.review_summary, rows = rows, close_on_tap = true }
 end
 
 -- The moves already read for the board, with the one shown marked. A tap on a move goes to it. The notation comes
@@ -232,6 +246,23 @@ local function own_games_title(s, color)
     return color == "black" and s.analysis_own_black or s.analysis_own_white
 end
 
+-- The most played moves of an explorer, each with a bar of how its games ended.
+local function games_rows(s, data, empty_text)
+    local games = Analysis.games(data)
+    if not games then
+        return { { kind = "text", text = empty_text, center = true } }
+    end
+    -- The name of an opening can be long, so it goes on lines that wrap, with what the bars show.
+    local rows = {
+        { kind = "section", text = s.analysis_moves_section },
+        { kind = "text", text = games.opening and (games.opening .. "\n" .. s.analysis_legend) or s.analysis_legend, center = true },
+    }
+    for _, move in ipairs(games.moves) do
+        rows[#rows + 1] = { kind = "split", text = move.san, white = move.white, draws = move.draws, black = move.black, value = Api.format_count(move.total) }
+    end
+    return rows
+end
+
 -- What Lichess knows about a position: the cloud evaluation, the most played moves and, with few pieces, the
 -- tablebase. For a finished game in the review, and for a position set up in the editor. Below it, on request, the
 -- games of masters and the reader's own games with color ("white" or "black").
@@ -248,10 +279,24 @@ function ReviewScreen.analyze(app, position, color)
             app:info(s.no_network)
             return
         end
-        local rows = {
-            { kind = "text", text = Analysis.text(s, position, answers) },
-            { text = s.analysis_masters, callback = function() ReviewScreen.masters(app, position) end },
-        }
+        local rows = {}
+        local ending = Analysis.ending(s, position, answers.tablebase)
+        if ending then
+            rows[#rows + 1] = { kind = "section", text = s.analysis_end_section }
+            rows[#rows + 1] = { kind = "text", text = ending }
+        end
+        rows[#rows + 1] = { kind = "section", text = s.analysis_eval_section }
+        local eval = Analysis.eval(position, answers.cloud)
+        if eval then
+            rows[#rows + 1] = { kind = "metric", text = string.format(s.analysis_depth, eval.depth), detail = eval.line ~= "" and string.format(s.analysis_line, eval.line) or nil, value = eval.score }
+        else
+            rows[#rows + 1] = { kind = "text", text = s.analysis_no_eval, center = true }
+        end
+        for _, row in ipairs(games_rows(s, answers.explorer, s.analysis_no_games)) do
+            rows[#rows + 1] = row
+        end
+        rows[#rows + 1] = { kind = "section", text = s.analysis_more_section }
+        rows[#rows + 1] = { text = s.analysis_masters, callback = function() ReviewScreen.masters(app, position) end }
         local page
         if app.my_name and color then
             rows[#rows + 1] = { text = own_games_title(s, color), callback = function()
@@ -286,7 +331,7 @@ function ReviewScreen.masters(app, position)
     app:info(s.analysis_loading, 2)
     app.net:request(Api.explorer_masters(Chess.to_fen(position)), function(status, body)
         app:report_or(status, function()
-            app:open_list(s.analysis_masters, { { kind = "text", text = Analysis.games_text(s, app.decode(body), s.analysis_masters_none) } })
+            app:open_list(s.analysis_masters, games_rows(s, app.decode(body), s.analysis_masters_none))
         end)
     end)
 end
@@ -339,7 +384,7 @@ function ReviewScreen.own_games(app, position, color, page)
         end
         local rows
         if latest then
-            rows = { { kind = "text", text = Analysis.games_text(s, latest, s.analysis_own_none) } }
+            rows = games_rows(s, latest, s.analysis_own_none)
             if not ended then
                 rows[#rows + 1] = { kind = "text", text = s.analysis_own_partial }
             end

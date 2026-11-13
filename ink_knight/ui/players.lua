@@ -211,9 +211,11 @@ function Players.open_profile(app, user)
             end
         end }
         rows[#rows + 1] = { text = s.profile_activity, callback = function() Players.show_activity(app, user.id) end }
-        -- The notes are the reader's own, about someone else.
+        -- The notes are the reader's own, about someone else, and need an optional permission of their own.
         if not mine and app.my_id then
-            rows[#rows + 1] = { text = s.profile_notes, callback = function() Players.show_notes(app, user.id, name) end }
+            rows[#rows + 1] = { text = s.profile_notes, callback = function()
+                app:with_feature("notes", function() Players.show_notes(app, user.id, name) end)
+            end }
         end
         -- Only an account linked to a FIDE player has an id; a rating typed in the profile is not checked.
         local fide_id = tonumber(user.fideId)
@@ -365,7 +367,10 @@ function Players.show_notes(app, user_id, name)
                 rows[#rows + 1] = { kind = "text", text = s.notes_none, center = true }
             end
             for _, note in ipairs(notes) do
-                rows[#rows + 1] = { kind = "text", text = note.date and (note.date .. "\n" .. note.text) or note.text }
+                if note.date then
+                    rows[#rows + 1] = { kind = "section", text = note.date }
+                end
+                rows[#rows + 1] = { kind = "text", text = note.text }
             end
             page = app:open_list(s.profile_notes, rows)
         end)
@@ -381,7 +386,7 @@ function Players.write_note(app, user_id, name, page)
         allow_newline = true,
         buttons = { {
             { text = s.cancel, id = "close", callback = function() UIManager:close(dialog) end },
-            { text = s.note_save, is_enter_default = true, callback = function()
+            { text = s.note_save, id = "save", is_enter_default = true, callback = function()
                 local text = dialog:getInputText() or ""
                 UIManager:close(dialog)
                 if not text:match("%S") then

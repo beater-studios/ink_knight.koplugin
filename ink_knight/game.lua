@@ -306,7 +306,12 @@ function Game.analysis_summary(game)
         local analysis = type(player.analysis) == "table" and player.analysis or {}
         local inaccuracy, mistake, blunder = count(analysis.inaccuracy), count(analysis.mistake), count(analysis.blunder)
         if inaccuracy and mistake and blunder then
-            summary[color] = { accuracy = count(analysis.accuracy), inaccuracy = inaccuracy, mistake = mistake, blunder = blunder, acpl = count(analysis.acpl) }
+            local phases = type(analysis.phases) == "table" and analysis.phases or {}
+            local opening, middlegame, endgame = count(phases.opening), count(phases.middlegame), count(phases.endgame)
+            summary[color] = {
+                accuracy = count(analysis.accuracy), inaccuracy = inaccuracy, mistake = mistake, blunder = blunder, acpl = count(analysis.acpl),
+                phases = opening and middlegame and endgame and { opening = opening, middlegame = middlegame, endgame = endgame } or nil,
+            }
         end
     end
     if not summary.white or not summary.black then

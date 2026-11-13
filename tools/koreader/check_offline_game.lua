@@ -306,11 +306,23 @@ do
     UIManager:close(more)
     analyzed:show_summary()
     local summary_page = home.pages[#home.pages]
-    local text = summary_page.lines[1].text .. summary_page.lines[2].text .. summary_page.lines[3].text
-    check(text:find(string.format(s.review_accuracy, 91), 1, true) and text:find(string.format(s.review_counts, 4, 2, 1), 1, true)
-        and text:find(string.format(s.review_middlegame_from, "9..."), 1, true) and text:find(string.format(s.review_endgame_from, "31."), 1, true), "the summary of both sides and the phases: " .. text)
+    local function row_with(text)
+        for _, line in ipairs(summary_page.lines) do
+            if line.text == text then
+                return line
+            end
+        end
+    end
+    check(summary_page.lines[1].kind == "section" and summary_page.lines[2].kind == "metric" and summary_page.lines[2].value == "91%", "white's accuracy in large first")
+    local figures = summary_page.lines[3]
+    check(figures.kind == "figures" and #figures.items == 4 and figures.items[3].value == "0" and figures.items[3].label == s.review_blunders, "white's counts side by side")
+    check(row_with(s.review_middlegame) and row_with(s.review_middlegame).value == string.format(s.review_move_value, "9...")
+        and row_with(s.review_endgame).value == string.format(s.review_move_value, "31."), "the counts and the phases with their moves")
     summary_page:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/review_summary.png")
+    -- A phase leads to its move.
+    row_with(s.review_endgame).callback()
+    check(analyzed.index == 61, "the endgame row should go to its move: " .. analyzed.index)
     UIManager:close(summary_page)
     -- The list of moves has a heading before the row where each phase begins.
     analyzed:show_moves()
@@ -329,16 +341,37 @@ do
         white = { inaccuracy = 0, mistake = 0, blunder = 0 }, black = { inaccuracy = 0, mistake = 0, blunder = 0 }, middle = 2, ending = 61,
     } })
     short:show_summary()
-    local short_text = ""
+    local has_middle, has_end = false, false
     for _, line in ipairs(home.pages[#home.pages].lines) do
-        short_text = short_text .. (line.text or "")
+        has_middle = has_middle or line.text == s.review_middlegame
+        has_end = has_end or line.text == s.review_endgame
     end
-    check(short_text:find(string.format(s.review_middlegame_from, "1..."), 1, true) and not short_text:find(string.format(s.review_endgame_from, "31."), 1, true),
-        "only the phases the review has: " .. short_text)
+    check(has_middle and not has_end, "only the phases the review has")
     UIManager:close(home.pages[#home.pages])
     UIManager:close(short.screen)
 end
 
+
+-- Promoting: the piece is asked, or with "always promote to a queen" a queen goes at once.
+do
+    local fen = "8/P7/8/8/8/8/k6K/8 w - - 0 1"
+    for _, auto in ipairs({ false, true }) do
+        home.settings:saveSetting("auto_queen", auto)
+        local game = OfflineGame.open(home, { two_players = true, initial_fen = fen })
+        local pages_before = #home.pages
+        game.screen.on_square(Chess.square_from_name("a7"))
+        game.screen.on_square(Chess.square_from_name("a8"))
+        if auto then
+            check(#home.pages == pages_before and game.position.board[Chess.square_from_name("a8")] == "Q", "a queen at once with the option on")
+        else
+            check(#home.pages == pages_before + 1, "the piece should be asked with the option off")
+            UIManager:close(home.pages[#home.pages])
+        end
+        UIManager:close(game.screen)
+        home.settings:delSetting("two_player_game")
+    end
+    home.settings:delSetting("auto_queen")
+end
 
 home.settings:delSetting("offline_game")
 UIManager:close(home)

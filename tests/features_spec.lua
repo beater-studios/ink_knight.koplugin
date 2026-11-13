@@ -753,19 +753,16 @@ end)
 test("the analysis says what it knows, and what it does not", function()
     local s = I18n.en
     local position = Chess.parse_fen("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3")
-    local full = Analysis.text(s, position, {
-        cloud = { depth = 55, pvs = { { moves = "g8f6 d2d3 f8c5 e1g1 d7d6 c2c3", cp = 7 } } },
-        explorer = { opening = { name = "Italian Game" }, moves = { { san = "Nf6", white = 50, draws = 10, black = 40 } } },
-    })
-    assert(full:find("+0.07", 1, true)); assert(full:find("Nf6 d3 Bc5 O-O d6", 1, true))
-    assert(not full:find("c3", 1, true), "the line should stop at five moves")
-    assert(full:find("Italian Game", 1, true)); assert(full:find("50% / 10% / 40%", 1, true))
-    local nothing = Analysis.text(s, position, {})
-    assert(nothing:find(s.analysis_no_eval, 1, true)); assert(nothing:find(s.analysis_no_games, 1, true))
+    local eval = Analysis.eval(position, { depth = 55, pvs = { { moves = "g8f6 d2d3 f8c5 e1g1 d7d6 c2c3", cp = 7 } } })
+    eq(eval.score, "+0.07"); eq(eval.depth, 55); eq(eval.line, "Nf6 d3 Bc5 O-O d6")
+    local games = Analysis.games({ opening = { name = "Italian Game" }, moves = { { san = "Nf6", white = 50, draws = 10, black = 40 } } })
+    eq(games.opening, "Italian Game"); eq(games.moves[1].san, "Nf6"); eq(games.moves[1].total, 100)
+    eq(Analysis.eval(position, nil), nil); eq(Analysis.games(nil), nil); eq(Analysis.games({ moves = {} }), nil)
     local ending_position = Chess.parse_fen("4k3/6KP/8/8/8/8/7p/8 w - - 0 1")
     eq(Analysis.piece_count(ending_position), 4)
-    local ending = Analysis.text(s, ending_position, { tablebase = { category = "win", moves = { { san = "h8=Q+" } } } })
+    local ending = Analysis.ending(s, ending_position, { category = "win", moves = { { san = "h8=Q+" } } })
     assert(ending:find(s.analysis_end_white, 1, true)); assert(ending:find("h8=Q+", 1, true))
+    eq(Analysis.ending(s, ending_position, nil), nil)
 end)
 
 test("what a token may do comes from the scopes Lichess states", function()
@@ -783,10 +780,18 @@ test("what a token may do comes from the scopes Lichess states", function()
     eq(TokenScopes.allows(nil, "favorites"), true)
 end)
 
-test("favorites are the only thing not counted as missing", function()
+test("the optional permissions are not counted as missing", function()
     eq(TokenScopes.missing_count(TokenScopes.parse(table.concat(TokenScopes.SUGGESTED, ","))), 0)
     eq(TokenScopes.missing_count(TokenScopes.parse("board:play")), 5)
     eq(TokenScopes.missing_count(TokenScopes.parse("")), 6)
+    -- The private notes need note:write, which is optional and so never counts as missing.
+    eq(TokenScopes.allows(TokenScopes.parse("board:play"), "notes"), false)
+    eq(TokenScopes.allows(TokenScopes.parse("note:write"), "notes"), true)
+    assert(TokenScopes.OPTIONAL.notes and not TokenScopes.create_url():find("note:write", 1, true))
+    -- The preferences of the site need preference:read, optional too, but marked, since it only reads.
+    eq(TokenScopes.allows(TokenScopes.parse("board:play"), "preferences"), false)
+    assert(TokenScopes.OPTIONAL.preferences and TokenScopes.create_url():find("preference:read", 1, true))
+    eq(Api.preferences().path, "/api/account/preferences")
 end)
 
 test("the link for creating a token marks what the plugin needs, and no more", function()
@@ -891,10 +896,8 @@ test("a JSON null does not count as a value, at any depth", function()
 end)
 
 test("the analysis of a position with no opening name still has its moves", function()
-    local text = Analysis.text(I18n.en, pos(Chess.START_FEN), {
-        explorer = { moves = { { san = "e4", white = 5, draws = 3, black = 2 } } },
-    })
-    assert(text:find("e4", 1, true))
+    local games = Analysis.games({ moves = { { san = "e4", white = 5, draws = 3, black = 2 } } })
+    eq(games.opening, nil); eq(games.moves[1].san, "e4")
 end)
 
 local function finished(white_id, black_id, winner)
@@ -1017,11 +1020,8 @@ test("the masters and the reader's own games in a position, from the explorer", 
     local own = Api.explorer_player(fen, "Some One", "black")
     assert(own.base == Api.EXPLORER and own.accept == "application/x-ndjson")
     assert(own.path:find("player=Some%20One&color=black", 1, true) or own.path:find("player=Some+One&color=black", 1, true), own.path)
-    local s = I18n.en
-    local text = Analysis.games_text(s, { moves = { { san = "e4", white = 60, draws = 20, black = 20 } } }, "none")
-    assert(text:find("e4: 60% / 20% / 20%", 1, true), text)
-    assert(Analysis.games_text(s, { moves = {} }, "none") == "none")
-    assert(Analysis.games_text(s, nil, "none") == "none")
+    local games = Analysis.games({ moves = { { san = "e4", white = 60, draws = 20, black = 20 }, { san = "d4", white = 0, draws = 0, black = 0 } } })
+    assert(#games.moves == 1 and games.moves[1].white == 60, "a move with no games is left out")
 end)
 
 test("the color the reader played, only in a game they played", function()
@@ -1032,12 +1032,13 @@ end)
 
 test("the analysis of the site: each side's accuracy and marks, and where the phases begin", function()
     local game = { players = {
-        white = { user = { name = "A" }, analysis = { inaccuracy = 2, mistake = 1, blunder = 0, acpl = 25, accuracy = 91 } },
+        white = { user = { name = "A" }, analysis = { inaccuracy = 2, mistake = 1, blunder = 0, acpl = 25, accuracy = 91, phases = { opening = 97, middlegame = 54, endgame = 84 } } },
         black = { user = { name = "B" }, analysis = { inaccuracy = 4, mistake = 2, blunder = 1, acpl = 60 } },
     }, division = { middle = 18, ["end"] = 61 } }
     local summary = Game.analysis_summary(game)
     assert(summary.white.accuracy == 91 and summary.white.mistake == 1 and summary.black.blunder == 1 and summary.black.acpl == 60)
     assert(summary.black.accuracy == nil, "accuracy is not always there")
+    assert(summary.white.phases.middlegame == 54 and summary.black.phases == nil)
     assert(summary.middle == 18 and summary.ending == 61)
     game.division = nil
     assert(Game.analysis_summary(game).middle == nil)

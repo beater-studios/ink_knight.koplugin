@@ -1,5 +1,7 @@
 -- Goes through the screens against the real Lichess, with no window, and saves a picture of each one.
--- It reads everything it can, and with PLAY_AI=1 it also plays a casual game against level 1 and resigns it.
+-- It reads everything it can, and with PLAY_AI=1 it also plays a casual game against level 1 and resigns it. With
+-- CHANGE_ACCOUNT=1 it also writes a private note about the bot maia1 and blocks and unblocks it, which leaves the note
+-- on the account.
 -- Usage: INK_KNIGHT_TOKEN=lip_... OUTPUT_DIR=/tmp/out KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_live.lua
 local plugin_dir = assert(os.getenv("PLUGIN_DIR"))
 local out_dir = assert(os.getenv("OUTPUT_DIR"))
@@ -150,6 +152,206 @@ home:show_favorites()
 if opened("favorites") then
     print("favorites opened")
     close_top()
+end
+
+-- What came after 0.4.0, read only: the puzzles by opening and the history, the summary of a favorite the site
+-- analyzed, the explorers of masters and of the reader, the parts of the profile and the rankings. Nothing here is
+-- sent to the account.
+do
+    local s = home.strings
+    local Chess = require("ink_knight/chess")
+    home:puzzle_openings_menu()
+    pump(function() return home.puzzle_openings ~= nil end, 30, "openings list")
+    print("puzzle openings: " .. (home.puzzle_openings and #home.puzzle_openings or 0) .. " families")
+    shot("puzzle_openings")
+    home:close_pages()
+
+    home:puzzle_history()
+    pump(function()
+        local page = top_widget()
+        local first = page.lines and page.lines[1]
+        return first and first.text ~= s.loading
+    end, 30, "puzzle history")
+    local history_rows = items_of(top_widget())
+    print("puzzle history rows: " .. #history_rows .. ", first: " .. tostring(history_rows[1] and history_rows[1].text))
+    shot("puzzle_history")
+    if history_rows[1] and history_rows[1].callback and history_rows[1].kind == nil then
+        history_rows[1].callback()
+        local board = top_widget()
+        if not board.state or not board.state.position then
+            problem("a puzzle of the history should open on its position")
+        end
+        shot("puzzle_history_open")
+        -- Left unsolved, so nothing is sent.
+        UIManager:close(board)
+    end
+    home:close_pages()
+
+    local ReviewScreen = require("ink_knight/ui/review_screen")
+    local real_open = ReviewScreen.open
+    local last_review
+    ReviewScreen.open = function(...)
+        last_review = real_open(...)
+        return last_review
+    end
+    home:show_favorites()
+    if opened("favorites for the summary") then
+        for _, row in ipairs(items_of(top_widget())) do
+            if row.callback and not last_review then
+                row.callback()
+                if not last_review.game.summary then
+                    UIManager:close(last_review.screen)
+                    last_review = nil
+                end
+            end
+        end
+        if last_review then
+            local summary = last_review.game.summary
+            print(string.format("summary of an analyzed favorite: accuracy %s / %s, middlegame at %s, endgame at %s",
+                tostring(summary.white.accuracy), tostring(summary.black.accuracy), tostring(summary.middle), tostring(summary.ending)))
+            last_review:show_summary()
+            shot("review_summary")
+            home:close_pages()
+            UIManager:close(last_review.screen)
+        else
+            print("no favorite the site analyzed")
+        end
+        home:close_pages()
+    end
+    ReviewScreen.open = real_open
+
+    local start = Chess.parse_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+    ReviewScreen.analyze(home, start, "white")
+    pump(function() return top_widget().title == s.analysis_title end, 40, "analysis page")
+    local analysis_page = top_widget()
+    for _, label in ipairs({ s.analysis_masters, s.analysis_own_white }) do
+        local row
+        for _, item in ipairs(items_of(analysis_page)) do
+            row = row or (item.text == label and item)
+        end
+        if not row then
+            problem("the analysis should offer " .. label)
+        else
+            row.callback()
+            pump(function() return top_widget() ~= analysis_page and top_widget().title == label end, 40, label)
+            print(label .. ": " .. tostring(top_widget().lines and top_widget().lines[1] and top_widget().lines[1].text:sub(1, 60)))
+            shot(label == s.analysis_masters and "explorer_masters" or "explorer_own")
+            if top_widget() ~= analysis_page then
+                close_top()
+            end
+        end
+    end
+    home:close_pages()
+
+    Players.show(home, home.my_id)
+    if opened("own profile") then
+        local profile = top_widget()
+        for _, item in ipairs(items_of(profile)) do
+            if item.text == s.profile_activity or (item.text or ""):find(s.perf_names.storm, 1, true) then
+                local before = #UIManager._window_stack
+                item.callback()
+                if pump(function() return #UIManager._window_stack > before end, 30, item.text) then
+                    print(item.text .. ": " .. #items_of(top_widget()) .. " rows")
+                    shot(item.text == s.profile_activity and "profile_activity" or "profile_storm")
+                    close_top()
+                end
+            end
+        end
+        home:close_pages()
+    end
+    -- The notes need note:write, which this token may not have: then the profile says so instead of asking.
+    print("notes allowed by the token: " .. tostring(home:allows("notes")))
+    -- The preferences of the site need preference:read; bringing them only changes the options on the device.
+    if home:allows("preferences") then
+        home:settings_menu()
+        local settings_page = top_widget()
+        home:import_preferences(settings_page)
+        pump(function() return top_widget() ~= settings_page and top_widget().title == s.import_preferences end, 30, "preferences")
+        print("preferences brought: auto queen " .. tostring(home:option("auto_queen")) .. ", coordinates " .. tostring(home:option("board_coordinates"))
+            .. ", confirm " .. tostring(home:option("confirm_moves")) .. ", pieces " .. tostring(home:option("piece_set")))
+        shot("preferences_brought")
+        home:close_pages()
+    else
+        print("preferences: the token has no preference:read")
+    end
+    Players.show_rankings(home)
+    if opened("rankings") then
+        print("rankings rows: " .. #items_of(top_widget()))
+        shot("rankings")
+        close_top()
+    end
+    home:close_pages()
+end
+
+-- Only with CHANGE_ACCOUNT=1: a private note about the bot maia1, written on the device and read back, and the bot
+-- blocked and unblocked from its profile.
+if os.getenv("CHANGE_ACCOUNT") == "1" then
+    local s = home.strings
+    local target = "maia1"
+    Players.show(home, target)
+    if opened("maia1 profile") then
+        local profile = top_widget()
+        local function row(text)
+            for _, item in ipairs(items_of(profile)) do
+                if item.text == text then
+                    return item
+                end
+            end
+        end
+        -- The note, through the dialog of the device, only with note:write.
+        if not home:allows("notes") then
+            print("notes skipped: the token has no note:write")
+        else
+            local note = "Ink Knight test note " .. os.date("!%Y-%m-%dT%H:%M:%SZ")
+            row(s.profile_notes).callback()
+            if pump(function() return top_widget() ~= profile and top_widget().title == s.profile_notes end, 30, "notes page") then
+                local notes_page = top_widget()
+                items_of(notes_page)[1].callback()
+                local dialog
+                for _, window in ipairs(UIManager._window_stack) do
+                    if window.widget.setInputText then
+                        dialog = window.widget
+                    end
+                end
+                dialog:setInputText(note)
+                dialog.button_table:getButtonById("save").callback()
+                pump(function() return top_widget() ~= notes_page and top_widget().title == s.profile_notes end, 30, "notes again")
+                local found = false
+                for _, item in ipairs(items_of(top_widget())) do
+                    found = found or (item.text or ""):find(note, 1, true) ~= nil
+                end
+                print("note written and read back: " .. tostring(found))
+                if not found then problem("the note should be listed once written") end
+                shot("notes_after_writing")
+            end
+            while top_widget() ~= profile do close_top() end
+        end
+        -- Blocked after the confirmation, then unblocked, only with follow:write, and not when the account follows the
+        -- bot (blocking would drop the follow, which unblocking does not give back) or has it blocked already.
+        if not home:allows("follow_change") then
+            print("blocking skipped: the token has no follow:write")
+        elseif row(s.unfollow_player) or row(s.unblock_player) then
+            print("blocking skipped: the account follows " .. target .. " or has it blocked")
+        else
+            row(s.block_player).callback()
+            local confirm = top_widget()
+            for _, item in ipairs(items_of(confirm)) do
+                if item.kind == "primary" then item.callback() end
+            end
+            UIManager:close(confirm)
+            pump(function() return row(s.unblock_player) ~= nil end, 30, "blocked")
+            print("blocked: " .. tostring(row(s.unblock_player) ~= nil))
+            shot("profile_blocked")
+            if row(s.unblock_player) then
+                row(s.unblock_player).callback()
+                pump(function() return row(s.block_player) ~= nil end, 30, "unblocked")
+                print("unblocked: " .. tostring(row(s.block_player) ~= nil))
+            else
+                problem("the profile should offer to unblock once blocked")
+            end
+        end
+        while #UIManager._window_stack > depth do close_top() end
+    end
 end
 
 pump(function() return #home:puzzle_pile() > 0 end, 25, "puzzle batch")

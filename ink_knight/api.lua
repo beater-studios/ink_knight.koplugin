@@ -232,6 +232,11 @@ function Api.perf_stats(username, perf)
     return { method = "GET", path = "/api/user/" .. path_id(username) .. "/perf/" .. path_id(perf) }
 end
 
+-- This one needs preference:read, an optional permission of the token.
+function Api.preferences()
+    return { method = "GET", path = "/api/account/preferences" }
+end
+
 function Api.user_activity(username)
     return { method = "GET", path = "/api/user/" .. path_id(username) .. "/activity" }
 end
