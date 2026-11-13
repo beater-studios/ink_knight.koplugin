@@ -75,6 +75,17 @@ local function decode(text)
     return nil
 end
 
+-- The values of an answer with one JSON per line, false for a line that is not one.
+local function json_lines(body)
+    local lines = tostring(body):gmatch("[^\r\n]+")
+    return function()
+        local line = lines()
+        if line then
+            return decode(line) or false
+        end
+    end
+end
+
 local function new_token_store()
     return TokenStore.new{
         settings_dir = DataStorage:getSettingsDir(),
@@ -1993,6 +2004,7 @@ function Home:puzzles_menu()
             end },
             { text = s.puzzle_by_theme, callback = function() self:with_feature("puzzles", function() self:puzzle_themes_menu() end) end },
             { text = s.puzzle_by_opening, callback = function() self:with_feature("puzzles", function() self:puzzle_openings_menu() end) end },
+            { text = s.puzzle_history, callback = function() self:with_feature("puzzles", function() self:puzzle_history() end) end },
             { text = s.puzzle_stats, callback = function() self:with_feature("puzzles", function() self:show_puzzle_stats() end) end },
             { kind = "section", text = s.options_section },
             { splice = self:puzzle_option_rows(page) },
@@ -2008,6 +2020,84 @@ function Home:puzzle_themes_menu()
         rows[#rows + 1] = { text = s.puzzle_themes[angle], callback = function() self:open_puzzles(angle) end }
     end
     self:open_list(s.puzzle_by_theme, { { kind = "tiles", columns = 2, items = rows } })
+end
+
+local HISTORY_PAGE = 30
+
+-- After a puzzle of the history is solved again, the page starts over, since Lichess puts the new try on top.
+function Home:puzzle_history()
+    local s = self.strings
+    local history
+    local function load_more()
+        if history.loading or history.done then
+            return
+        end
+        if not self.net then
+            history.problem = s.no_network
+            return
+        end
+        history.loading = true
+        local current = history
+        self:reload_pages()
+        self.net:request(Api.puzzle_activity(HISTORY_PAGE, current.before), function(status, body)
+            if current ~= history then
+                return
+            end
+            current.loading = false
+            if status ~= 200 then
+                current.problem = self:error_text(status)
+            else
+                current.problem = nil
+                local count = 0
+                for entry in json_lines(body) do
+                    count = count + 1
+                    -- The next page goes on from the last line, read or not, so lines that cannot be played do not
+                    -- stop it.
+                    if type(entry) == "table" and type(entry.date) == "number" then
+                        current.before = entry.date
+                    end
+                    local puzzle = Puzzles.from_activity(entry)
+                    if puzzle then
+                        current.entries[#current.entries + 1] = puzzle
+                    end
+                end
+                current.done = count < HISTORY_PAGE
+            end
+            self:reload_pages()
+        end)
+    end
+    local function start()
+        history = { entries = {}, done = false }
+        load_more()
+    end
+    start()
+    self:open_page{ title = s.puzzle_history, build = function()
+        local rows = {}
+        for _, puzzle in ipairs(history.entries) do
+            rows[#rows + 1] = {
+                text = string.format(s.puzzle_rating, puzzle.rating or 0),
+                detail = os.date("%Y-%m-%d %H:%M", math.floor(puzzle.date / 1000)),
+                value = puzzle.win and s.puzzle_history_won or s.puzzle_history_lost,
+                callback = function()
+                    PuzzleScreen.open(self, { puzzle = puzzle, single = true, on_closed = function()
+                        start()
+                        self:reload_pages()
+                    end })
+                end,
+            }
+        end
+        if history.loading then
+            rows[#rows + 1] = { kind = "text", text = s.loading, center = true }
+        elseif history.problem then
+            rows[#rows + 1] = { kind = "text", text = history.problem, center = true }
+        elseif history.done and #history.entries == 0 then
+            rows[#rows + 1] = { kind = "text", text = s.puzzle_history_none, center = true }
+        end
+        if not history.done and not history.loading and not history.problem then
+            rows[#rows + 1] = { kind = "secondary", text = s.puzzle_history_more, callback = load_more }
+        end
+        return rows
+    end }
 end
 
 local function grouped(count, separator)
@@ -2245,8 +2335,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
     self.net:request(request, function(status, body)
         self:report_or(status, function()
             local rows = {}
-            for line in tostring(body):gmatch("[^\n]+") do
-                local game = decode(line)
+            for game in json_lines(body) do
                 if game and game.moves and (game.variant == "standard" or game.variant == nil) then
                     local players = game.players or {}
                     local white, black = Game.player_name(players.white, s.anonymous), Game.player_name(players.black, s.anonymous)

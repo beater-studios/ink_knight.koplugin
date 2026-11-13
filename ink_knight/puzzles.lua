@@ -138,6 +138,10 @@ function Puzzles.new_session(puzzle)
     if not position then
         return nil
     end
+    -- A puzzle of the history starts at its position, with the opponent's move that led to it named apart.
+    if not last and puzzle.last_uci then
+        last = { from = Chess.square_from_name(puzzle.last_uci:sub(1, 2)), to = Chess.square_from_name(puzzle.last_uci:sub(3, 4)) }
+    end
     return { puzzle = puzzle, position = position, last_move = last, my_color = position.turn, step = 1, mistakes = 0 }
 end
 
@@ -235,6 +239,34 @@ function Puzzles.read_openings(data)
         end
     end
     return families
+end
+
+Puzzles.HISTORY = "history"
+
+-- A line of /api/puzzle/activity as a puzzle to solve again, with when it was tried (date, in milliseconds) and
+-- whether it was solved (win). nil when something is missing or cannot be played.
+function Puzzles.from_activity(entry)
+    local puzzle = type(entry) == "table" and entry.puzzle
+    if type(puzzle) ~= "table" or not Api.is_safe_id(puzzle.id) or type(entry.date) ~= "number" or type(puzzle.solution) ~= "table"
+        or #puzzle.solution == 0 or type(puzzle.lastMove) ~= "string" or not puzzle.lastMove:match("^[a-h][1-8][a-h][1-8][qrbn]?$") then
+        return nil
+    end
+    local position = Chess.parse_fen(puzzle.fen)
+    if not position or not Chess.apply_uci(position, puzzle.solution[1]) then
+        return nil
+    end
+    return {
+        id = puzzle.id,
+        rating = tonumber(puzzle.rating),
+        themes = puzzle.themes,
+        solution = puzzle.solution,
+        fen = puzzle.fen,
+        played = "",
+        last_uci = puzzle.lastMove,
+        pile = Puzzles.HISTORY,
+        date = entry.date,
+        win = entry.win == true,
+    }
 end
 
 -- How many openings keep their puzzles on the device, the last ones opened. Each has its pile, and there are hundreds.

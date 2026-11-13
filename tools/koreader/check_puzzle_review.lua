@@ -368,6 +368,102 @@ end
 home.settings:delSetting("puzzle_openings_recent")
 UIManager:close(puzzles_page)
 
+-- The history: a page of the puzzles tried, the last first, one that opens to be solved again from its position,
+-- its result sent and no next puzzle, and the earlier ones asked from the date of the last.
+local history_fen = Chess.to_fen((Chess.from_moves(nil, "e2e4 e7e5 f1c4 b8c6 d1h5 g8f6")))
+local function activity_line(id, date, win)
+    return string.format('{"date":%d,"win":%s,"puzzle":{"id":"%s","rating":1500,"plays":10,"solution":["h5f7"],"themes":["mateIn1"],"fen":"%s","lastMove":"g8f6"}}',
+        date, win and "true" or "false", id, history_fen)
+end
+local lines = {}
+for index = 1, 30 do
+    lines[#lines + 1] = activity_line("hist" .. index, 1800000000000 - index * 1000, index % 2 == 0)
+    if index == 15 then
+        lines[#lines + 1] = '{"date":1799999985500,"puzzle":{"id":"broken"}}'
+    end
+end
+answers["/api/puzzle/activity"] = { 200, table.concat(lines, "\n") }
+answers["/api/puzzle/batch/mix"] = { 200, "{}" }
+home.settings:delSetting("puzzle_results")
+asked_urls = {}
+home:puzzles_menu()
+puzzles_page = home.pages[#home.pages]
+row_of(puzzles_page, s.puzzle_history).callback()
+local history_page = home.pages[#home.pages]
+run_all()
+check(table.concat(asked_urls, " "):find("/api/puzzle/activity?max=30", 1, true), "the history should be asked: " .. table.concat(asked_urls, " "))
+local first_row = history_page.lines[1]
+check(first_row and first_row.text == string.format(s.puzzle_rating, 1500) and first_row.value == s.puzzle_history_lost, "the last try first, failed: " .. tostring(first_row and first_row.value))
+check(history_page.lines[2].value == s.puzzle_history_won, "the one before, solved")
+local more = row_of(history_page, s.puzzle_history_more)
+check(more ~= nil, "a full page offers the earlier ones")
+asked = {}
+first_row.callback()
+local history_screen
+for _, widget in ipairs(UIManager._window_stack or {}) do
+    if widget.widget and widget.widget.on_square then
+        history_screen = widget.widget
+    end
+end
+check(history_screen and history_screen.state.last_move and history_screen.state.last_move.to == Chess.square_from_name("f6"), "the puzzle should open with the opponent's last move shown")
+history_screen.on_square(Chess.square_from_name("h5"))
+history_screen.on_square(Chess.square_from_name("f7"))
+run_all()
+local has_next = false
+for _, button in ipairs(history_screen.state.buttons or {}) do
+    has_next = has_next or button.id == "next"
+end
+check(not has_next, "a puzzle of the history has no next one")
+local sent = false
+for _, path in ipairs(asked) do
+    sent = sent or path == "/api/puzzle/batch/mix"
+end
+check(sent, "its result should go to Lichess")
+asked_urls = {}
+close_boards()
+run_all()
+check(table.concat(asked_urls, " "):find("/api/puzzle/activity?max=30", 1, true) and not table.concat(asked_urls, " "):find("before=", 1, true),
+    "after solving one, the history starts over: " .. table.concat(asked_urls, " "))
+more = row_of(history_page, s.puzzle_history_more)
+-- The earlier ones: asked from the date of the last, added below.
+answers["/api/puzzle/activity"] = { 200, activity_line("older1", 1700000000000, true) }
+asked_urls = {}
+more.callback()
+run_all()
+check(table.concat(asked_urls, " "):find("before=1799999970000", 1, true), "the earlier ones should be asked from the last date: " .. table.concat(asked_urls, " "))
+check(#history_page.lines == 31 and row_of(history_page, s.puzzle_history_more) == nil, "the earlier one added, and no more to ask for: " .. #history_page.lines)
+-- A puzzle of the history left unsolved is not kept anywhere.
+history_page.lines[31].callback()
+close_boards()
+check(home.settings:readSetting("puzzles_history") == nil, "a puzzle of the history should not go into a pile")
+UIManager:close(history_page)
+run_all()
+-- A full page of lines that cannot be played still goes on, from the date of its last line.
+local unreadable = {}
+for index = 1, 30 do
+    unreadable[index] = string.format('{"date":%d,"puzzle":{"id":"bad%d"}}', 1600000000000 - index, index)
+end
+answers["/api/puzzle/activity"] = { 200, table.concat(unreadable, "\n") }
+home:puzzle_history()
+history_page = home.pages[#home.pages]
+run_all()
+more = row_of(history_page, s.puzzle_history_more)
+check(more ~= nil, "a page with nothing to play still offers the earlier ones")
+asked_urls = {}
+more.callback()
+run_all()
+check(table.concat(asked_urls, " "):find("before=1599999999970", 1, true), "and goes on from its last line: " .. table.concat(asked_urls, " "))
+UIManager:close(history_page)
+-- Without the network, the page says so.
+local net_before = home.net
+home.net = nil
+home:puzzle_history()
+check(row_of(home.pages[#home.pages], s.no_network), "with no network, the history should say so")
+UIManager:close(home.pages[#home.pages])
+home.net = net_before
+UIManager:close(puzzles_page)
+home.settings:delSetting("puzzle_results")
+
 -- Offline: the color changes, nothing is asked, and the kept puzzles still play.
 UIManager:close(home.hub)
 asked = {}

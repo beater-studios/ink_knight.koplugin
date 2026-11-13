@@ -12,9 +12,10 @@ PuzzleScreen.__index = PuzzleScreen
 local REPLY_DELAY = 0.7
 
 -- opts.puzzle: a prepared puzzle. Without it, the next saved one is used, of the theme in opts.angle, or with
--- opts.pack the next one of the package. Daily puzzles and the ones of the package do not report a result.
+-- opts.pack the next one of the package. Daily puzzles and the ones of the package do not report a result. With
+-- opts.single, a puzzle that reports its result but has no next one, as one of the history.
 function PuzzleScreen.open(app, opts)
-    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, angle = opts.angle, review = opts.review, pack = opts.pack, on_closed = opts.on_closed }, PuzzleScreen)
+    local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, single = opts.single, angle = opts.angle, review = opts.review, pack = opts.pack, on_closed = opts.on_closed }, PuzzleScreen)
     self.screen = BoardScreen:new{
         state = {},
         on_square = function(square) self:on_square(square) end,
@@ -51,7 +52,7 @@ function PuzzleScreen:render(what)
     end
     local buttons = { { id = "back", label = s.back } }
     if session.solved then
-        if not self.daily then
+        if not self.daily and not self.single then
             buttons[#buttons + 1] = { id = "next", label = s.puzzle_next_button }
         end
     else
@@ -164,8 +165,8 @@ end
 function PuzzleScreen:closed()
     self.is_closed = true
     -- Leaving a puzzle unsolved does not count against it: it just goes back to the pile. One of the package stays
-    -- where it is, so the same one comes next time.
-    if self.session and not self.session.solved and not self.daily and not self.pack then
+    -- where it is, so the same one comes next time, and one of the history has no pile.
+    if self.session and not self.session.solved and not self.daily and not self.pack and not self.single then
         self.app:return_puzzle(self.session.puzzle)
     end
     self.app:flush_puzzles()

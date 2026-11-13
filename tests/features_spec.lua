@@ -973,6 +973,26 @@ test("the openings with puzzles keep the order of Lichess, without keys that can
     assert(Api.puzzle_batch(15, "Sicilian_Defense_Najdorf_Variation").path == "/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation?nb=15")
 end)
 
+test("a puzzle of the history is solved again from its position, with the last move shown", function()
+    local entry = { date = 1793058159900, win = false, puzzle = { id = "0haqU", rating = 1167, plays = 24913,
+        solution = { "d4d3", "e4c5", "d3c2", "c5b7", "c2c1q" }, themes = { "endgame" },
+        fen = "6k1/1q3p2/5prp/2b5/3pN3/1PP2P1P/2Q1R1P1/6K1 b - - 0 1", lastMove = "f2f3" } }
+    local puzzle = Puzzles.from_activity(entry)
+    assert(puzzle and puzzle.id == "0haqU" and puzzle.rating == 1167 and puzzle.win == false and puzzle.pile == Puzzles.HISTORY)
+    local session = Puzzles.new_session(puzzle)
+    assert(session.my_color == "b", "black to move")
+    assert(session.last_move.from == Chess.square_from_name("f2") and session.last_move.to == Chess.square_from_name("f3"))
+    assert(Puzzles.try_move(session, "d4d3") == "correct")
+    -- What cannot be played is left out.
+    local bad = { date = 1, puzzle = { id = "x", solution = { "a1a8" }, fen = entry.puzzle.fen, lastMove = "f2f3" } }
+    assert(Puzzles.from_activity(bad) == nil, "a first move that is not legal")
+    assert(Puzzles.from_activity({ date = 1, puzzle = { id = "../x", solution = { "d4d3" }, fen = entry.puzzle.fen, lastMove = "f2f3" } }) == nil)
+    assert(Puzzles.from_activity({ puzzle = entry.puzzle }) == nil, "no date")
+    assert(Puzzles.from_activity(nil) == nil)
+    assert(Api.puzzle_activity(30).path == "/api/puzzle/activity?max=30")
+    assert(Api.puzzle_activity(30, 1793058159900).path == "/api/puzzle/activity?max=30&before=1793058159900")
+end)
+
 test("the recent openings keep the last five, the last first, and say which fell off", function()
     local recent = {}
     for index = 1, 5 do

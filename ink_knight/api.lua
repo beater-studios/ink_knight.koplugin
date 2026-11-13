@@ -306,6 +306,15 @@ function Api.puzzle_by_id(id)
     return { method = "GET", path = "/api/puzzle/" .. path_id(id) }
 end
 
+-- before is in milliseconds.
+function Api.puzzle_activity(max, before)
+    local path = string.format("/api/puzzle/activity?max=%d", max)
+    if before then
+        path = path .. string.format("&before=%d", before)
+    end
+    return { method = "GET", accept = "application/x-ndjson", path = path }
+end
+
 -- The openings Lichess has puzzles of, by family, the way its app asks for them: a page of the site that answers
 -- JSON when asked to.
 function Api.puzzle_openings()
