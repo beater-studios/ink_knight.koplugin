@@ -9,6 +9,7 @@ local Game = require("ink_knight/game")
 local Engine = require("ink_knight/engine")
 local I18n = require("ink_knight/i18n")
 local Pgn = require("ink_knight/pgn")
+local Profile = require("ink_knight/profile")
 local Puzzles = require("ink_knight/puzzles")
 local RatingChart = require("ink_knight/rating_chart")
 local TokenAccess = require("ink_knight/token_access")
@@ -971,6 +972,41 @@ test("the openings with puzzles keep the order of Lichess, without keys that can
     assert(#Puzzles.read_openings(nil) == 0 and #Puzzles.read_openings({ openings = "x" }) == 0)
     -- The batch of an opening goes to its key, as a theme does.
     assert(Api.puzzle_batch(15, "Sicilian_Defense_Najdorf_Variation").path == "/api/puzzle/batch/Sicilian_Defense_Najdorf_Variation?nb=15")
+end)
+
+test("the profile: recent activity, notes, the FIDE player, Puzzle Storm and the top 10", function()
+    local s = I18n.en
+    local days = Profile.activity(s, {
+        { interval = { start = 1792972800000, ["end"] = 1793059200000 },
+          games = { rapid = { win = 3, loss = 1, draw = 0, rp = { before = 1500, after = 1520 } }, atomic = { win = 1, loss = 0, draw = 0 } },
+          puzzles = { score = { win = 10, loss = 2, draw = 0, rp = { before = 1600, after = 1610 } } },
+          storm = { runs = 4, score = 31 }, correspondenceMoves = { nb = 5, games = {} },
+          follows = { ["in"] = { ids = { "a", "b" } } }, posts = { {} } },
+        { interval = { start = 1792886400000 }, posts = { {} } },
+    })
+    assert(#days == 1, "a day with nothing the plugin shows is left out")
+    local text = table.concat(days[1].lines, "\n")
+    assert(text:find(string.format(s.activity_games, s.perf_names.rapid, 3, 0, 1) .. " · " .. string.format(s.activity_rating, 1500, 1520), 1, true), text)
+    assert(not text:find("atomic", 1, true) and text:find(string.format(s.activity_puzzles, s.perf_names.puzzle, 10, 2), 1, true))
+    assert(text:find(string.format(s.activity_storm, s.perf_names.storm, 31, 4), 1, true) and text:find(string.format(s.activity_followers, 2), 1, true))
+    assert(text:find(string.format(s.activity_correspondence, 5), 1, true))
+    -- The day is the one of Lichess, in UTC, whatever the time zone of the device.
+    assert(days[1].date == "2026-10-26", days[1].date)
+    -- A busy day has the whole count in nb, and only some names.
+    local busy = Profile.activity(s, { { interval = { start = 1792972800000 }, follows = { ["in"] = { ids = { "a" }, nb = 40 } } } })
+    assert(busy[1].lines[1] == string.format(s.activity_followers, 40), busy[1].lines[1])
+    local notes = Profile.notes({ { text = "old", date = 1700000000000 }, { text = "morning", date = 1790000000000 }, { text = "  " },
+        { text = "evening", date = 1790030000000 } })
+    assert(#notes == 3 and notes[1].text == "evening" and notes[2].text == "morning", "the last first, also on the same day")
+    local fide = Profile.fide_lines(s, { id = 1, name = "Erigaisi Arjun", federation = "IND", title = "GM", standard = 2746, rapid = 2740, year = 2003 })
+    assert(fide[1] == "GM Erigaisi Arjun" and table.concat(fide, "\n"):find(s.perf_names.classical .. ": 2746", 1, true))
+    assert(Profile.fide_lines(s, {}) == nil)
+    local records, storm_days = Profile.storm(s, { high = { day = 0, week = 0, month = 12, allTime = 33 }, days = { { _id = "2025/2/8", score = 1, runs = 1 } } })
+    assert(#records == 2 and records[1] == string.format(s.storm_all_time, 33) and storm_days[1] == string.format(s.storm_day_row, "2025/2/8", 1, 1))
+    local top = Profile.top10({ bullet = { { id = "a", username = "A", title = "GM", perfs = { bullet = { rating = 3349 } } }, { id = "b" }, 7, true }, atomic = { { id = "c", username = "C", perfs = { atomic = { rating = 2500 } } } } })
+    assert(#top == 1 and top[1].key == "bullet" and #top[1].players == 1 and top[1].players[1].title == "GM")
+    assert(Api.write_note("someone", "a b").body == "text=a%20b" or Api.write_note("someone", "a b").body == "text=a+b")
+    assert(Api.fide_player(35009192).path == "/api/fide/player/35009192" and Api.storm_dashboard("someone", 30).path == "/api/storm/dashboard/someone?days=30")
 end)
 
 test("the masters and the reader's own games in a position, from the explorer", function()

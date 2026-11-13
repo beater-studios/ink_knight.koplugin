@@ -4,6 +4,7 @@ local UIManager = require("ui/uimanager")
 
 local Api = require("ink_knight/api")
 local ChartScreen = require("ink_knight/ui/chart_screen")
+local Profile = require("ink_knight/profile")
 local RatingChart = require("ink_knight/rating_chart")
 
 local Players = {}
@@ -21,6 +22,7 @@ function Players.menu(app)
         { text = s.players_following, callback = function()
             app:with_feature("following", function() Players.pick(app, s.players_following, open, true) end)
         end },
+        { text = s.rankings, callback = function() Players.show_rankings(app) end },
     })
 end
 
@@ -157,14 +159,21 @@ local function rating_row(app, user, name, key)
     local perf = user.perfs[key]
     local games = perf.games or perf.runs or 0
     local label = s.perf_names[key]
-    -- The question mark is how Lichess shows a rating it is not sure of yet, so players know it from the site.
-    local row = { text = string.format("%s: %d%s", label, perf.rating, perf.prov and "?" or "") }
+    -- The question mark is how Lichess shows a rating it is not sure of yet, so players know it from the site. The
+    -- puzzle modes have a best score instead.
+    local row = { text = string.format("%s: %d%s", label, perf.rating or perf.score, perf.prov and "?" or "") }
     if games == 0 then
         row.value = s.no_rating
         return row
     end
-    row.value = games == 1 and s.perf_row_one or string.format(s.perf_row, games)
-    if not NO_CHART[key] then
+    if perf.runs and not perf.games then
+        row.value = string.format(s.perf_runs, perf.runs)
+    else
+        row.value = games == 1 and s.perf_row_one or string.format(s.perf_row, games)
+    end
+    if key == "storm" then
+        row.callback = function() Players.show_storm(app, user.id) end
+    elseif not NO_CHART[key] then
         row.callback = function() Players.show_perf(app, user.id, name, key, label) end
     end
     return row
@@ -197,6 +206,16 @@ function Players.open_profile(app, user)
                 app:show_past_games(user.id, name)
             end
         end }
+        rows[#rows + 1] = { text = s.profile_activity, callback = function() Players.show_activity(app, user.id) end }
+        -- The notes are the reader's own, about someone else.
+        if not mine and app.my_id then
+            rows[#rows + 1] = { text = s.profile_notes, callback = function() Players.show_notes(app, user.id, name) end }
+        end
+        -- Only an account linked to a FIDE player has an id; a rating typed in the profile is not checked.
+        local fide_id = tonumber(user.fideId)
+        if fide_id and fide_id > 0 then
+            rows[#rows + 1] = { text = s.profile_fide, callback = function() Players.show_fide(app, math.floor(fide_id)) end }
+        end
         rows[#rows + 1] = { kind = "section", text = s.ratings_section }
         local keys = {}
         -- Variants are not played here, so their ratings stay out of the list.
@@ -208,7 +227,7 @@ function Players.open_profile(app, user)
         table.sort(keys)
         for _, key in ipairs(keys) do
             local perf = user.perfs[key]
-            if type(perf) == "table" and perf.rating then
+            if type(perf) == "table" and (perf.rating or (NO_CHART[key] and perf.score and (perf.runs or 0) > 0)) then
                 rows[#rows + 1] = rating_row(app, user, name, key)
             end
         end
@@ -258,6 +277,136 @@ function Players.show_crosstable(app, user, name)
                 { kind = "stat", text = name, value = tostring(scores[user.id] or 0) },
                 { kind = "stat", text = s.crosstable_games, value = tostring(data.nbGames) },
             })
+        end)
+    end)
+end
+
+-- These pages open over the profile, so their title is the part and the player is the page under them.
+function Players.show_activity(app, user_id)
+    local s = app.strings
+    app.net:request(Api.user_activity(user_id), function(status, body)
+        app:report_or(status, function()
+            local days = Profile.activity(s, app.decode(body))
+            if #days == 0 then
+                app:info(s.activity_none)
+                return
+            end
+            local rows = {}
+            for _, day in ipairs(days) do
+                rows[#rows + 1] = { kind = "section", text = day.date }
+                rows[#rows + 1] = { kind = "text", text = table.concat(day.lines, "\n") }
+            end
+            app:open_list(s.profile_activity, rows)
+        end)
+    end)
+end
+
+-- The reader's notes about a player, which only the reader sees, and a new one written on the device.
+function Players.show_notes(app, user_id, name)
+    local s = app.strings
+    app.net:request(Api.user_notes(user_id), function(status, body)
+        app:report_or(status, function()
+            local page
+            local rows = { { kind = "primary", text = s.note_write, callback = function() Players.write_note(app, user_id, name, page) end } }
+            local notes = Profile.notes(app.decode(body))
+            if #notes == 0 then
+                rows[#rows + 1] = { kind = "text", text = s.notes_none, center = true }
+            end
+            for _, note in ipairs(notes) do
+                rows[#rows + 1] = { kind = "text", text = note.date and (note.date .. "\n" .. note.text) or note.text }
+            end
+            page = app:open_list(s.profile_notes, rows)
+        end)
+    end)
+end
+
+-- page: the notes, opened again with the new one once it is saved.
+function Players.write_note(app, user_id, name, page)
+    local s = app.strings
+    local dialog
+    dialog = InputDialog:new{
+        title = string.format(s.note_title, name),
+        allow_newline = true,
+        buttons = { {
+            { text = s.cancel, id = "close", callback = function() UIManager:close(dialog) end },
+            { text = s.note_save, is_enter_default = true, callback = function()
+                local text = dialog:getInputText() or ""
+                UIManager:close(dialog)
+                if not text:match("%S") then
+                    return
+                end
+                app.net:request(Api.write_note(user_id, text), function(status)
+                    app:report_or(status, function()
+                        app:info(s.note_saved)
+                        if page then
+                            UIManager:close(page)
+                            Players.show_notes(app, user_id, name)
+                        end
+                    end)
+                end)
+            end },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function Players.show_fide(app, fide_id)
+    local s = app.strings
+    app.net:request(Api.fide_player(fide_id), function(status, body)
+        app:report_or(status, function()
+            local lines = Profile.fide_lines(s, app.decode(body))
+            if not lines then
+                app:info(s.unexpected_error)
+                return
+            end
+            app:open_list(s.profile_fide, { { kind = "text", text = table.concat(lines, "\n") } })
+        end)
+    end)
+end
+
+function Players.show_storm(app, user_id)
+    local s = app.strings
+    app.net:request(Api.storm_dashboard(user_id, 30), function(status, body)
+        app:report_or(status, function()
+            local records, days = Profile.storm(s, app.decode(body))
+            local rows = {}
+            if #records > 0 then
+                rows[#rows + 1] = { kind = "text", text = table.concat(records, "\n") }
+            end
+            if #days > 0 then
+                rows[#rows + 1] = { kind = "section", text = s.storm_days }
+                rows[#rows + 1] = { kind = "text", text = table.concat(days, "\n") }
+            end
+            if #rows == 0 then
+                app:info(s.storm_none)
+                return
+            end
+            app:open_list(s.perf_names.storm, rows)
+        end)
+    end)
+end
+
+function Players.show_rankings(app)
+    local s = app.strings
+    app.net:request(Api.top10(), function(status, body)
+        app:report_or(status, function()
+            local rows = {}
+            for _, list in ipairs(Profile.top10(app.decode(body))) do
+                rows[#rows + 1] = { kind = "section", text = s.perf_names[list.key] }
+                for index, player in ipairs(list.players) do
+                    rows[#rows + 1] = {
+                        text = string.format("%d. %s", index, player.title and (player.title .. " " .. player.name) or player.name),
+                        value = tostring(player.rating),
+                        callback = function() Players.show(app, player.id) end,
+                    }
+                end
+            end
+            if #rows == 0 then
+                app:info(s.unexpected_error)
+                return
+            end
+            app:open_list(s.rankings, rows)
         end)
     end)
 end

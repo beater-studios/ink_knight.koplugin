@@ -51,6 +51,19 @@ local ANSWERS = {
     ["/api/account"] = string.format('{"id":"%s","username":"%s","perfs":{"rapid":{"rating":1500}}}', LONG_NAME:lower(), LONG_NAME),
     ["/api/account/playing"] = '{"nowPlaying":[' .. string.rep(GAME .. ",", 5) .. GAME .. ']}',
 }
+-- A player with every part of the profile: activity, notes, a linked FIDE player and Puzzle Storm.
+local OTHER = "Bartholomew_Vasconce"
+ANSWERS["/api/user/" .. OTHER:lower()] = string.format('{"id":"%s","username":"%s","fideId":35009192,"perfs":{"rapid":{"rating":2999,"games":9999},'
+    .. '"storm":{"runs":999,"score":99}}}', OTHER:lower(), OTHER)
+ANSWERS["/api/user/" .. OTHER:lower() .. "/activity"] = '[{"interval":{"start":1792972800000,"end":1793059200000},'
+    .. '"games":{"correspondence":{"win":999,"loss":999,"draw":999,"rp":{"before":2999,"after":2999}}},'
+    .. '"puzzles":{"score":{"win":999,"loss":999,"draw":0,"rp":{"before":2999,"after":2999}}},"storm":{"runs":999,"score":99},'
+    .. '"correspondenceMoves":{"nb":999,"games":[]},"tournaments":{"nb":99},"follows":{"in":{"ids":["a"]},"out":{"ids":["b"]}}}]'
+ANSWERS["/api/user/" .. OTHER:lower() .. "/note"] = '[{"text":"' .. string.rep("A note long enough to wrap over several lines. ", 6) .. '","date":1790000000000}]'
+ANSWERS["/api/fide/player/35009192"] = '{"id":35009192,"name":"Vasconcelos Alessandra Bartholomew","federation":"BRA","title":"WGM","standard":2999,"rapid":2999,"blitz":2999,"year":1999}'
+ANSWERS["/api/storm/dashboard/" .. OTHER:lower()] = '{"high":{"day":99,"week":99,"month":99,"allTime":99},"days":[{"_id":"2026/11/12","score":99,"runs":999}]}'
+ANSWERS["/api/player"] = '{"correspondence":[{"id":"' .. OTHER:lower() .. '","username":"' .. OTHER .. '","title":"WCM","perfs":{"correspondence":{"rating":2999}}}]}'
+
 local real_new = Net.new
 Net.new = function(opts)
     opts.ca_file = plugin_dir .. "/LICENSE"
@@ -307,6 +320,42 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The profile of another player with every part, each part, and the rankings.
+    local Players = require("ink_knight/ui/players")
+    local function settle()
+        for _ = 1, 10 do
+            home.net:tick()
+        end
+    end
+    Players.show(home, OTHER:lower())
+    settle()
+    local profile = top_page()
+    check_page(profile, language .. " profile")
+    for _, name in ipairs({ "profile_activity", "profile_notes", "profile_fide" }) do
+        local found
+        for _, line in ipairs(profile.lines) do
+            if line.text == home.strings[name] then
+                found = line
+            end
+        end
+        if not found then
+            problem(language .. " profile: no row " .. name)
+        else
+            found.callback()
+            settle()
+            check_page(top_page(), language .. " " .. name)
+            UIManager:close(top_page())
+        end
+    end
+    Players.show_storm(home, OTHER:lower())
+    settle()
+    check_page(top_page(), language .. " profile storm")
+    UIManager:close(top_page())
+    UIManager:close(profile)
+    Players.show_rankings(home)
+    settle()
+    check_page(top_page(), language .. " rankings")
+    UIManager:close(top_page())
     -- The summary of the analysis of a game, with the longest names Lichess allows.
     local summary_review = require("ink_knight/ui/review_screen").open(home, { moves = { { uci = "e2e4", san = "e4" } }, white = LONG_NAME, black = LONG_NAME, summary = {
         white = { accuracy = 100, inaccuracy = 99, mistake = 99, blunder = 99, acpl = 999 },

@@ -224,6 +224,30 @@ function Api.perf_stats(username, perf)
     return { method = "GET", path = "/api/user/" .. path_id(username) .. "/perf/" .. path_id(perf) }
 end
 
+function Api.user_activity(username)
+    return { method = "GET", path = "/api/user/" .. path_id(username) .. "/activity" }
+end
+
+function Api.user_notes(username)
+    return { method = "GET", path = "/api/user/" .. path_id(username) .. "/note" }
+end
+
+function Api.write_note(username, text)
+    return { method = "POST", path = "/api/user/" .. path_id(username) .. "/note", body = form({ { "text", text } }) }
+end
+
+function Api.fide_player(fide_id)
+    return { method = "GET", path = string.format("/api/fide/player/%d", fide_id) }
+end
+
+function Api.storm_dashboard(username, days)
+    return { method = "GET", path = string.format("/api/storm/dashboard/%s?days=%d", path_id(username), days) }
+end
+
+function Api.top10()
+    return { method = "GET", path = "/api/player" }
+end
+
 function Api.crosstable(first, second)
     return { method = "GET", path = "/api/crosstable/" .. path_id(first) .. "/" .. path_id(second) }
 end
