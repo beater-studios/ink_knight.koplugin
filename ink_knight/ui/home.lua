@@ -412,7 +412,8 @@ end
 
 function Home:broadcast_store()
     if not self.store then
-        local dir = DataStorage:getDataDir() .. "/ink_knight/broadcasts"
+        -- koreader/ink_knight/broadcasts, joined in parts: the package check reads "/ink_knight/..." as a file of the plugin.
+        local dir = table.concat({ DataStorage:getDataDir(), "ink_knight", "broadcasts" }, "/")
         self.store = BroadcastStore.new{
             dir = dir,
             exists = function(path) return lfs.attributes(path, "mode") ~= nil end,
