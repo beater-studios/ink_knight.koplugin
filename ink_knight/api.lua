@@ -212,6 +212,14 @@ function Api.unfollow(username)
     return { method = "POST", path = "/api/rel/unfollow/" .. path_id(username) }
 end
 
+function Api.block(username)
+    return { method = "POST", path = "/api/rel/block/" .. path_id(username) }
+end
+
+function Api.unblock(username)
+    return { method = "POST", path = "/api/rel/unblock/" .. path_id(username) }
+end
+
 function Api.user(username)
     return { method = "GET", path = "/api/user/" .. path_id(username) }
 end

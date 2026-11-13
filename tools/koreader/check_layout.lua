@@ -53,7 +53,7 @@ local ANSWERS = {
 }
 -- A player with every part of the profile: activity, notes, a linked FIDE player and Puzzle Storm.
 local OTHER = "Bartholomew_Vasconce"
-ANSWERS["/api/user/" .. OTHER:lower()] = string.format('{"id":"%s","username":"%s","fideId":35009192,"perfs":{"rapid":{"rating":2999,"games":9999},'
+ANSWERS["/api/user/" .. OTHER:lower()] = string.format('{"id":"%s","username":"%s","following":true,"fideId":35009192,"perfs":{"rapid":{"rating":2999,"games":9999},'
     .. '"storm":{"runs":999,"score":99}}}', OTHER:lower(), OTHER)
 ANSWERS["/api/user/" .. OTHER:lower() .. "/activity"] = '[{"interval":{"start":1792972800000,"end":1793059200000},'
     .. '"games":{"correspondence":{"win":999,"loss":999,"draw":999,"rp":{"before":2999,"after":2999}}},'
@@ -345,6 +345,71 @@ for _, language in ipairs({ "en", "pt", "es" }) do
             settle()
             check_page(top_page(), language .. " " .. name)
             UIManager:close(top_page())
+        end
+    end
+    -- Blocking asks first, with the longest name.
+    local block_row
+    for _, line in ipairs(profile.lines) do
+        if line.text == home.strings.block_player then
+            block_row = line
+        end
+    end
+    if not block_row then
+        problem(language .. " profile: no row to block")
+    else
+        block_row.callback()
+        local confirm = top_page()
+        check_page(confirm, language .. " block confirm")
+        if not confirm.lines[1].text:find(home.strings.block_unfollows, 1, true) then
+            problem(language .. " block confirm: a player followed should be told the follow goes too")
+        end
+        -- Confirmed: the profile asks Lichess again, and the row then offers to unblock.
+        local plain = ANSWERS["/api/user/" .. OTHER:lower()]
+        ANSWERS["/api/user/" .. OTHER:lower()] = plain:gsub('^{', '{"blocking":true,'):gsub('"following":true,', '')
+        for _, line in ipairs(confirm.lines) do
+            if line.kind == "primary" then
+                line.callback()
+            end
+        end
+        UIManager:close(confirm)
+        settle()
+        ANSWERS["/api/user/" .. OTHER:lower()] = plain
+        local unblock_row
+        for _, line in ipairs(profile.lines) do
+            unblock_row = unblock_row or (line.text == home.strings.unblock_player and line)
+        end
+        local follow_row
+        for _, line in ipairs(profile.lines) do
+            follow_row = follow_row or (line.text == home.strings.follow_player and line)
+        end
+        if not unblock_row or not follow_row then
+            problem(language .. " profile: blocking should leave rows to unblock and to follow again")
+        end
+        -- The notice that says so is not a page.
+        while top_page() and not top_page().content_top do
+            UIManager:close(top_page())
+        end
+        check_page(profile, language .. " profile blocked")
+        -- Unblocking asks nothing and gives the row back.
+        if unblock_row then
+            ANSWERS["/api/user/" .. OTHER:lower()] = plain:gsub('"following":true,', '')
+            local pages_before = #home.pages
+            unblock_row.callback()
+            if #home.pages ~= pages_before then
+                problem(language .. " unblock should not ask")
+            end
+            settle()
+            ANSWERS["/api/user/" .. OTHER:lower()] = plain
+            local again
+            for _, line in ipairs(profile.lines) do
+                again = again or (line.text == home.strings.block_player and line)
+            end
+            if not again then
+                problem(language .. " profile: unblocking should give the row to block back")
+            end
+            while top_page() and not top_page().content_top do
+                UIManager:close(top_page())
+            end
         end
     end
     Players.show_storm(home, OTHER:lower())

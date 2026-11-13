@@ -4,6 +4,7 @@
 
 - Analysis of a game played without internet, against the engine or between two people: once it is over, Analyze goes through the moves with the engine of the plugin, showing its progress and with a way to cancel, and opens the review with the clear mistakes and blunders marked, the better move named and the evaluation of each move, as in the review of a Lichess game. Against the engine only your moves are looked at. The engine is small, so only clear mistakes are marked.
 - Puzzles by opening, in the puzzles menu: the openings Lichess has puzzles of, most puzzles first, each family with its variations, and the last ones you opened on top. Like a theme, each keeps its puzzles on the device to solve without internet.
+- Block a player from their profile, after a confirmation, and unblock them there too.
 - Profiles have the recent activity by day, your private notes about the player (read and written on the device), the FIDE player when the account is linked to one, and the Puzzle Storm records. The players menu has the rankings: the top 10 of each rating.
 - The analysis of a position, in the review and in the editor, also offers the most played moves in games of masters and in your own games, with the color you played.
 - In the review of a game the site analyzed, More has a summary: the accuracy of each player, their inaccuracies, mistakes and blunders and the average centipawn loss, with the moves where the middlegame and the endgame begin, which the review and the list of moves also mark.

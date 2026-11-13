@@ -64,7 +64,7 @@ O Ink Knight usa um token pessoal, que só você pode criar e revogar.
 
 1. No Ink Knight, toque em **Conectar conta** e **Criar token no Lichess**. Um QR code abre [a página de criar token](https://lichess.org/account/oauth/token/create) no celular com as permissões marcadas. Sem câmera, ligue na página só estas:
    - Jogo externo: `board:play`, a única necessária para jogar online
-   - Interações: `follow:read` e `follow:write`, para quem você segue
+   - Interações: `follow:read` e `follow:write`, para quem você segue e quem você bloqueia
    - Problemas: `puzzle:read` e `puzzle:write`
    - Jogar partidas: `challenge:write`, só para dar tempo ao adversário
    - Só para adicionar ou remover favoritos: `preference:write`. Ela vem desmarcada, porque também permite mudar as preferências da conta, o que o Ink Knight nunca faz.

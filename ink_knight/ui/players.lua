@@ -197,6 +197,10 @@ function Players.open_profile(app, user)
             end
             if app.my_id then
                 rows[#rows + 1] = { text = s.crosstable, callback = function() Players.show_crosstable(app, user, name) end }
+                rows[#rows + 1] = {
+                    text = user.blocking and s.unblock_player or s.block_player,
+                    callback = function() Players.toggle_block(app, user, name, page) end,
+                }
             end
         end
         rows[#rows + 1] = { text = s.past_games, callback = function()
@@ -235,30 +239,78 @@ function Players.open_profile(app, user)
     end }
 end
 
--- The button says what Lichess has recorded, so it asks again after the change.
-function Players.toggle_follow(app, user, name, page)
+local function is_open(app, page)
+    for _, other in ipairs(app.pages or {}) do
+        if other == page then
+            return true
+        end
+    end
+    return false
+end
+
+-- Following and blocking are one relation on Lichess: a block drops the follow, and a follow replaces the block. So
+-- after either change the profile is asked again for both, and the rows say what Lichess has recorded. field is
+-- "following" or "blocking", and on is what the reader asked for.
+local function change_relation(app, user, name, page, field, on)
     local s = app.strings
-    local follow = not user.following
-    app:with_feature("follow_change", function()
-        app.net:request(follow and Api.follow(user.id) or Api.unfollow(user.id), function(status)
-            app:report_or(status, function()
-                app.net:request(Api.user(user.id), function(check_status, body)
-                    local fresh = check_status == 200 and app.decode(body)
-                    if fresh then
-                        user.following = fresh.following == true
-                        user.followable = fresh.followable
-                    else
-                        user.following = follow
+    local request
+    if field == "following" then
+        request = on and Api.follow(user.id) or Api.unfollow(user.id)
+    else
+        request = on and Api.block(user.id) or Api.unblock(user.id)
+    end
+    app.net:request(request, function(status)
+        app:report_or(status, function()
+            app.net:request(Api.user(user.id), function(check_status, body)
+                local fresh = check_status == 200 and app.decode(body)
+                if fresh then
+                    user.following = fresh.following == true
+                    user.blocking = fresh.blocking == true
+                    user.followable = fresh.followable
+                else
+                    user[field] = on
+                    if on then
+                        user[field == "following" and "blocking" or "following"] = false
                     end
-                    page:reload()
-                    if user.following == follow then
-                        app:info(string.format(follow and s.followed or s.unfollowed, name))
-                    else
-                        app:info(s.follow_not_saved)
-                    end
-                end)
+                end
+                -- The reader may have left the profile while the two answers came.
+                if not is_open(app, page) then
+                    return
+                end
+                page:reload()
+                if user[field] ~= on then
+                    app:info(s.follow_not_saved)
+                elseif field == "following" then
+                    app:info(string.format(on and s.followed or s.unfollowed, name))
+                else
+                    app:info(string.format(on and s.blocked or s.unblocked, name))
+                end
             end)
         end)
+    end)
+end
+
+function Players.toggle_follow(app, user, name, page)
+    app:with_feature("follow_change", function()
+        change_relation(app, user, name, page, "following", not user.following)
+    end)
+end
+
+-- Blocking asks first, saying what it does to a follow too; unblocking does not ask.
+function Players.toggle_block(app, user, name, page)
+    local s = app.strings
+    app:with_feature("follow_change", function()
+        if user.blocking then
+            change_relation(app, user, name, page, "blocking", false)
+            return
+        end
+        local text = string.format(s.block_confirm, name)
+        if user.following then
+            text = text .. " " .. s.block_unfollows
+        end
+        app:ask{ title = s.block_player, text = text, ok_text = s.block_player, on_ok = function()
+            change_relation(app, user, name, page, "blocking", true)
+        end }
     end)
 end
 

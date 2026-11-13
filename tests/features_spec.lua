@@ -1006,6 +1006,7 @@ test("the profile: recent activity, notes, the FIDE player, Puzzle Storm and the
     local top = Profile.top10({ bullet = { { id = "a", username = "A", title = "GM", perfs = { bullet = { rating = 3349 } } }, { id = "b" }, 7, true }, atomic = { { id = "c", username = "C", perfs = { atomic = { rating = 2500 } } } } })
     assert(#top == 1 and top[1].key == "bullet" and #top[1].players == 1 and top[1].players[1].title == "GM")
     assert(Api.write_note("someone", "a b").body == "text=a%20b" or Api.write_note("someone", "a b").body == "text=a+b")
+    assert(Api.block("someone").method == "POST" and Api.block("someone").path == "/api/rel/block/someone" and Api.unblock("someone").path == "/api/rel/unblock/someone")
     assert(Api.fide_player(35009192).path == "/api/fide/player/35009192" and Api.storm_dashboard("someone", 30).path == "/api/storm/dashboard/someone?days=30")
 end)
 
