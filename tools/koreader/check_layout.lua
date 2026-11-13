@@ -239,6 +239,14 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         home.settings:delSetting("piece_set")
         home:apply_board_look()
     end
+    -- The page of Chess960, and a game of it against the engine, with its number before the first move.
+    home:chess960_menu(959)
+    check_page(top_page(), language .. " chess960")
+    UIManager:close(top_page())
+    local chess960_game = OfflineGame.open(home, { level = 4, color_choice = "white", initial_fen = Chess.chess960_fen(959) })
+    check_board(chess960_game.screen, language .. " chess960 game")
+    UIManager:close(chess960_game.screen)
+    home.settings:delSetting("offline_game")
     -- Correspondence kept offline, with the longest names, one game with a move waiting.
     local Correspondence = require("ink_knight/correspondence")
     local kept = {}

@@ -42,7 +42,44 @@ function Chess.square_from_name(name)
     return index(file:byte() - 96, tonumber(rank))
 end
 
-function Chess.parse_fen(fen)
+-- The castling of a position is "KQkq" in standard chess. In Chess960 each right is the file of its rook, upper
+-- case for white ("HFhf", as Shredder writes it), and the position has chess960 set, which every move keeps.
+-- chess960: read the FEN as Chess960, where "KQkq" (X-FEN, as Lichess writes it) means the outermost rook on each side
+-- of the king, and a right with no king or rook to stand for is dropped. Without it only a FEN with files is
+-- Chess960, so a standard FEN written loosely keeps the rights it had.
+local function chess960_castling(board, castling, chess960)
+    local letters = {}
+    for letter in castling:gmatch(".") do
+        local white = letter == letter:upper()
+        local rank = white and 1 or 8
+        local upper = letter:upper()
+        if (upper == "K" or upper == "Q") and not chess960 then
+            letters[#letters + 1] = letter
+        elseif upper == "K" or upper == "Q" then
+            local king_file
+            for file = 1, 8 do
+                if board[(rank - 1) * 8 + file] == (white and "K" or "k") then
+                    king_file = file
+                end
+            end
+            local rook = white and "R" or "r"
+            local step = upper == "K" and -1 or 1
+            for file = upper == "K" and 8 or 1, king_file or (upper == "K" and 9 or 0), step do
+                if board[(rank - 1) * 8 + file] == rook then
+                    local name = string.char(64 + file)
+                    letters[#letters + 1] = white and name or name:lower()
+                    break
+                end
+            end
+        elseif upper:match("[A-H]") then
+            letters[#letters + 1] = letter
+        end
+    end
+    local result = table.concat(letters)
+    return result, chess960 or result:find("[A-Ha-h]") ~= nil
+end
+
+function Chess.parse_fen(fen, chess960)
     local placement, turn, castling, passant = tostring(fen):match("^(%S+)%s+([wb])%s+(%S+)%s+(%S+)")
     if not placement then
         return nil, "invalid FEN"
@@ -63,10 +100,12 @@ function Chess.parse_fen(fen)
             return nil, "invalid FEN"
         end
     end
+    local rights, is_960 = chess960_castling(board, castling == "-" and "" or castling, chess960)
     return {
         board = board,
         turn = turn,
-        castling = castling == "-" and "" or castling,
+        castling = rights,
+        chess960 = is_960 or nil,
         passant = passant ~= "-" and Chess.square_from_name(passant) or nil,
         halfmove = tonumber(tostring(fen):match("^%S+%s+[wb]%s+%S+%s+%S+%s+(%d+)")) or 0,
     }
@@ -145,7 +184,7 @@ local function copy(position)
     for square, piece in pairs(position.board) do
         board[square] = piece
     end
-    return { board = board, turn = position.turn, castling = position.castling, passant = position.passant, halfmove = position.halfmove }
+    return { board = board, turn = position.turn, castling = position.castling, chess960 = position.chess960, passant = position.passant, halfmove = position.halfmove }
 end
 
 -- A copy to change, optionally with the turn handed to another side, which drops the square passed over: it is
@@ -166,6 +205,15 @@ local function drop_castling(castling, letters)
     return (castling:gsub("[" .. letters .. "]", ""))
 end
 
+-- The square of the rook a castling right is for.
+local function rook_square_of(letter)
+    local white = letter == letter:upper()
+    local rank = white and 1 or 8
+    local upper = letter:upper()
+    local file = upper == "K" and 8 or (upper == "Q" and 1 or upper:byte() - 64)
+    return index(file, rank)
+end
+
 -- Plays a move on a copy, without checking that it is legal.
 local function play(position, move)
     local next_position = copy(position)
@@ -174,11 +222,21 @@ local function play(position, move)
     local white = is_white(piece)
     local kind = piece:lower()
     next_position.halfmove = (kind == "p" or board[move.to]) and 0 or (position.halfmove or 0) + 1
-    board[move.from] = nil
-    if kind == "p" and move.to == position.passant then
-        board[index(file_of(move.to), rank_of(move.from))] = nil
+    if move.castle then
+        -- The king and the rook leave, then land on their squares, which may be where the other one stood.
+        local rank = rank_of(move.from)
+        local rook = board[move.castle]
+        board[move.from], board[move.castle] = nil, nil
+        board[move.to] = piece
+        board[index(file_of(move.to) == 7 and 6 or 4, rank)] = rook
+        next_position.halfmove = (position.halfmove or 0) + 1
+    else
+        board[move.from] = nil
+        if kind == "p" and move.to == position.passant then
+            board[index(file_of(move.to), rank_of(move.from))] = nil
+        end
+        board[move.to] = move.promotion and (white and move.promotion:upper() or move.promotion) or piece
     end
-    board[move.to] = move.promotion and (white and move.promotion:upper() or move.promotion) or piece
     -- The square passed over only counts when an enemy pawn stands beside the one that moved, as in a FEN
     -- from Lichess. Otherwise the same position would look different the first time, and repetitions would be missed.
     next_position.passant = nil
@@ -192,19 +250,22 @@ local function play(position, move)
     if kind == "k" then
         local rank = rank_of(move.from)
         local distance = file_of(move.to) - file_of(move.from)
-        if distance == 2 then
-            board[index(6, rank)], board[index(8, rank)] = board[index(8, rank)], nil
-        elseif distance == -2 then
-            board[index(4, rank)], board[index(1, rank)] = board[index(1, rank)], nil
+        -- A castling of standard chess written as the king going two squares, as UCI and old saves have it.
+        if not move.castle and not position.chess960 and math.abs(distance) == 2 then
+            if distance == 2 then
+                board[index(6, rank)], board[index(8, rank)] = board[index(8, rank)], nil
+            else
+                board[index(4, rank)], board[index(1, rank)] = board[index(1, rank)], nil
+            end
         end
-        next_position.castling = drop_castling(next_position.castling, white and "KQ" or "kq")
+        next_position.castling = drop_castling(next_position.castling, white and "KQA-H" or "kqa-h")
     end
-    -- A rook that moves or is taken ends the castling on its side.
-    for _, square in ipairs({ move.from, move.to }) do
-        if square == 1 then next_position.castling = drop_castling(next_position.castling, "Q") end
-        if square == 8 then next_position.castling = drop_castling(next_position.castling, "K") end
-        if square == 57 then next_position.castling = drop_castling(next_position.castling, "q") end
-        if square == 64 then next_position.castling = drop_castling(next_position.castling, "k") end
+    -- A rook that moves or is taken ends the castling with it.
+    for letter in next_position.castling:gmatch(".") do
+        local square = rook_square_of(letter)
+        if square == move.from or square == move.to then
+            next_position.castling = drop_castling(next_position.castling, letter)
+        end
     end
     next_position.turn = white and "b" or "w"
     return next_position
@@ -280,20 +341,44 @@ local function pseudo_moves(position, list)
             end
         end
     end
-    -- Castling: the squares between are empty, and the king does not start, cross or land under attack.
+    -- Castling, from wherever king and rook stand, as Chess960 has it: the king lands on g or c and the rook on f or
+    -- d, every square they cross or land on is empty but for the two of them, and the king does not start, cross or
+    -- land under attack (landing is checked with the other moves). Standard chess is the case of e, a and h.
     local rank = white and 1 or 8
-    local king_square = index(5, rank)
-    if board[king_square] == (white and "K" or "k") and not Chess.is_attacked(position, king_square, not white) then
-        local rook = white and "R" or "r"
-        if position.castling:find(white and "K" or "k", 1, true) and board[index(8, rank)] == rook
-            and not board[index(6, rank)] and not board[index(7, rank)]
-            and not Chess.is_attacked(position, index(6, rank), not white) then
-            add_move(board, list, king_square, index(7, rank))
+    local king, rook = white and "K" or "k", white and "R" or "r"
+    local king_square
+    for file = 1, 8 do
+        if board[index(file, rank)] == king then
+            king_square = index(file, rank)
         end
-        if position.castling:find(white and "Q" or "q", 1, true) and board[index(1, rank)] == rook
-            and not board[index(2, rank)] and not board[index(3, rank)] and not board[index(4, rank)]
-            and not Chess.is_attacked(position, index(4, rank), not white) then
-            add_move(board, list, king_square, index(3, rank))
+    end
+    if king_square and position.castling ~= "" and not Chess.is_attacked(position, king_square, not white) then
+        for letter in position.castling:gmatch(".") do
+            if (letter == letter:upper()) == white then
+                local rook_square = rook_square_of(letter)
+                if board[rook_square] == rook then
+                    local king_side = file_of(rook_square) > file_of(king_square)
+                    local king_to, rook_to = index(king_side and 7 or 3, rank), index(king_side and 6 or 4, rank)
+                    local low = math.min(file_of(king_square), file_of(rook_square), file_of(king_to), file_of(rook_to))
+                    local high = math.max(file_of(king_square), file_of(rook_square), file_of(king_to), file_of(rook_to))
+                    local free = true
+                    for file = low, high do
+                        local square = index(file, rank)
+                        if board[square] and square ~= king_square and square ~= rook_square then
+                            free = false
+                        end
+                    end
+                    local step = file_of(king_to) >= file_of(king_square) and 1 or -1
+                    for file = file_of(king_square) + step, file_of(king_to) - step, step do
+                        if free and Chess.is_attacked(position, index(file, rank), not white) then
+                            free = false
+                        end
+                    end
+                    if free then
+                        list[#list + 1] = { from = king_square, to = king_to, castle = rook_square, chess960 = position.chess960 }
+                    end
+                end
+            end
         end
     end
     return list
@@ -316,14 +401,26 @@ function Chess.legal_moves(position)
     return legal
 end
 
+-- Whether two moves are the same one. In Chess960 a castling and a plain king move may share both squares.
+function Chess.same_move(a, b)
+    return a.from == b.from and a.to == b.to and a.promotion == b.promotion and (a.castle ~= nil) == (b.castle ~= nil)
+end
+
+-- The square tapped to play a move: in Chess960 a castling is tapped on its rook, as on Lichess, since the king may
+-- also go to g or c by a plain move.
+function Chess.target_square(position, move)
+    return (move.castle and position.chess960) and move.castle or move.to
+end
+
 -- Where the piece on a square can go, as { [target] = { moves } }, with several moves for a promotion.
 -- moves: the moves to look among, the legal ones by default.
 function Chess.targets_from(position, from, moves)
     local targets = {}
     for _, move in ipairs(moves or Chess.legal_moves(position)) do
         if move.from == from then
-            targets[move.to] = targets[move.to] or {}
-            table.insert(targets[move.to], move)
+            local target = Chess.target_square(position, move)
+            targets[target] = targets[target] or {}
+            table.insert(targets[target], move)
         end
     end
     return targets
@@ -381,8 +478,10 @@ function Chess.take_back(moves, color, first_turn)
     return nil
 end
 
+-- A castling of Chess960 goes as the king taking its own rook, the only way Lichess reads it there.
 function Chess.move_to_uci(move)
-    return Chess.square_name(move.from) .. Chess.square_name(move.to) .. (move.promotion or "")
+    local to = (move.castle and move.chess960) and move.castle or move.to
+    return Chess.square_name(move.from) .. Chess.square_name(to) .. (move.promotion or "")
 end
 
 -- Reads a move in UCI. Lichess can also write castling as the king taking its own rook.
@@ -394,7 +493,11 @@ function Chess.parse_uci(position, uci)
     from, to = Chess.square_from_name(from), Chess.square_from_name(to)
     local piece = position.board[from]
     if piece and piece:lower() == "k" and position.board[to] and is_white(position.board[to]) == is_white(piece) then
-        to = index(file_of(to) > file_of(from) and 7 or 3, rank_of(from))
+        return { from = from, to = index(file_of(to) > file_of(from) and 7 or 3, rank_of(from)), castle = to, chess960 = position.chess960 }
+    end
+    -- A castling of standard chess as the king going two squares, the way UCI writes it.
+    if piece and piece:lower() == "k" and not position.chess960 and math.abs(file_of(to) - file_of(from)) == 2 and rank_of(to) == rank_of(from) then
+        return { from = from, to = to, castle = index(file_of(to) > file_of(from) and 8 or 1, rank_of(from)) }
     end
     return { from = from, to = to, promotion = promotion ~= "" and promotion or nil }
 end
@@ -432,10 +535,9 @@ end
 function Chess.parse_san(position, san)
     local text = tostring(san):gsub("[+#!?]", "")
     if text == "O-O" or text == "0-0" or text == "O-O-O" or text == "0-0-0" then
-        local rank = position.turn == "w" and 1 or 8
         local file = #text > 3 and 3 or 7
         for _, move in ipairs(Chess.legal_moves(position)) do
-            if move.from == index(5, rank) and move.to == index(file, rank) and position.board[move.from]:lower() == "k" then
+            if move.castle and file_of(move.to) == file then
                 return move
             end
         end
@@ -567,8 +669,8 @@ function Chess.to_san(position, move)
     local piece = position.board[move.from]
     local kind = piece:lower()
     local text
-    if kind == "k" and math.abs(file_of(move.to) - file_of(move.from)) == 2 then
-        text = file_of(move.to) > file_of(move.from) and "O-O" or "O-O-O"
+    if move.castle or (kind == "k" and not position.chess960 and math.abs(file_of(move.to) - file_of(move.from)) == 2) then
+        text = file_of(move.to) == 7 and "O-O" or "O-O-O"
     else
         local to = Chess.square_name(move.to)
         local takes = position.board[move.to] ~= nil or (kind == "p" and move.to == position.passant)
@@ -628,6 +730,78 @@ end
 
 -- A text that is the same for the same position, to count repetitions.
 Chess.position_key = Chess.epd
+
+-- The starting positions of Chess960, by their number from 0 to 959 as Lichess and the usual numbering give it (518 is
+-- the one of standard chess): the light bishop, the dark bishop, the queen, the knights, then rook, king and rook.
+local KNIGHTS = { { 1, 2 }, { 1, 3 }, { 1, 4 }, { 1, 5 }, { 2, 3 }, { 2, 4 }, { 2, 5 }, { 3, 4 }, { 3, 5 }, { 4, 5 } }
+
+local function chess960_rank(number)
+    local rank = {}
+    local n = number
+    rank[2 * (n % 4) + 2] = "B"
+    n = math.floor(n / 4)
+    rank[2 * (n % 4) + 1] = "B"
+    n = math.floor(n / 4)
+    local function empty(count)
+        local seen = 0
+        for file = 1, 8 do
+            if not rank[file] then
+                seen = seen + 1
+                if seen == count then
+                    return file
+                end
+            end
+        end
+    end
+    rank[empty(n % 6 + 1)] = "Q"
+    n = math.floor(n / 6)
+    local knights = KNIGHTS[n + 1]
+    local first, second = empty(knights[1]), empty(knights[2])
+    rank[first], rank[second] = "N", "N"
+    for _, piece in ipairs({ "R", "K", "R" }) do
+        rank[empty(1)] = piece
+    end
+    return table.concat(rank)
+end
+
+-- The FEN of a starting position of Chess960, with castling as the files of the rooks, so it reads as Chess960.
+function Chess.chess960_fen(number)
+    local rank = chess960_rank(number)
+    local rooks = {}
+    for file = 8, 1, -1 do
+        if rank:sub(file, file) == "R" then
+            rooks[#rooks + 1] = string.char(64 + file)
+        end
+    end
+    local castling = table.concat(rooks)
+    return string.format("%s/pppppppp/8/8/8/8/PPPPPPPP/%s w %s%s - 0 1", rank:lower(), rank, castling, castling:lower())
+end
+
+-- The number of the starting position of Chess960 a FEN is, or nil.
+function Chess.chess960_number(fen)
+    local first, last = tostring(fen or ""):match("^(%a+)/pppppppp/8/8/8/8/PPPPPPPP/(%a+) w ")
+    if not first or first ~= last:lower() then
+        return nil
+    end
+    for number = 0, 959 do
+        if chess960_rank(number) == last then
+            return number
+        end
+    end
+    return nil
+end
+
+-- A FEN of a Chess960 game as Lichess writes it (X-FEN, "KQkq") with castling as the files of the rooks, so it reads as
+-- Chess960 wherever it goes, even in the positions whose king and rooks stand as in standard chess. The rest stays.
+function Chess.as_chess960(fen)
+    local position = Chess.parse_fen(fen, true)
+    if not position then
+        return fen
+    end
+    local placement, turn, _, rest = tostring(fen):match("^(%S+)%s+(%S+)%s+(%S+)%s*(.*)$")
+    local castling = position.castling ~= "" and position.castling or "-"
+    return string.format("%s %s %s%s", placement, turn, castling, rest ~= "" and (" " .. rest) or "")
+end
 
 -- For testing against known counts of positions.
 function Chess.perft(position, depth)

@@ -39,11 +39,15 @@ local function move(position_fen, uci)
     return Chess.parse_uci(Chess.parse_fen(position_fen), uci)
 end
 
-test("only standard correspondence games with a position are kept", function()
+test("only correspondence games of standard chess or Chess960 with a position are kept", function()
     local game = Correspondence.from_playing(entry(), 1000)
     eq(game.id, "abcd1234"); eq(game.color, "b"); eq(game.opponent, "Helena"); eq(game.last_move, "e2e4"); eq(game.at, 1000)
     eq(Correspondence.from_playing(entry({ speed = "rapid" }), 1000), nil)
-    eq(Correspondence.from_playing(entry({ variant = { key = "chess960" } }), 1000), nil)
+    eq(Correspondence.from_playing(entry({ variant = { key = "atomic" } }), 1000), nil)
+    -- Chess960 is kept with its castling as the files of the rooks, so it reads as Chess960 later too.
+    local chess960 = Correspondence.from_playing(entry({ variant = { key = "chess960" }, fen = "rbbqknnr/pppppppp/8/8/8/8/PPPPPPPP/RBBQKNNR w KQkq - 0 1" }), 1000)
+    eq(chess960.fen, "rbbqknnr/pppppppp/8/8/8/8/PPPPPPPP/RBBQKNNR w HAha - 0 1")
+    assert(Chess.parse_fen(chess960.fen).chess960)
     eq(Correspondence.from_playing(entry({ fen = "not a position" }), 1000), nil)
     eq(Correspondence.from_playing(entry({ gameId = "../x" }), 1000), nil)
 end)

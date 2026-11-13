@@ -7,6 +7,8 @@ set -eu
 cd "$(dirname "$0")/.."
 # Deeper than on a Kindle, where the install runs the tests too.
 export PERFT_LIMIT="${PERFT_LIMIT:-1000000}"
+# Every one of the 960 starting positions of Chess960, to the second depth.
+export CHESS960_EVERY="${CHESS960_EVERY:-1}"
 for spec in tests/*_spec.lua; do
     luajit "$spec"
 done

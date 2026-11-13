@@ -16,6 +16,7 @@ local ClockScreen = require("ink_knight/ui/clock_screen")
 local Correspondence = require("ink_knight/correspondence")
 local Learn = require("ink_knight/learn")
 local LearnScreen = require("ink_knight/ui/learn_screen")
+local Chess = require("ink_knight/chess")
 local Practice = require("ink_knight/practice")
 local PracticeScreen = require("ink_knight/ui/practice_screen")
 local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
@@ -817,6 +818,16 @@ function Home:save_setting(key, value)
     self.settings:flush()
 end
 
+-- The variant of the games started from here: seeks, challenges and the computer of Lichess.
+function Home:variant_row(page)
+    local s = self.strings
+    local chess960 = self:option("variant") == "chess960"
+    return { kind = "toggle", text = s.play_chess960, on = chess960, on_text = s.yes, off_text = s.no, callback = function()
+        self:save_setting("variant", chess960 and "standard" or "chess960")
+        page:reload()
+    end }
+end
+
 function Home:rated_row(page)
     local s = self.strings
     return { kind = "toggle", text = s.rated_default, on = self:is_rated(), on_text = s.yes, off_text = s.no, callback = function()
@@ -883,6 +894,7 @@ function Home:new_game_menu()
             { text = s.challenge_friend, detail = s.challenge_friend_detail, callback = function() self:with_feature("challenge", function() self:friend_menu() end) end },
             { kind = "section", text = s.options_section },
             self:rated_row(page),
+            self:variant_row(page),
             { text = s.refresh_interval, value = self:refresh_label(), wide_value = true, callback = function() self:choose_refresh(function() page:reload(); self:refresh_list() end) end },
         }
     end }
@@ -915,6 +927,10 @@ end
 
 -- The rating range of a seek, when the reader set a margin.
 function Home:seek_range(perf)
+    -- In Chess960 the rating that counts is the one of Chess960, whatever the clock.
+    if self:option("variant") == "chess960" then
+        perf = "chess960"
+    end
     local account_perf = self.account and self.account.perfs and self.account.perfs[perf]
     return Api.rating_range(account_perf and account_perf.rating, self:option("rating_margin"))
 end
@@ -927,6 +943,7 @@ function Home:seek_menu()
             self:clock_tiles(Api.REAL_TIME_SEEK, function(clock) self:start_seek(clock[1], clock[2]) end),
             { kind = "section", text = s.options_section },
             self:rated_row(page),
+            self:variant_row(page),
             self:margin_row(page),
         }
     end }
@@ -939,7 +956,7 @@ function Home:start_seek(minutes, increment)
     self.open_on_start = true
     local attempt = {}
     self.seek_attempt = attempt
-    self.seek = self.net:stream(Api.seek_clock(minutes, increment, self:is_rated(), self:seek_range(Api.perf_of_clock(minutes, increment))), function() end, function()
+    self.seek = self.net:stream(Api.seek_clock(minutes, increment, self:is_rated(), self:seek_range(Api.perf_of_clock(minutes, increment)), self:option("variant")), function() end, function()
         -- Lichess ended the search: either it found an opponent, whose game is announced on the event stream,
         -- or it refused the seek, or the network dropped. Only the absence of a game tells them apart.
         self.seek = nil
@@ -996,12 +1013,13 @@ function Home:seek_days_menu()
             { kind = "section", text = s.days_per_move },
             self:days_tiles(function(days)
                 self:close_pages()
-                self.net:request(Api.seek_days(days, self:is_rated(), self:seek_range("correspondence")), function(status)
+                self.net:request(Api.seek_days(days, self:is_rated(), self:seek_range("correspondence"), self:option("variant")), function(status)
                     self:report_or(status, function() self:info(s.seek_posted, 8) end)
                 end)
             end),
             { kind = "section", text = s.options_section },
             self:rated_row(page),
+            self:variant_row(page),
             self:margin_row(page),
         }
     end }
@@ -1031,11 +1049,12 @@ function Home:challenge_time_menu(username)
             { text = s.correspondence, detail = s.correspondence_detail, callback = function() self:challenge_days_menu(username) end },
             { text = s.no_limit, detail = s.no_limit_detail, callback = function()
                 self:ask_color(function(color)
-                    self:send_challenge(Api.challenge_no_limit(username, color), username)
+                    self:send_challenge(Api.challenge_no_limit(username, color, self:option("variant")), username)
                 end)
             end },
             { kind = "section", text = s.options_section },
             self:rated_row(page),
+            self:variant_row(page),
         }
     end }
 end
@@ -1045,7 +1064,7 @@ function Home:challenge_clock_menu(username)
     self:choose(s.with_clock, {
         self:clock_tiles(Api.CHALLENGE_CLOCKS, function(clock)
             self:ask_color(function(color)
-                self:send_challenge(Api.challenge_clock(username, clock[1], clock[2], self:is_rated(), color), username)
+                self:send_challenge(Api.challenge_clock(username, clock[1], clock[2], self:is_rated(), color, self:option("variant")), username)
             end)
         end),
     })
@@ -1056,7 +1075,7 @@ function Home:challenge_days_menu(username)
     self:choose(s.days_per_move, {
         self:days_tiles(function(days)
             self:ask_color(function(color)
-                self:send_challenge(Api.challenge_days(username, days, self:is_rated(), color), username)
+                self:send_challenge(Api.challenge_days(username, days, self:is_rated(), color, self:option("variant")), username)
             end)
         end),
     })
@@ -1086,12 +1105,23 @@ function Home:send_rematch(game, opponent_name)
     end)
 end
 
+-- The time of a challenge, with the variant when it is not standard chess.
+function Home:challenge_time_text(challenge)
+    local s = self.strings
+    local time = Api.time_control_text(challenge.timeControl, s.no_limit, function(days) return self:days_label(days) end)
+    local variant = challenge.variant and challenge.variant.key
+    if variant == "chess960" then
+        time = string.format(s.challenge_row, time, s.chess960)
+    end
+    return time
+end
+
 function Home:challenges_menu()
     local s = self.strings
     local rows = {}
     for _, challenge in ipairs(self:challenge_list()) do
         local who = challenge.challenger and (challenge.challenger.name or challenge.challenger.id) or "?"
-        local time = Api.time_control_text(challenge.timeControl, s.no_limit, function(days) return self:days_label(days) end)
+        local time = self:challenge_time_text(challenge)
         rows[#rows + 1] = { text = string.format(s.challenge_row, who, time), callback = function()
             self:with_feature("challenge", function() self:answer_challenge(challenge, who, time) end)
         end }
@@ -1114,7 +1144,7 @@ function Home:sent_menu()
         local rows = {}
         for _, challenge in ipairs(self:challenge_list(self.sent)) do
             local who = self:challenge_target(challenge)
-            local time = Api.time_control_text(challenge.timeControl, s.no_limit, function(days) return self:days_label(days) end)
+            local time = self:challenge_time_text(challenge)
             rows[#rows + 1] = {
                 text = who, detail = challenge.rematchOf and string.format(s.challenge_row, time, s.rematch) or time,
                 callback = function() self:ask_cancel_challenge(challenge, who, function() if open then page:reload() end end) end,
@@ -1206,15 +1236,17 @@ function Home:ai_level_menu()
         items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
             self:choose(s.choose_time, {
                 { text = Api.clock_label(15, 10), detail = s.with_clock_detail, callback = function()
-                    self:ask_color(function(color) self:start_ai_game(Api.challenge_ai(level, 15, 10, color)) end)
+                    self:ask_color(function(color) self:start_ai_game(Api.challenge_ai(level, 15, 10, color, nil, self:option("variant"))) end)
                 end },
                 { text = s.no_limit, detail = s.no_limit_detail, callback = function()
-                    self:ask_color(function(color) self:start_ai_game(Api.challenge_ai(level, nil, nil, color)) end)
+                    self:ask_color(function(color) self:start_ai_game(Api.challenge_ai(level, nil, nil, color, nil, self:option("variant"))) end)
                 end },
             })
         end }
     end
-    self:open_list(s.lichess_ai, { { kind = "tiles", columns = 4, items = items } })
+    self:open_page{ title = s.lichess_ai, build = function(page)
+        return { { kind = "tiles", columns = 4, items = items }, { kind = "section", text = s.options_section }, self:variant_row(page) }
+    end }
 end
 
 function Home:start_ai_game(request)
@@ -1350,6 +1382,7 @@ function Home:offline_rows(page)
     local t = self:learn_texts()
     rows[#rows + 1] = { text = t.learnLearnChess, detail = string.format(t.learnProgressX, self:learn_percent() .. "%"), callback = function() self:learn_menu() end }
     rows[#rows + 1] = { text = t.practice, detail = string.format(t.learnProgressX, self:practice_percent() .. "%"), callback = function() self:practice_menu() end }
+    rows[#rows + 1] = { text = s.chess960, detail = s.chess960_detail, callback = function() self:chess960_menu(Home.draw_chess960()) end }
     rows[#rows + 1] = { text = s.editor, detail = s.editor_detail, callback = function() EditorScreen.open(self) end }
     rows[#rows + 1] = { text = s.coordinates, detail = s.coordinates_detail, callback = function() self:coordinates_menu() end }
     for _, row in ipairs(self:correspondence_rows()) do
@@ -1386,6 +1419,85 @@ function Home:offline_rows(page)
         rows[#rows + 1] = row
     end
     return rows
+end
+
+-- A game of Chess960 without internet: one of the 960 starting positions, drawn or typed, its back rank shown, then
+-- against the engine or between two people.
+-- KOReader does not always seed math.random at start, and LuaJIT then gives the same numbers after each restart.
+local seeded = false
+function Home.draw_chess960()
+    if not seeded then
+        math.randomseed(os.time())
+        seeded = true
+    end
+    return math.random(0, 959)
+end
+
+function Home:chess960_menu(number)
+    local s = self.strings
+    local chosen = number
+    local page
+    local function start(opts)
+        opts.initial_fen = Chess.chess960_fen(chosen)
+        self:close_pages()
+        OfflineGame.open(self, opts)
+    end
+    page = self:open_page{ title = s.chess960, build = function()
+        local rank = Chess.chess960_fen(chosen):match("/(%a+) w ")
+        local items = {}
+        for level = 1, 4 do
+            items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
+                self:ask_color(function(color) start({ level = level, color_choice = color }) end)
+            end }
+        end
+        return {
+            { kind = "metric", text = s.chess960_position, detail = s.chess960_position_detail, value = tostring(chosen) },
+            { kind = "drawing", height = 84, rank = rank, draw = function(bb, x, y, w, h)
+                local size = math.min(h - math.floor(h / 6), math.floor(w / 8))
+                BoardScreen.paint_rank_sample(bb, rank, x + math.floor((w - 8 * size) / 2), y + math.floor((h - size) / 2), size)
+            end },
+            { kind = "buttons", items = {
+                { text = s.chess960_other, keep_open = true, callback = function()
+                    chosen = Home.draw_chess960()
+                    page:reload()
+                end },
+                { text = s.chess960_type, keep_open = true, callback = function()
+                    self:ask_chess960_number(function(typed)
+                        chosen = typed
+                        page:reload()
+                    end)
+                end },
+            } },
+            { kind = "section", text = s.editor_vs_engine },
+            { kind = "tiles", columns = 4, items = items },
+            { text = s.two_players, detail = s.two_players_detail, callback = function()
+                self:choose_clock(s.two_players, true, function(preset) start({ two_players = true, clock = preset }) end)
+            end },
+        }
+    end }
+end
+
+function Home:ask_chess960_number(on_number)
+    local s = self.strings
+    local dialog
+    dialog = InputDialog:new{
+        title = s.chess960_type_title,
+        input_type = "number",
+        buttons = { {
+            { text = s.cancel, id = "close", callback = function() UIManager:close(dialog) end },
+            { text = s.chess960_type_ok, id = "use", is_enter_default = true, callback = function()
+                local number = tonumber(dialog:getInputText())
+                UIManager:close(dialog)
+                if number and number == math.floor(number) and number >= 0 and number <= 959 then
+                    on_number(number)
+                else
+                    self:info(s.chess960_type_bad)
+                end
+            end },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 -- The time for each side: "Sem relógio" first for a game, which can do without; the last choice is marked, and
@@ -2358,7 +2470,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
         self:report_or(status, function()
             local rows = {}
             for game in json_lines(body) do
-                if game and game.moves and (game.variant == "standard" or game.variant == nil) then
+                if game and game.moves and (game.variant == "standard" or game.variant == nil or game.variant == "chess960") then
                     local players = game.players or {}
                     local white, black = Game.player_name(players.white, s.anonymous), Game.player_name(players.black, s.anonymous)
                     local text, detail, on_black = Game.past_summary(s, game, player_id, self.my_id)
@@ -2367,10 +2479,13 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
                         text = text,
                         detail = detail,
                         callback = function()
-                            local moves = Pgn.san_list_to_moves(game.moves)
+                            -- A game of Chess960 starts from its position, its castling read as Chess960.
+                            local initial_fen = game.variant == "chess960" and game.initialFen and Chess.as_chess960(game.initialFen) or nil
+                            local moves = Pgn.san_list_to_moves(game.moves, initial_fen)
                             add_game_analysis(moves, game.analysis)
                             ReviewScreen.open(self, {
                                 moves = moves,
+                                initial_fen = initial_fen,
                                 white = white, black = black,
                                 intro = game.opening and game.opening.name,
                                 opening = game.opening and game.opening.name,
@@ -2396,6 +2511,7 @@ function Home:settings_menu()
         return spliced({
             { kind = "section", text = s.options_section },
             self:rated_row(page),
+            self:variant_row(page),
             { kind = "toggle", text = s.confirm_moves, on = self:option("confirm_moves"), on_text = s.yes, off_text = s.no, callback = function()
                 self:save_setting("confirm_moves", not self:option("confirm_moves"))
                 page:reload()

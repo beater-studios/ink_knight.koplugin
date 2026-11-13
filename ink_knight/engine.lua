@@ -75,7 +75,7 @@ function Engine.search(position, opts)
         local out_of_time = false
         local exact = opts.exact and Chess.parse_uci(position, opts.exact) or nil
         local function is_exact(move)
-            return exact ~= nil and move.from == exact.from and move.to == exact.to and move.promotion == exact.promotion
+            return exact ~= nil and Chess.same_move(move, exact)
         end
         local function tick()
             nodes = nodes + 1
@@ -102,7 +102,7 @@ function Engine.search(position, opts)
             local white = pos.turn == "w"
             local captures = {}
             for _, move in ipairs(Chess.pseudo_legal_moves(pos)) do
-                if pos.board[move.to] or (move.to == pos.passant and pos.board[move.from]:lower() == "p") then
+                if (pos.board[move.to] and not move.castle) or (move.to == pos.passant and pos.board[move.from]:lower() == "p") then
                     captures[#captures + 1] = move
                 end
             end

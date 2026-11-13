@@ -1,5 +1,7 @@
 -- Goes through the screens against the real Lichess, with no window, and saves a picture of each one.
 -- It reads everything it can, and with PLAY_AI=1 it also plays a casual game against level 1 and resigns it. With
+-- PLAY_AI_960=1 it plays a casual game of Chess960 against level 1, clears its back rank, castles when it can, checks
+-- Lichess took the castling, and resigns it. With
 -- CHANGE_ACCOUNT=1 it also writes a private note about the bot maia1 and blocks and unblocks it, which leaves the note
 -- on the account.
 -- Usage: INK_KNIGHT_TOKEN=lip_... OUTPUT_DIR=/tmp/out KOREADER_DIR=... tools/koreader/run_headless.sh tools/koreader/check_live.lua
@@ -263,6 +265,11 @@ do
     print("notes allowed by the token: " .. tostring(home:allows("notes")))
     -- The preferences of the site need preference:read; bringing them only changes the options on the device.
     if home:allows("preferences") then
+        -- The options go back afterwards, so the games below play as the check expects (with no confirmation).
+        local kept = {}
+        for _, key in ipairs({ "auto_queen", "board_coordinates", "confirm_moves", "piece_set" }) do
+            kept[key] = home.settings:readSetting(key)
+        end
         home:settings_menu()
         local settings_page = top_widget()
         home:import_preferences(settings_page)
@@ -271,6 +278,10 @@ do
             .. ", confirm " .. tostring(home:option("confirm_moves")) .. ", pieces " .. tostring(home:option("piece_set")))
         shot("preferences_brought")
         home:close_pages()
+        for _, key in ipairs({ "auto_queen", "board_coordinates", "confirm_moves", "piece_set" }) do
+            if kept[key] == nil then home.settings:delSetting(key) else home.settings:saveSetting(key, kept[key]) end
+        end
+        home:apply_board_look()
     else
         print("preferences: the token has no preference:read")
     end
@@ -462,6 +473,87 @@ if os.getenv("PLAY_AI") == "1" then
     local settled = os.time() + 3
     pump(function() return os.time() >= settled end, 5, "last refresh")
     shot("home_after")
+end
+
+-- Only with PLAY_AI_960=1: a game of Chess960 against the computer, to see Lichess take a castling sent as the king
+-- taking its rook.
+if os.getenv("PLAY_AI_960") == "1" then
+    local Api = require("ink_knight/api")
+    local game_id
+    home.net:request(Api.challenge_ai(1, nil, nil, "white", nil, "chess960"), function(status, body)
+        local data = home.decode(body)
+        print("chess960 ai game status " .. tostring(status))
+        if data and data.id then
+            game_id = data.id
+            home:open_game(game_id)
+        end
+    end)
+    if pump(function() return game_id ~= nil end, 25, "chess960 ai game") then
+        local screen = top_widget()
+        if pump(function() return screen.state.position ~= nil and screen.state.status ~= home.strings.loading end, 25, "chess960 stream") then
+            print("the position is Chess960: " .. tostring(screen.state.position.chess960 == true))
+            if not screen.state.position.chess960 then problem("a game of Chess960 should read as one") end
+            local function my_turn() return screen.state.position.turn == "w" end
+            local castled
+            for turn = 1, 20 do
+                if not pump(my_turn, 40, "chess960 turn " .. turn) then break end
+                local position = screen.state.position
+                local moves = Chess.legal_moves(position)
+                local move
+                for _, candidate in ipairs(moves) do
+                    if candidate.castle then move = candidate end
+                end
+                -- Otherwise a piece standing where a castling needs room goes off the back rank: between king, rook and
+                -- their squares (g and f, or c and d).
+                local king_file = (Chess.king_square(position, "w") - 1) % 8 + 1
+                local room = {}
+                for letter in position.castling:gmatch("%u") do
+                    local rook_file = letter:byte() - 64
+                    local king_to, rook_to = rook_file > king_file and 7 or 3, rook_file > king_file and 6 or 4
+                    for file = math.min(king_file, rook_file, king_to, rook_to), math.max(king_file, rook_file, king_to, rook_to) do
+                        room[file] = true
+                    end
+                end
+                local rank = {}
+                for file = 1, 8 do rank[file] = position.board[file] or "." end
+                print("turn " .. turn .. ": " .. table.concat(rank) .. " castling " .. position.castling)
+                for _, candidate in ipairs(moves) do
+                    local piece = position.board[candidate.from]
+                    if not move and candidate.from <= 8 and room[candidate.from] and piece ~= "K" and piece ~= "R" and candidate.to > 8 then
+                        move = candidate
+                    end
+                end
+                -- Else a pawn of the second rank opens a way for them.
+                for _, candidate in ipairs(moves) do
+                    if not move and position.board[candidate.from] == "P" and candidate.from <= 16 then
+                        move = candidate
+                    end
+                end
+                move = move or moves[1]
+                local before = position
+                screen.on_square(move.from)
+                screen.on_square(move.castle or move.to)
+                pump(function() return screen.state.position ~= before and not my_turn() end, 15, "chess960 move")
+                if move.castle then
+                    castled = move
+                    pump(my_turn, 40, "chess960 reply after castling")
+                    local after = screen.state.position
+                    local king_file = (Chess.king_square(after, "w") - 1) % 8 + 1
+                    print(string.format("castled with %s: king on file %d", Chess.move_to_uci(move), king_file))
+                    if king_file ~= 7 and king_file ~= 3 then problem("Lichess should keep the castling") end
+                    shot("chess960_castled")
+                    break
+                end
+                pump(my_turn, 40, "chess960 reply " .. turn)
+            end
+            if not castled then print("no castling came up in the moves played") end
+            local done = false
+            home.net:request(Api.resign(game_id), function(status) done = status == 200 end)
+            pump(function() return done end, 25, "chess960 resign")
+        end
+        UIManager:close(screen)
+        pump(function() return next(home.open_games) == nil end, 5, "chess960 game closed")
+    end
 end
 
 UIManager:close(home)

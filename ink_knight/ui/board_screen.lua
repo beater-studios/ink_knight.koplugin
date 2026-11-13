@@ -288,6 +288,20 @@ function BoardScreen.paint_piece_sample(bb, set, x, y, size)
     end
 end
 
+-- For the page of Chess960: the pieces of a back rank, white, in a row of squares of size, light and dark.
+function BoardScreen.paint_rank_sample(bb, letters, x, y, size)
+    for index = 1, #letters do
+        local piece = letters:sub(index, index)
+        local left = x + (index - 1) * size
+        bb:paintRect(left, y, size, size, index % 2 == 1 and DARK_SQUARE or LIGHT_SQUARE)
+        local art = piece_art(BoardScreen.piece_set, piece, size)
+        if art then
+            blit_piece(bb, art, piece, left + math.floor((size - art.w) / 2), y + math.floor((size - art.h) / 2))
+        end
+    end
+    bb:paintBorder(x, y, size * #letters, size, 1, BLACK)
+end
+
 function BoardScreen.piece_set_names()
     return PIECE_SET_NAMES
 end

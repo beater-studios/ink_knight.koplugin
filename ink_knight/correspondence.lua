@@ -20,17 +20,29 @@ local function same_position(fen_a, fen_b)
 end
 Correspondence.same_position = same_position
 
--- A game of the list, as kept, or nil for one that is not a standard correspondence game.
+-- The position of a game of the list, with the castling of Chess960 as the files of the rooks, as the kept games have
+-- it, so the two compare.
+local function entry_fen(entry)
+    local variant = type(entry.variant) == "table" and entry.variant.key or entry.variant
+    if type(entry.fen) ~= "string" then
+        return nil
+    end
+    return variant == "chess960" and Chess.as_chess960(entry.fen) or entry.fen
+end
+
+-- A game of the list, as kept, or nil for one that is not a correspondence game of standard chess or Chess960.
 function Correspondence.from_playing(entry, now)
     if type(entry) ~= "table" or entry.speed ~= "correspondence" or not is_id(entry.gameId) then
         return nil
     end
     local variant = type(entry.variant) == "table" and entry.variant.key or entry.variant
-    if variant ~= nil and variant ~= "standard" then
+    if variant ~= nil and variant ~= "standard" and variant ~= "chess960" then
         return nil
     end
     local color = entry.color == "white" and "w" or entry.color == "black" and "b" or nil
-    local position = type(entry.fen) == "string" and Chess.parse_fen(entry.fen)
+    -- Kept with the castling of Chess960 as the files of the rooks, so the position reads as Chess960 later too.
+    local fen = entry_fen(entry)
+    local position = fen and Chess.parse_fen(fen)
     if not color or not position then
         return nil
     end
@@ -39,7 +51,7 @@ function Correspondence.from_playing(entry, now)
     return {
         id = entry.gameId,
         color = color,
-        fen = entry.fen,
+        fen = fen,
         last_move = last,
         opponent = type(opponent.username) == "string" and opponent.username or nil,
         seconds_left = type(entry.secondsLeft) == "number" and entry.secondsLeft or nil,
@@ -119,9 +131,9 @@ function Correspondence.plan(kept, playing)
         if game.pending then
             local entry = listed[game.id]
             local after = entry and position_after(game.pending)
-            if entry and entry.isMyTurn == true and same_position(entry.fen, game.pending.fen) then
+            if entry and entry.isMyTurn == true and same_position(entry_fen(entry), game.pending.fen) then
                 plan.send[#plan.send + 1] = game
-            elseif after and same_position(entry.fen, after) then
+            elseif after and same_position(entry_fen(entry), after) then
                 plan.landed[#plan.landed + 1] = game
             elseif entry or #(playing or {}) < Correspondence.LIST_LIMIT then
                 plan.gone[#plan.gone + 1] = game
@@ -163,7 +175,7 @@ function Correspondence.play(game, move)
         return false
     end
     for _, legal in ipairs(Chess.legal_moves(position)) do
-        if legal.from == move.from and legal.to == move.to and legal.promotion == move.promotion then
+        if Chess.same_move(legal, move) then
             game.pending = { uci = Chess.move_to_uci(legal), san = Chess.to_san(position, legal), fen = game.fen }
             return true
         end

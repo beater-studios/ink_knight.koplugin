@@ -19,6 +19,7 @@ State.OPTIONS = {
     rated = { { true, false }, false },
     confirm_moves = { { true, false }, false },
     auto_queen = { { true, false }, false },
+    variant = { { "standard", "chess960" }, "standard" },
     board_coordinates = { { true, false }, false },
     board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast" }, "plain" },
     piece_set = { { "classic", "cburnett", "merida", "chessnut", "mpchess", "kiwen-suwi", "shapes" }, "classic" },

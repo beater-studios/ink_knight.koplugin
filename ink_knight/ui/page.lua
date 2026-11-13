@@ -13,6 +13,7 @@
 -- "split": text, white, draws, black, value: a move of an explorer, with a bar of how its games ended.
 -- "metric": text, value, detail: a number in large, with what it is and a line below it.
 -- "figures": items of { value, label }: numbers side by side over what they count, without borders.
+-- "drawing": height, draw(bb, x, y, w, h): a picture of its own, the width of the page.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -150,7 +151,9 @@ function Page:wrapped_box(row, color)
 end
 
 function Page:row_height(row)
-    if row.wrap and not row.kind then
+    if row.kind == "drawing" then
+        return self:px(row.height)
+    elseif row.wrap and not row.kind then
         local box = self:wrapped_box(row)
         local height = box:getSize().h
         box:free()
@@ -458,6 +461,8 @@ function Page:paint_line(bb, row, y, h)
         bb:paintBorder(bar_x, bar_y, bar_w, bar_h, self:px(2), BLACK)
         self:paint_text(bb, row.value, REGULAR, 16, self.width - m - value_w, y, value_w, h, "right", GRAY)
         bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+    elseif row.kind == "drawing" then
+        row.draw(bb, m, y, self.width - 2 * m, h)
     elseif row.kind == "figures" then
         -- Numbers side by side, each over what it counts; not buttons, so no borders.
         local count = #row.items

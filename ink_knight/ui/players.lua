@@ -224,7 +224,7 @@ function Players.open_profile(app, user)
         end
         rows[#rows + 1] = { kind = "section", text = s.ratings_section }
         local keys = {}
-        -- Variants are not played here, so their ratings stay out of the list.
+        -- Only what is played here: the variants other than Chess960 stay out of the list.
         for key in pairs(user.perfs or {}) do
             if s.perf_names[key] then
                 keys[#keys + 1] = key

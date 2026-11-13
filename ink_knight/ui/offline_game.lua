@@ -163,6 +163,23 @@ function OfflineGame:check_end()
     self.ending = ending
 end
 
+-- "Chess960 no 518" for a game of Chess960, or nil. A standard game from the starting position is not one, though
+-- its pieces stand as number 518. Worked out once, since the position a game starts from does not change.
+function OfflineGame:chess960_label()
+    if self.chess960_text == nil then
+        local position = type(self.initial_fen) == "string" and Chess.parse_fen(self.initial_fen)
+        local number = position and position.chess960 and Chess.chess960_number(self.initial_fen)
+        self.chess960_text = number and string.format(self.s.chess960_number, number) or false
+    end
+    return self.chess960_text or nil
+end
+
+-- Before the first move, a game of Chess960 says which of the 960 positions it is.
+function OfflineGame:start_label(text)
+    local label = self.moves == "" and self:chess960_label()
+    return label and string.format("%s · %s", label, text) or text
+end
+
 function OfflineGame:status_text()
     local s = self.s
     if self.analysis then
@@ -277,7 +294,7 @@ function OfflineGame:show_state(buttons, what)
         targets = self.targets,
         top = top,
         bottom = bottom,
-        status = self:status_text(),
+        status = self:start_label(self:status_text()),
         buttons = buttons,
     }, what)
 end
@@ -493,7 +510,8 @@ function OfflineGame:hint()
         self.hinting = false
         if move and self.position == position then
             self.selected = move.from
-            self.targets = { [move.to] = Chess.targets_from(position, move.from)[move.to] }
+            local target = Chess.target_square(position, move)
+            self.targets = { [target] = Chess.targets_from(position, move.from)[target] }
             self.hint_text = string.format(self.s.hint_status, Chess.to_san(position, move))
         end
         self:render()
@@ -614,7 +632,7 @@ function OfflineGame:on_button(button)
     elseif button == "moves" then
         self.san_cache = self.san_cache or {}
         local sans, first_number, first_turn = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
-        MoveList.show(self.app, sans, first_number, first_turn, { initial_fen = self.initial_fen, moves = self.moves })
+        MoveList.show(self.app, sans, first_number, first_turn, { initial_fen = self.initial_fen, moves = self.moves, opening = self:chess960_label() })
     elseif button == "again" then
         UIManager:close(self.screen)
         if self.two_players then

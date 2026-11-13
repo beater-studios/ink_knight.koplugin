@@ -97,9 +97,16 @@ function Api.rating_range(rating, margin)
     return string.format("%d-%d", math.max(0, rating - margin), rating + margin)
 end
 
+-- The variants the plugin plays on Lichess, standard unless said otherwise.
+Api.VARIANTS = { standard = true, chess960 = true }
+
+local function variant_of(variant)
+    return Api.VARIANTS[variant] and variant or "standard"
+end
+
 -- The color is left out of a seek, as Lichess advises, so it evens out the colors by itself.
-local function seek_fields(rated, range)
-    local fields = { { "rated", rated and "true" or "false" } }
+local function seek_fields(rated, range, variant)
+    local fields = { { "rated", rated and "true" or "false" }, { "variant", variant_of(variant) } }
     if range then
         fields[#fields + 1] = { "ratingRange", range }
     end
@@ -107,43 +114,43 @@ local function seek_fields(rated, range)
 end
 
 -- A real-time seek stays open until a game starts: closing the connection cancels it.
-function Api.seek_clock(minutes, increment, rated, range)
-    local fields = seek_fields(rated, range)
+function Api.seek_clock(minutes, increment, rated, range, variant)
+    local fields = seek_fields(rated, range, variant)
     fields[#fields + 1] = { "time", minutes }
     fields[#fields + 1] = { "increment", increment }
     return { method = "POST", path = "/api/board/seek", stream = true, body = form(fields) }
 end
 
-function Api.seek_days(days, rated, range)
-    local fields = seek_fields(rated, range)
+function Api.seek_days(days, rated, range, variant)
+    local fields = seek_fields(rated, range, variant)
     fields[#fields + 1] = { "days", days }
     return { method = "POST", path = "/api/board/seek", body = form(fields) }
 end
 
-function Api.challenge_clock(username, minutes, increment, rated, color)
+function Api.challenge_clock(username, minutes, increment, rated, color, variant)
     return {
         method = "POST", path = "/api/challenge/" .. path_id(username),
-        body = form({ { "rated", rated and "true" or "false" }, { "clock.limit", minutes * 60 }, { "clock.increment", increment }, { "color", color or "random" }, { "variant", "standard" } }),
+        body = form({ { "rated", rated and "true" or "false" }, { "clock.limit", minutes * 60 }, { "clock.increment", increment }, { "color", color or "random" }, { "variant", variant_of(variant) } }),
     }
 end
 
-function Api.challenge_days(username, days, rated, color)
+function Api.challenge_days(username, days, rated, color, variant)
     return {
         method = "POST", path = "/api/challenge/" .. path_id(username),
-        body = form({ { "rated", rated and "true" or "false" }, { "days", days }, { "color", color or "random" }, { "variant", "standard" } }),
+        body = form({ { "rated", rated and "true" or "false" }, { "days", days }, { "color", color or "random" }, { "variant", variant_of(variant) } }),
     }
 end
 
 -- Lichess refuses a rated game with no time limit, so this one never asks for it.
-function Api.challenge_no_limit(username, color)
+function Api.challenge_no_limit(username, color, variant)
     return {
         method = "POST", path = "/api/challenge/" .. path_id(username),
-        body = form({ { "rated", "false" }, { "color", color or "random" }, { "variant", "standard" } }),
+        body = form({ { "rated", "false" }, { "color", color or "random" }, { "variant", variant_of(variant) } }),
     }
 end
 
 -- Against the computer of Lichess itself. It is never rated. Without minutes or days, the game has no time limit.
-function Api.challenge_ai(level, minutes, increment, color, days)
+function Api.challenge_ai(level, minutes, increment, color, days, variant)
     local fields = { { "level", level } }
     if minutes then
         fields[#fields + 1] = { "clock.limit", minutes * 60 }
@@ -152,7 +159,7 @@ function Api.challenge_ai(level, minutes, increment, color, days)
         fields[#fields + 1] = { "days", days }
     end
     fields[#fields + 1] = { "color", color or "random" }
-    fields[#fields + 1] = { "variant", "standard" }
+    fields[#fields + 1] = { "variant", variant_of(variant) }
     return { method = "POST", path = "/api/challenge/ai", body = form(fields) }
 end
 
@@ -462,7 +469,7 @@ end
 
 function Api.challenge_is_supported(challenge)
     local variant = challenge.variant and challenge.variant.key
-    return variant == nil or variant == "standard"
+    return variant == nil or Api.VARIANTS[variant] == true
 end
 
 return Api

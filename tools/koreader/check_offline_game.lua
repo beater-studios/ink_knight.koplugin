@@ -373,6 +373,54 @@ do
     home.settings:delSetting("auto_queen")
 end
 
+-- Chess960 without internet: the page with the number and back rank, a number typed, a game between two people
+-- from it with the number shown before the first move, and a castling of Chess960 tapped on its rook.
+do
+    local s = home.strings
+    home:chess960_menu(0)
+    local page = home.pages[#home.pages]
+    check(page.lines[1].kind == "metric" and page.lines[1].value == "0" and page.lines[2].rank == "BBQNNRKR", "the page shows the position: " .. tostring(page.lines[2].rank))
+    page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/chess960_menu.png")
+    page.lines[3].items[2].callback()
+    local dialog
+    for _, window in ipairs(UIManager._window_stack) do
+        if window.widget.setInputText then dialog = window.widget end
+    end
+    dialog:setInputText("518")
+    dialog.button_table:getButtonById("use").callback()
+    check(page.lines[1].value == "518" and page.lines[2].rank == "RNBQKBNR", "a typed number should be the position")
+    local two_players_row
+    for _, line in ipairs(page.lines) do
+        two_players_row = two_players_row or (line.text == s.two_players and line)
+    end
+    two_players_row.callback()
+    local clocks = home.pages[#home.pages]
+    clocks.lines[1].callback()
+    local game
+    for _, window in ipairs(UIManager._window_stack) do
+        if window.widget.on_square and window.widget.state then game = window.widget end
+    end
+    check(game and game.state.status:find(string.format(s.chess960_number, 518), 1, true), "the game says which position it is: " .. tostring(game and game.state.status))
+    home:close_pages()
+    if game then UIManager:close(game) end
+    home.settings:delSetting("two_player_game")
+    -- Castling with the king on b1: the king, then the rook on h1.
+    local castling = OfflineGame.open(home, { two_players = true, initial_fen = "rk5r/8/8/8/8/8/8/RK5R w AHah - 0 1" })
+    castling.screen.on_square(Chess.square_from_name("b1"))
+    castling.screen.on_square(Chess.square_from_name("h1"))
+    check(castling.position.board[Chess.square_from_name("g1")] == "K" and castling.position.board[Chess.square_from_name("f1")] == "R"
+        and castling.moves == "b1h1", "a castling of Chess960 tapped on its rook: " .. tostring(castling.moves))
+    UIManager:close(castling.screen)
+    home.settings:delSetting("two_player_game")
+    -- A standard game from the starting position, as the editor starts one, is not number 518 of Chess960.
+    local standard = OfflineGame.open(home, { two_players = true, initial_fen = Chess.START_FEN })
+    check(standard.screen.state.status and not standard.screen.state.status:find("Chess960", 1, true) and standard:chess960_label() == nil,
+        "a standard game has no Chess960 label: " .. tostring(standard.screen.state.status))
+    UIManager:close(standard.screen)
+    home.settings:delSetting("two_player_game")
+end
+
 home.settings:delSetting("offline_game")
 UIManager:close(home)
 if failures > 0 then

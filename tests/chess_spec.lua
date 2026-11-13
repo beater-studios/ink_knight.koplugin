@@ -165,12 +165,44 @@ test("a game against the computer has a name", function()
     eq(game.black_rating, nil); eq(game.white_rating, 1500)
 end)
 
-test("other variants are told apart", function()
+test("Chess960 is played, other variants are told apart", function()
     local game = Game.new("abc", "me")
-    game:on_event({ type = "gameFull", variant = { key = "chess960" }, white = { id = "me" }, black = { id = "o" }, state = { moves = "" } }, 1)
+    game:on_event({ type = "gameFull", variant = { key = "atomic" }, white = { id = "me" }, black = { id = "o" }, state = { moves = "" } }, 1)
     eq(game:is_supported(), false)
     eq(Api.challenge_is_supported({ variant = { key = "standard" } }), true)
+    eq(Api.challenge_is_supported({ variant = { key = "chess960" } }), true)
     eq(Api.challenge_is_supported({ variant = { key = "atomic" } }), false)
+end)
+
+test("a game of Chess960 from Lichess: its X-FEN read as Chess960, castling sent as the king taking its rook", function()
+    local game = Game.new("abc", "me")
+    -- One of the positions whose king and rooks stand as in standard chess, where only the variant tells.
+    game:on_event({ type = "gameFull", variant = { key = "chess960" }, initialFen = "rbbqknnr/pppppppp/8/8/8/8/PPPPPPPP/RBBQKNNR w KQkq - 0 1",
+        white = { id = "me" }, black = { id = "o" }, state = { moves = "", status = "started" } }, 1)
+    eq(game:is_supported(), true)
+    assert(game.position.chess960, "the position is one of Chess960")
+    eq(game.initial_fen, "rbbqknnr/pppppppp/8/8/8/8/PPPPPPPP/RBBQKNNR w HAha - 0 1")
+    game:on_event({ type = "gameState", moves = "g1f3 g8f6 f1e3 f8e6", status = "started" }, 2)
+    local castle
+    for _, move in ipairs(Chess.legal_moves(game.position)) do
+        if move.castle then castle = move end
+    end
+    eq(Chess.move_to_uci(castle), "e1h1")
+    -- The rematch is Chess960 again.
+    game.clock = { initial = 600000, increment = 0 }
+    game.white, game.black = { id = "me" }, { id = "opponent" }
+    local request = game:rematch_request()
+    assert(request and request.body:find("variant=chess960", 1, true), tostring(request and request.body))
+end)
+
+test("the variant goes with seeks, challenges and the computer", function()
+    assert(Api.seek_clock(10, 0, true, nil, "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.seek_days(3, false, nil, "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.challenge_clock("someone", 10, 0, false, "white", "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.challenge_days("someone", 3, false, "white", "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.challenge_no_limit("someone", "white", "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.challenge_ai(1, 15, 10, "white", nil, "chess960").body:find("variant=chess960", 1, true))
+    assert(Api.challenge_ai(1, 15, 10, "white", nil, "atomic").body:find("variant=standard", 1, true), "only the variants the plugin plays")
 end)
 
 test("clocks are readable", function()
@@ -190,10 +222,10 @@ end)
 
 test("a seek keeps the connection open only in real time", function()
     eq(Api.seek_clock(10, 0, true).stream, true)
-    eq(Api.seek_clock(10, 0, true).body, "rated=true&time=10&increment=0")
-    eq(Api.seek_clock(10, 0, true, "1400-1600").body, "rated=true&ratingRange=1400-1600&time=10&increment=0")
+    eq(Api.seek_clock(10, 0, true).body, "rated=true&variant=standard&time=10&increment=0")
+    eq(Api.seek_clock(10, 0, true, "1400-1600").body, "rated=true&variant=standard&ratingRange=1400-1600&time=10&increment=0")
     eq(Api.seek_days(3, false).stream, nil)
-    eq(Api.seek_days(3, false).body, "rated=false&days=3")
+    eq(Api.seek_days(3, false).body, "rated=false&variant=standard&days=3")
 end)
 
 test("no real-time seek goes below what Lichess accepts", function()
@@ -314,7 +346,7 @@ test("the token is never written to the folder of the requests", function()
         end
     end
     listing:close()
-    eq(record.spawned[1].body, "rated=false&days=3")
+    eq(record.spawned[1].body, "rated=false&variant=standard&days=3")
     eq(record.spawned[1].headers["content-length"], tostring(#record.spawned[1].body))
 end)
 
@@ -711,6 +743,116 @@ test("evaluations and counts read well", function()
     eq(Api.tablebase_winner("win", "w"), "white"); eq(Api.tablebase_winner("loss", "w"), "black")
     eq(Api.tablebase_winner("win", "b"), "black"); eq(Api.tablebase_winner("draw", "b"), "draw")
     eq(Api.tablebase_winner("cursed-win", "w"), "draw"); eq(Api.tablebase_winner("unknown", "w"), nil)
+end)
+
+local function move_by_uci(position, uci)
+    for _, move in ipairs(Chess.legal_moves(position)) do
+        if Chess.move_to_uci(move) == uci then return move end
+    end
+end
+
+test("the starting positions of Chess960 by their number", function()
+    eq(Chess.chess960_fen(518), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1")
+    eq(Chess.chess960_fen(0), "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1")
+    for number = 0, 959, 37 do
+        eq(Chess.chess960_number(Chess.chess960_fen(number)), number)
+    end
+    eq(Chess.chess960_number(Chess.START_FEN:gsub("KQkq", "HAha")), 518)
+    eq(Chess.chess960_number("8/8/8/8/8/8/8/8 w - - 0 1"), nil)
+    -- A position of Chess960 is read as one, even the one that stands as standard chess.
+    local standard_looking = pos(Chess.chess960_fen(518))
+    assert(standard_looking.chess960 and standard_looking.castling == "HAha")
+    eq(Chess.perft(standard_looking, 2), 400)
+end)
+
+test("X-FEN from Lichess is read as Chess960, and standard chess stays as it was", function()
+    eq(Chess.as_chess960("rkbnrnqb/pppppppp/8/8/8/8/PPPPPPPP/RKBNRNQB w KQkq - 0 1"), "rkbnrnqb/pppppppp/8/8/8/8/PPPPPPPP/RKBNRNQB w EAea - 0 1")
+    eq(Chess.as_chess960(Chess.START_FEN), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1")
+    local start = pos(Chess.START_FEN)
+    assert(not start.chess960 and start.castling == "KQkq", "standard chess keeps KQkq")
+    -- KQkq is X-FEN only for a game said to be Chess960; the files of the rooks are Chess960 anyway.
+    local xfen = assert(Chess.parse_fen("bbnrkqrn/pppppppp/8/8/8/8/PPPPPPPP/BBNRKQRN w KQkq - 0 1", true))
+    eq(xfen.castling, "GDgd"); assert(xfen.chess960)
+    assert(pos("bbnrkqrn/pppppppp/8/8/8/8/PPPPPPPP/BBNRKQRN w GDgd - 0 1").chess960)
+    -- A right with no king or rook to stand for is dropped in Chess960.
+    eq(assert(Chess.parse_fen("r3k3/8/8/8/8/8/8/8 w KQq - 0 1", true)).castling, "a")
+end)
+
+test("a standard FEN written loosely keeps its rights, and does not become Chess960", function()
+    -- A practice goal whose castling letter has no king or rook behind it: no castling at all.
+    local loose = pos("8/8/8/8/8/5pk1/1r6/2R3K1 b Q - 0 1")
+    assert(not loose.chess960 and loose.castling == "Q")
+    loose.turn = "w"
+    assert(not move_by_uci(loose, "g1c1") and not move_by_uci(loose, "g1e1"), "no castling for a king on g1")
+    -- A lesson with the black king already castled keeps white's castle on g1.
+    local lesson = pos("rnb2rk1/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNB1K2R w KQkq - 0 1")
+    assert(not lesson.chess960)
+    local castle = move_by_uci(lesson, "e1g1")
+    assert(castle and castle.castle, "castling to g1")
+    assert(Chess.targets_from(lesson, Chess.square_from_name("e1"))[Chess.square_from_name("g1")], "tapped on g1")
+end)
+
+test("in Chess960 a castling and a plain king move to the same square stay two moves", function()
+    local Correspondence = require("ink_knight/correspondence")
+    local fen = "1k6/8/8/8/8/8/8/5K1R w H - 0 1"
+    local position = pos(fen)
+    local castle = move_by_uci(position, "f1h1")
+    local step = move_by_uci(position, "f1g1")
+    assert(castle and step and castle.to == step.to, "both go to g1")
+    assert(Chess.same_move(castle, castle) and not Chess.same_move(castle, step))
+    eq(Chess.target_square(position, castle), Chess.square_from_name("h1"))
+    eq(Chess.target_square(position, step), Chess.square_from_name("g1"))
+    local game = { id = "abc", color = "w", fen = fen }
+    assert(Correspondence.play(game, castle))
+    eq(game.pending.uci, "f1h1"); eq(game.pending.san, "O-O")
+    game = { id = "abc", color = "w", fen = fen }
+    assert(Correspondence.play(game, step))
+    eq(game.pending.uci, "f1g1")
+end)
+
+test("castling in Chess960 from wherever king and rook stand", function()
+    -- King on b1, rook on a1: queen side castling takes the king to c1 and the rook to d1.
+    local position = pos("rk6/8/8/8/8/8/8/RK5R w AHah - 0 1")
+    local long = move_by_uci(position, "b1a1")
+    assert(long and long.castle == Chess.square_from_name("a1"), "the king takes its rook to castle")
+    local after = Chess.play(position, long)
+    eq(after.board[Chess.square_from_name("c1")], "K"); eq(after.board[Chess.square_from_name("d1")], "R")
+    eq(after.board[Chess.square_from_name("a1")], nil); eq(after.board[Chess.square_from_name("b1")], nil)
+    eq(after.castling, "ah")
+    eq(Chess.to_san(position, long), "O-O-O")
+    -- King side, the king going to g1 and the rook to f1.
+    local short = move_by_uci(position, "b1h1")
+    eq(Chess.to_san(position, short), "O-O")
+    after = Chess.play(position, short)
+    eq(after.board[Chess.square_from_name("g1")], "K"); eq(after.board[Chess.square_from_name("f1")], "R")
+    -- On the board, a castling of Chess960 is tapped on its rook.
+    local targets = Chess.targets_from(position, Chess.square_from_name("b1"))
+    assert(targets[Chess.square_from_name("h1")] and targets[Chess.square_from_name("h1")][1].castle, "the rook is the target")
+end)
+
+test("a king already on g castles by the rook alone, and a piece in the way stops it", function()
+    local position = pos("6k1/8/8/8/8/8/8/6KR w H - 0 1")
+    local castle = move_by_uci(position, "g1h1")
+    assert(castle, "the king stays and the rook comes to f1")
+    local after = Chess.play(position, castle)
+    eq(after.board[Chess.square_from_name("g1")], "K"); eq(after.board[Chess.square_from_name("f1")], "R")
+    local blocked = pos("6k1/8/8/8/8/8/8/1N2K2R w H - 0 1")
+    assert(move_by_uci(blocked, "e1h1"), "nothing between king, rook and their squares")
+    blocked = pos("6k1/8/8/8/8/8/8/4KN1R w H - 0 1")
+    assert(not move_by_uci(blocked, "e1h1"), "the knight on f1 is in the way")
+    -- A square the king crosses under attack stops it, though the rook's path may be attacked.
+    local attacked = pos("5r1k/8/8/8/8/8/8/4K2R w H - 0 1")
+    assert(not move_by_uci(attacked, "e1h1"), "f1 is attacked")
+end)
+
+test("castling of standard chess keeps its notation", function()
+    local position = pos("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    local move = move_by_uci(position, "e1g1")
+    assert(move, "standard castling is e1g1 in UCI")
+    eq(Chess.to_san(position, move), "O-O")
+    eq(Chess.move_to_uci(Chess.parse_uci(position, "e1h1")), "e1g1")
+    local after = Chess.apply_uci(position, "e1g1")
+    eq(after.board[Chess.square_from_name("f1")], "R")
 end)
 
 print(string.format("%d passed, %d failed", passed, failed))

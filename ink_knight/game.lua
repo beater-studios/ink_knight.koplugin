@@ -61,6 +61,10 @@ function Game:on_event(event, now)
         self.clock = event.clock
         self.days_per_turn = event.daysPerTurn
         self.initial_fen = event.initialFen
+        -- Lichess writes the start of Chess960 as X-FEN, which in some positions reads as standard chess.
+        if self.variant == "chess960" and self.initial_fen and self.initial_fen ~= "startpos" then
+            self.initial_fen = Chess.as_chess960(self.initial_fen)
+        end
         self.position = Chess.parse_fen((self.initial_fen == nil or self.initial_fen == "startpos") and Chess.START_FEN or self.initial_fen) or self.position
         self.moves = ""
         self.last_move = nil
@@ -90,7 +94,7 @@ function Game:is_my_turn()
 end
 
 function Game:is_supported()
-    return self.variant == nil or self.variant == "standard" or self.variant == "fromPosition"
+    return self.variant == nil or self.variant == "standard" or self.variant == "fromPosition" or self.variant == "chess960"
 end
 
 function Game:move_count()
@@ -164,18 +168,20 @@ function Game:rematch_request()
     local color = self.my_color == "w" and "black" or "white"
     local minutes = self.clock and self.clock.initial and self.clock.initial / 60000
     local increment = self.clock and self.clock.increment and self.clock.increment / 1000 or 0
+    -- The same variant again; a game from a position becomes standard.
+    local variant = self.variant == "chess960" and "chess960" or "standard"
     if opponent.aiLevel then
-        return Api.challenge_ai(opponent.aiLevel, minutes, increment, color, self.days_per_turn), true
+        return Api.challenge_ai(opponent.aiLevel, minutes, increment, color, self.days_per_turn, variant), true
     end
     if not Api.is_safe_id(opponent.id) then
         return nil
     end
     if minutes then
-        return Api.challenge_clock(opponent.id, minutes, increment, self.rated, color), false
+        return Api.challenge_clock(opponent.id, minutes, increment, self.rated, color, variant), false
     elseif self.days_per_turn then
-        return Api.challenge_days(opponent.id, self.days_per_turn, self.rated, color), false
+        return Api.challenge_days(opponent.id, self.days_per_turn, self.rated, color, variant), false
     end
-    return Api.challenge_no_limit(opponent.id, color), false
+    return Api.challenge_no_limit(opponent.id, color, variant), false
 end
 
 function Game:opponent_offers_takeback()

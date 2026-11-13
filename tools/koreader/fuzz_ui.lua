@@ -197,6 +197,16 @@ fuzz:run{
     end,
 }
 
+-- A game of Chess960 between two people, from any of the 960 positions, so castling from anywhere gets tapped.
+fuzz:run{
+    label = "chess960",
+    setup = function(f)
+        local home = fresh_home(f, "en")
+        local Chess = require("ink_knight/chess")
+        return OfflineGame.open(home, { two_players = true, initial_fen = Chess.chess960_fen(f.random(0, 959)) }).screen
+    end,
+}
+
 -- A game between two people that just ended in mate, so the analysis and its review get touched.
 fuzz:run{
     label = "analysis after a game",

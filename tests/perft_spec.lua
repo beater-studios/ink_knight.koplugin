@@ -1,17 +1,20 @@
--- The positions of tests/perft (from scalachess, MIT): each depth's count of move sequences must match, so any mistake
--- in the rules shows. Only the depths up to PERFT_LIMIT sequences run: 20000 by default, about 3 s on a Kindle, where
--- the install runs the tests; tools/check.sh runs them to 1000000, and PERFT_LIMIT=10000000 runs them deep. The first
--- depth listed always runs, so no limit turns the file into a pass that checked nothing.
--- Positions with the castling of Chess960, which the plugin does not play, are left out.
+-- The positions of tests/perft (from scalachess, MIT), of standard chess and of Chess960: each depth's count of move
+-- sequences must match, so any mistake in the rules shows. Only the depths up to PERFT_LIMIT sequences run: 20000 by
+-- default, about 3 s on a Kindle, where the install runs the tests; tools/check.sh runs them to 1000000, and
+-- PERFT_LIMIT=10000000 runs them deep. The first depth listed always runs, so no limit turns a file into a pass that
+-- checked nothing.
 package.path = "./?.lua;" .. package.path
 local Chess = require("ink_knight/chess")
-local Editor = require("ink_knight/editor")
 
 local LIMIT = tonumber(os.getenv("PERFT_LIMIT")) or 20000
--- The positions of standard chess in the file: a change of the file that loses one fails here.
-local STANDARD_POSITIONS = 12
+-- The 960 starting positions of Chess960 are many, so by default one in CHESS960_EVERY runs, to CHESS960_LIMIT
+-- sequences (the first two depths); tools/check.sh runs all of them deeper.
+local CHESS960_EVERY = tonumber(os.getenv("CHESS960_EVERY")) or 4
+local CHESS960_LIMIT = tonumber(os.getenv("CHESS960_LIMIT")) or 1000
+-- What each file must run: a change of a file that loses a position fails here.
+local EXPECTED = { ["tricky.perft"] = 18, ["chess960.perft"] = 960 }
 
-local passed, failed, skipped = 0, 0, 0
+local passed, failed = 0, 0
 local function test(name, fn)
     local ok, err = pcall(fn)
     if ok then
@@ -41,47 +44,39 @@ local function read(path)
     return cases
 end
 
--- Every right the position states has its king and rook where standard castling wants them; otherwise it is the
--- castling of Chess960.
-local function standard(position)
-    local possible = Editor.possible_castling(position)
-    for letter in position.castling:gmatch(".") do
-        if not possible:find(letter, 1, true) then
-            return false
+local function run_file(name, limit, every)
+    local cases = read("tests/perft/" .. name)
+    test(name .. " has its positions", function()
+        if #cases ~= EXPECTED[name] then
+            error(string.format("expected %d, read %d", EXPECTED[name], #cases), 0)
+        end
+    end)
+    for index, case in ipairs(cases) do
+        if (index - 1) % every == 0 then
+            -- The xfen positions write the castling of Chess960 as KQkq, so they are read as Chess960.
+            local position = Chess.parse_fen(case.epd or "", case.id:match("^xfen") ~= nil)
+            test(name .. " " .. case.id, function()
+                if not position then
+                    error("cannot read the position " .. tostring(case.epd), 0)
+                end
+                table.sort(case.counts, function(a, b) return a.depth < b.depth end)
+                assert(#case.counts > 0, "no count to compare")
+                for position_index, item in ipairs(case.counts) do
+                    if position_index > 1 and item.count > limit then
+                        break
+                    end
+                    local got = Chess.perft(position, item.depth)
+                    if got ~= item.count then
+                        error(string.format("depth %d: expected %d, got %d", item.depth, item.count, got), 0)
+                    end
+                end
+            end)
         end
     end
-    return true
 end
 
-local ran = 0
-for _, case in ipairs(read("tests/perft/tricky.perft")) do
-    local position = Chess.parse_fen(case.epd or "")
-    if not position then
-        test("perft " .. case.id, function() error("cannot read the position " .. tostring(case.epd), 0) end)
-    elseif not standard(position) then
-        skipped = skipped + 1
-    else
-        ran = ran + 1
-        test("perft " .. case.id, function()
-            table.sort(case.counts, function(a, b) return a.depth < b.depth end)
-            assert(#case.counts > 0, "no count to compare")
-            for index, item in ipairs(case.counts) do
-                if index > 1 and item.count > LIMIT then
-                    break
-                end
-                local got = Chess.perft(position, item.depth)
-                if got ~= item.count then
-                    error(string.format("depth %d: expected %d, got %d", item.depth, item.count, got), 0)
-                end
-            end
-        end)
-    end
-end
-test("the file has its positions of standard chess", function()
-    if ran ~= STANDARD_POSITIONS then
-        error(string.format("expected %d, ran %d", STANDARD_POSITIONS, ran), 0)
-    end
-end)
+run_file("tricky.perft", LIMIT, 1)
+run_file("chess960.perft", CHESS960_LIMIT, CHESS960_EVERY)
 
-print(string.format("%d passed, %d failed (%d positions with the castling of Chess960 left out)", passed, failed, skipped))
+print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)
