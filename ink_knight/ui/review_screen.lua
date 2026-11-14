@@ -7,15 +7,17 @@ local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Broadcast = require("ink_knight/broadcast")
 local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+local EvalChart = require("ink_knight/ui/eval_chart")
 local Chess = require("ink_knight/chess")
 local MoveList = require("ink_knight/ui/move_list")
 
 local ReviewScreen = {}
 ReviewScreen.__index = ReviewScreen
 
--- game: { moves = { { uci, san, eval_text, judgment, best, clock } }, intro, initial_fen, summary }, plus white,
--- black and result for the bars; best is the better move, in the usual notation, when the engine of the plugin found
--- one, summary comes from Game.analysis_summary, and clock the seconds left after the move, shown on the bars.
+-- game: { moves = { { uci, san, eval_text, judgment, best, clock, white_cp } }, intro, initial_fen, summary }, plus
+-- white, black and result for the bars; best is the better move, in the usual notation, when the engine of the plugin
+-- found one, summary comes from Game.analysis_summary, clock the seconds left after the move, shown on the bars, and
+-- white_cp the score after the move for white, for the chart of the summary.
 -- opts: flipped, game_id and bookmarked, for the favorites, reader_color when the reader played the game, and
 -- refresh(on_game) for a game still being played: called every REFRESH_SECONDS, it gives on_game the game again,
 -- with the moves played since.
@@ -185,6 +187,10 @@ function ReviewScreen:render(what)
     if self.flipped then
         top, bottom = bottom, top
     end
+    -- On every move, so no evaluation of the plugin's engine passes for one of Lichess.
+    if self.game.summary and self.game.summary.source == "plugin" then
+        top.tag = s.engine_tag
+    end
     self.screen:show({
         flipped = self.flipped,
         position = self.positions[self.index],
@@ -192,6 +198,7 @@ function ReviewScreen:render(what)
         top = top,
         bottom = bottom,
         status = self:status_text(),
+        progress = self.analysis and { done = self.progress_done or 1, total = self.progress_total or 1 } or nil,
         buttons = {
             { id = "back", label = s.back },
             { id = "first", label = "|<" },
@@ -231,6 +238,19 @@ function ReviewScreen:on_button(button)
     end
 end
 
+-- The choice of analyzing every game of the reader at its end, where the reader reviews: once on, the question of
+-- open_at_end no longer shows, so here is where it goes off again.
+function ReviewScreen:analyze_always_row(page)
+    local s, app = self.s, self.app
+    if not self.opts.reader_color or not EngineAnalysis.available(app) then
+        return nil
+    end
+    return { kind = "toggle", text = s.analyze_always, on = app:option("analyze_always"), on_text = s.yes, off_text = s.no, callback = function()
+        app:save_setting("analyze_always", not app:option("analyze_always"))
+        page:reload()
+    end }
+end
+
 function ReviewScreen:more_menu()
     local s, opts = self.s, self.opts
     local rows = { { text = s.moves, callback = function() self:show_moves() end } }
@@ -252,7 +272,63 @@ function ReviewScreen:more_menu()
             callback = function() self:toggle_bookmark() end,
         }
     end
-    self.app:choose(s.more, rows, { close_on_tap = true })
+    self.app:open_page{ title = s.more, close_on_tap = true, build = function(page)
+        local list = { unpack(rows) }
+        list[#list + 1] = self:analyze_always_row(page)
+        return list
+    end }
+end
+
+-- Right after the reader's game, from its board: the summary when Lichess analyzed the game; otherwise the plugin's
+-- engine, at once when the reader asked for it always, or offered first.
+function ReviewScreen:open_at_end()
+    if self.game.summary then
+        self:show_summary()
+    elseif self.available > 0 and EngineAnalysis.available(self.app) then
+        if self.app:option("analyze_always") then
+            self:analyze_here()
+        else
+            self:offer_analysis()
+        end
+    end
+end
+
+-- How long the plugin's engine takes for this game, about.
+function ReviewScreen:analysis_time_text()
+    local s = self.s
+    local seconds = (self.available + 1) * (EngineAnalysis.MILLISECONDS + 300) / 1000
+    if seconds < 55 then
+        return string.format(s.about_seconds, math.max(5, math.floor(seconds / 5 + 0.5) * 5))
+    end
+    local minutes = math.floor(seconds / 60 + 0.5)
+    return minutes <= 1 and s.about_minute or string.format(s.about_minutes, minutes)
+end
+
+function ReviewScreen:offer_analysis()
+    local s = self.s
+    self.app:open_page{ title = s.review_game, build = function(page)
+        return {
+            { kind = "hero", icon = "\226\153\158", text = s.review_no_analysis, detail = s.review_no_analysis_detail },
+            { kind = "primary", text = s.analyze_plugin, callback = function()
+                UIManager:close(page)
+                self:analyze_here()
+            end },
+            { kind = "text", text = string.format(s.analyze_plugin_explain, self:analysis_time_text()) },
+            { kind = "secondary", text = s.review_without_analysis, callback = function() UIManager:close(page) end },
+            self:analyze_always_row(page),
+        }
+    end }
+end
+
+-- The first move the reader played that the analysis called a mistake or a blunder, or nil.
+function ReviewScreen:first_mistake_of_reader()
+    local color = self.opts.reader_color == "black" and "b" or "w"
+    for i = 1, self.available do
+        local judgment = self.game.moves[i].judgment
+        if self.positions[i - 1].turn == color and (judgment == "Mistake" or judgment == "Blunder") then
+            return i
+        end
+    end
 end
 
 function ReviewScreen:analyze_here()
@@ -282,7 +358,7 @@ function ReviewScreen:analyze_here()
             for i, entry in ipairs(result.moves) do
                 local move = self.game.moves[i]
                 if move then
-                    move.eval_text, move.judgment, move.best = entry.eval_text, entry.judgment, entry.best
+                    move.eval_text, move.judgment, move.best, move.white_cp = entry.eval_text, entry.judgment, entry.best, entry.white_cp
                 end
             end
             self.game.summary = result.summary
@@ -301,46 +377,71 @@ end
 
 function ReviewScreen:show_summary()
     local s, game, summary = self.s, self.game, self.game.summary
-    local rows = {}
-    if summary.source == "plugin" then
-        rows[1] = { kind = "text", text = s.review_plugin_analysis }
-    end
-    for _, side in ipairs({ { "white", s.color_white, game.white }, { "black", s.color_black, game.black } }) do
-        local data = summary[side[1]]
-        rows[#rows + 1] = { kind = "section", text = string.format("%s · %s", side[2], side[3] or "?") }
-        if data.accuracy then
-            local phases = data.phases
-            rows[#rows + 1] = {
-                kind = "metric", text = s.review_accuracy_label, value = string.format("%d%%", data.accuracy),
-                detail = phases and string.format(s.review_phase_accuracy, phases.opening, phases.middlegame, phases.endgame) or nil,
-            }
+    local reader = self.opts.reader_color
+    self.app:open_page{ title = s.review_summary, close_on_tap = true, build = function(page)
+        -- Whose analysis it is comes first, the plugin's or the site's.
+        local rows = { { kind = "text", text = summary.source == "plugin" and s.review_plugin_analysis or s.review_lichess_analysis } }
+        rows[#rows + 1] = EvalChart.row(game.moves, self.available, s.review_chart_legend, page.scale, function(index)
+            self:go(index)
+        end)
+        for _, side in ipairs({ { "white", s.color_white, game.white }, { "black", s.color_black, game.black } }) do
+            local data = summary[side[1]]
+            local name = side[3] or "?"
+            if reader == side[1] then
+                name = string.format(s.review_you, name)
+            end
+            rows[#rows + 1] = { kind = "section", text = string.format("%s · %s", side[2], name) }
+            local figures = {}
+            if data.accuracy then
+                figures[1] = { value = string.format("%d%%", data.accuracy), label = s.review_accuracy_label }
+            end
+            figures[#figures + 1] = { value = tostring(data.inaccuracy), label = s.review_inaccuracies }
+            figures[#figures + 1] = { value = tostring(data.mistake), label = s.review_mistakes }
+            figures[#figures + 1] = { value = tostring(data.blunder), label = s.review_blunders }
+            if data.acpl then
+                figures[#figures + 1] = { value = tostring(data.acpl), label = s.review_acpl_label }
+            end
+            rows[#rows + 1] = { kind = "figures", items = figures }
         end
-        local figures = {
-            { value = tostring(data.inaccuracy), label = s.review_inaccuracies },
-            { value = tostring(data.mistake), label = s.review_mistakes },
-            { value = tostring(data.blunder), label = s.review_blunders },
-        }
-        if data.acpl then
-            figures[#figures + 1] = { value = tostring(data.acpl), label = s.review_acpl_label }
+        -- Only the reader's own mistakes, so the button always does the same; with none, it says so.
+        if reader then
+            local first = self:first_mistake_of_reader()
+            rows[#rows + 1] = { kind = "buttons", items = {
+                first and { text = s.my_first_mistake, primary = true, callback = function() self:go(first) end }
+                    or { text = s.no_mistake_of_mine, disabled = true },
+                { text = s.see_game, callback = function() end },
+            } }
         end
-        rows[#rows + 1] = { kind = "figures", items = figures }
-    end
-    -- The phases go to their move, so the summary leads back into the game.
-    local phase_rows = {}
-    for _, phase in ipairs({ { summary.middle, s.review_middlegame }, { summary.ending, s.review_endgame } }) do
-        if phase[1] and self:phase_at(phase[1]) then
-            phase_rows[#phase_rows + 1] = { text = phase[2], value = string.format(s.review_move_value, self:move_label(phase[1])), callback = function()
-                self:go(phase[1])
+        -- The phases go to their move, so the summary leads back into the game, with the accuracy of each side in
+        -- them when the site gives it.
+        local phase_rows = {}
+        local white_phases, black_phases = summary.white.phases, summary.black.phases
+        local function percent(phases, key)
+            return phases and string.format("%d%%", phases[key]) or "?"
+        end
+        local function detail(key)
+            return (white_phases or black_phases) and string.format(s.review_phase_detail, percent(white_phases, key), percent(black_phases, key)) or nil
+        end
+        if white_phases or black_phases then
+            phase_rows[1] = { text = s.review_opening, detail = detail("opening"), value = string.format(s.review_move_value, self:move_label(1)), callback = function()
+                self:go(1)
             end }
         end
-    end
-    if #phase_rows > 0 then
-        rows[#rows + 1] = { kind = "section", text = s.review_phases }
-        for _, row in ipairs(phase_rows) do
-            rows[#rows + 1] = row
+        for _, phase in ipairs({ { summary.middle, s.review_middlegame, "middlegame" }, { summary.ending, s.review_endgame, "endgame" } }) do
+            if phase[1] and self:phase_at(phase[1]) then
+                phase_rows[#phase_rows + 1] = { text = phase[2], detail = detail(phase[3]), value = string.format(s.review_move_value, self:move_label(phase[1])), callback = function()
+                    self:go(phase[1])
+                end }
+            end
         end
-    end
-    self.app:open_page{ title = s.review_summary, rows = rows, close_on_tap = true }
+        if #phase_rows > 0 then
+            rows[#rows + 1] = { kind = "section", text = s.review_phases }
+            for _, row in ipairs(phase_rows) do
+                rows[#rows + 1] = row
+            end
+        end
+        return rows
+    end }
 end
 
 -- The moves already read for the board, with the one shown marked. A tap on a move goes to it. The notation comes

@@ -81,6 +81,9 @@ local BoardScreen = InputContainer:extend{
 -- The hints of the lessons: the colors of the app become grays, and the arrows that warn are black.
 local SHAPE_INK = { red = BLACK, yellow = Blitbuffer.Color8(0x44) }
 local HINT_INK = Blitbuffer.Color8(0x66)
+local CARD_SHADOW = Blitbuffer.Color8(0x66)
+local PROGRESS_FILL = Blitbuffer.Color8(0xDD)
+local CARD_GRAY = Blitbuffer.Color8(0x55)
 
 local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
@@ -405,8 +408,19 @@ function BoardScreen:paint_bar(bb, rect, info)
     end
     local pad = self:px(10)
     local clock_w = self:px(120)
-    self:paint_text(bb, info.name, BOLD, 20, rect.x + pad, rect.y, rect.w - clock_w - 3 * pad, rect.h, "left")
-    if info.clock and info.clock ~= "" then
+    local has_clock = info.clock and info.clock ~= ""
+    local tag_w = 0
+    -- A tag says where what the screen shows comes from, beside the clock or in its place.
+    if info.tag then
+        tag_w = self:px(170)
+        local x = rect.x + rect.w - pad - tag_w - (has_clock and (clock_w + pad) or 0)
+        local y, h = rect.y + self:px(8), rect.h - self:px(16)
+        bb:paintBorder(x, y, tag_w, h, self:px(2), BLACK)
+        self:paint_text(bb, info.tag, BOLD, 14, x + self:px(4), y, tag_w - self:px(8), h, "center")
+        tag_w = tag_w + pad
+    end
+    self:paint_text(bb, info.name, BOLD, 20, rect.x + pad, rect.y, rect.w - (has_clock and clock_w or 0) - tag_w - 3 * pad, rect.h, "left")
+    if has_clock then
         local x = rect.x + rect.w - clock_w - pad
         local y, h = rect.y + self:px(5), rect.h - self:px(10)
         -- Rounded, because buttons here have square corners and a clock cannot be tapped.
@@ -695,7 +709,83 @@ function BoardScreen:paint_game(bb)
     self:paint_board(bb)
     self:paint_bar(bb, self.bottom_bar, self.state.bottom)
     local rect = self.status_rect
-    self:paint_text(bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
+    local progress = self.state.progress
+    if progress then
+        -- A bar filled as far as the work went, with the status written over it.
+        local m = self:px(16)
+        local x, y, w, h = m, rect.y + self:px(3), rect.w - 2 * m, rect.h - self:px(6)
+        local total = math.max(1, progress.total or 1)
+        bb:paintRect(x, y, math.floor(w * math.min(total, progress.done or 0) / total), h, PROGRESS_FILL)
+        bb:paintBorder(x, y, w, h, self:px(2), BLACK)
+        self:paint_text(bb, self.state.status, BOLD, 16, x + self:px(6), y, w - self:px(12), h, "center")
+    else
+        self:paint_text(bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
+    end
+    self:paint_card(bb)
+end
+
+-- The card over the board, and the rectangles of its buttons, in the same place on every paint.
+function BoardScreen:card_layout()
+    local card = self.state.card
+    if not card then
+        return nil
+    end
+    local board = self.board_rect
+    local m = self:px(20)
+    local w = math.min(board.w - 2 * math.floor(self.square / 2), self:px(500))
+    local x = board.x + math.floor((board.w - w) / 2)
+    local button_h, gap = self:px(62), self:px(14)
+    local secondary = {}
+    local primary
+    for _, button in ipairs(card.buttons or {}) do
+        if button.primary and not primary then
+            primary = button
+        else
+            secondary[#secondary + 1] = button
+        end
+    end
+    local h = self:px(160) + (primary and (button_h + gap) or 0) + (#secondary > 0 and (button_h + gap) or 0) + self:px(6)
+    -- Low on the board, so the top ranks, where a mated king often stands, stay in sight.
+    local y = math.max(board.y + self:px(8), board.y + board.h - h - math.floor(self.square / 2))
+    local rects = {}
+    local cursor = y + self:px(160)
+    local inner = w - 2 * m
+    if primary then
+        rects[#rects + 1] = { id = primary.id, label = primary.label, primary = true, x = x + m, y = cursor, w = inner, h = button_h }
+        cursor = cursor + button_h + gap
+    end
+    local count = #secondary
+    if count > 0 then
+        local each = math.floor((inner - (count - 1) * self:px(12)) / count)
+        for index, button in ipairs(secondary) do
+            rects[#rects + 1] = { id = button.id, label = button.label, x = x + m + (index - 1) * (each + self:px(12)), y = cursor, w = each, h = button_h }
+        end
+    end
+    return { x = x, y = y, w = w, h = h, buttons = rects }
+end
+
+function BoardScreen:paint_card(bb)
+    local layout = self:card_layout()
+    if not layout then
+        return
+    end
+    local card = self.state.card
+    local x, y, w, h = layout.x, layout.y, layout.w, layout.h
+    local shadow = self:px(8)
+    bb:paintRect(x + shadow, y + shadow, w, h, CARD_SHADOW)
+    bb:paintRect(x, y, w, h, WHITE)
+    bb:paintBorder(x, y, w, h, self:px(3), BLACK)
+    self:paint_text(bb, card.title, BOLD, 44, x, y + self:px(18), w, self:px(60), "center")
+    self:paint_text(bb, card.text, BOLD, 22, x + self:px(12), y + self:px(80), w - self:px(24), self:px(36), "center")
+    self:paint_text(bb, card.detail, REGULAR, 16, x + self:px(12), y + self:px(116), w - self:px(24), self:px(28), "center", CARD_GRAY)
+    for _, rect in ipairs(layout.buttons) do
+        if rect.primary then
+            bb:paintRect(rect.x, rect.y, rect.w, rect.h, BLACK)
+        else
+            bb:paintBorder(rect.x, rect.y, rect.w, rect.h, self:px(2), BLACK)
+        end
+        self:paint_text(bb, rect.label, BOLD, rect.primary and 21 or 19, rect.x + self:px(6), rect.y, rect.w - self:px(12), rect.h, "center", rect.primary and WHITE or BLACK)
+    end
 end
 
 function BoardScreen:paintTo(bb, x, y)
@@ -776,6 +866,19 @@ function BoardScreen:onTap(_, ges)
             end
             return true
         end
+    end
+    local card = self:card_layout()
+    if card then
+        for _, rect in ipairs(card.buttons) do
+            if x >= rect.x and x < rect.x + rect.w and y >= rect.y and y < rect.y + rect.h then
+                if self.on_button then
+                    self.on_button(rect.id)
+                end
+                return true
+            end
+        end
+        -- The card covers the board: a tap beside its buttons does nothing.
+        return true
     end
     local square = self:square_at(x, y)
     if square and self.on_square then

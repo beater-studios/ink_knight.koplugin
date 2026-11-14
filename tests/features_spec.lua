@@ -827,6 +827,21 @@ test("a move only touches the squares it changed", function()
     eq(changes.top, false); eq(changes.status, false); eq(changes.buttons, false)
 end)
 
+test("a card over the board, the progress of a search and a tag each redraw what they cover", function()
+    local start = Chess.parse_fen(Chess.START_FEN)
+    local plain = { position = start, status = "a", top = { name = "x" }, bottom = { name = "y" } }
+    local first = BoardDiff.snapshot(plain)
+    local with_card = { position = start, status = "a", top = plain.top, bottom = plain.bottom, card = { title = "1-0", text = "won", buttons = { { id = "review", label = "Review" } } } }
+    eq(BoardDiff.changes(first, BoardDiff.snapshot(with_card)).whole, true, "a card redraws the whole screen")
+    eq(BoardDiff.changes(BoardDiff.snapshot(with_card), first).whole, true, "and so does closing it")
+    local progress = { position = start, status = "a", top = plain.top, bottom = plain.bottom, progress = { done = 2, total = 9 } }
+    local changes = BoardDiff.changes(first, BoardDiff.snapshot(progress))
+    eq(changes.status, true, "the bar of progress is the status line")
+    eq(#changes.squares, 0)
+    local tagged = { position = start, status = "a", top = { name = "x", tag = "engine" }, bottom = plain.bottom }
+    eq(BoardDiff.changes(first, BoardDiff.snapshot(tagged)).top, true, "a tag is part of its bar")
+end)
+
 test("the reply also clears the mark of the last move, and nothing else", function()
     local position, first_move = Chess.apply_uci(Chess.parse_fen(Chess.START_FEN), "e2e4")
     local reply_position, reply = Chess.apply_uci(position, "e7e5")

@@ -413,7 +413,7 @@ function OfflineGame:finish_stockfish_analysis(result, ucis)
     local moves = {}
     for index, uci in ipairs(ucis) do
         local entry = result.moves[index] or {}
-        moves[index] = { uci = uci, san = sans[index], eval_text = entry.eval_text, judgment = entry.judgment, best = entry.best }
+        moves[index] = { uci = uci, san = sans[index], eval_text = entry.eval_text, judgment = entry.judgment, best = entry.best, white_cp = entry.white_cp }
     end
     local function line(name, data)
         return string.format(s.review_side_full, name, data.blunder, data.mistake, data.inaccuracy)

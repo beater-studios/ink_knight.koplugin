@@ -11,6 +11,8 @@ local DataStorage = require("datastorage")
 G_defaults = require("luadefaults"):open()
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
 package.path = plugin_dir .. "/?.lua;" .. package.path
+-- As main.lua does: a game of Lichess keeps the device awake.
+require("ink_knight/awake").install("ink_knight")
 local Device = require("device")
 local Screen = Device.screen
 require("document/canvascontext"):init(Device)
@@ -154,6 +156,137 @@ early.screen.on_button("analyze")
 check(early.analysis == nil and notices[#notices] == s.analysis_nothing, "nothing to analyze should say so: " .. tostring(notices[#notices]))
 UIManager:close(early.screen)
 
+-- The end of a game of Lichess, with a fake connection: the card over the board when it ends with the board open,
+-- the review it opens, and the summary of Lichess with the reader's side, the chart and the reader's first mistake.
+local LiveGame = require("ink_knight/ui/live_game")
+local ReviewScreen = require("ink_knight/ui/review_screen")
+local rapidjson = require("rapidjson")
+local MATE_MOVES = "e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7"
+local function export_of(with_analysis)
+    local players = { white = { user = { id = "me", name = "Me" } }, black = { user = { id = "rival", name = "Rival" } } }
+    local game = { id = "abcd1234", variant = "standard", status = "mate", winner = "white", moves = "e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#", players = players }
+    if with_analysis then
+        players.white.analysis = { inaccuracy = 0, mistake = 0, blunder = 0, acpl = 12, accuracy = 96 }
+        players.black.analysis = { inaccuracy = 0, mistake = 1, blunder = 1, acpl = 230, accuracy = 55,
+            phases = nil }
+        game.analysis = { { eval = 20 }, { eval = 25 }, { eval = 10 }, { eval = 90, judgment = { name = "Mistake" } }, { eval = 80 },
+            { mate = 1, judgment = { name = "Blunder" } } }
+    end
+    return game
+end
+local export_body
+local stream_line
+local real_net, real_closed = home.net, home.game_closed
+home.my_id = "me"
+home.game_closed = function() end
+local fake_net = {
+    stream = function(_, _, on_line) stream_line = on_line; return {} end,
+    close_stream = function() end,
+    request = function(_, request, callback)
+        check(request.path:find("/game/export/", 1, true), "the review asks Lichess for the game: " .. tostring(request.path))
+        callback(200, export_body)
+    end,
+}
+home.net = fake_net
+local function feed(event)
+    stream_line(rapidjson.encode(event))
+end
+local ended = LiveGame.open(home, "abcd1234")
+feed({ type = "gameFull", speed = "rapid", rated = true, clock = { initial = 600000, increment = 0 },
+    white = { id = "me", name = "Me" }, black = { id = "rival", name = "Rival" },
+    state = { moves = "e2e4 e7e5 d1h5 b8c6 f1c4 g8f6", status = "started", wtime = 500000, btime = 500000 } })
+check(ended.screen.state.card == nil, "a game under way has no card")
+feed({ type = "gameState", moves = MATE_MOVES, status = "mate", winner = "white", wtime = 490000, btime = 480000 })
+local card = ended.screen.state.card
+check(card and card.title == "1-0" and card.text == s.ending_win_mate, "a game that ends with its board open gets the card: " .. tostring(card and card.text))
+check(card and card.buttons[1].id == "review" and card.buttons[1].primary, "the review comes first on the card")
+check(card and card.detail == string.format(s.game_card_moves, 4), "the card counts the moves: " .. tostring(card and card.detail))
+check(ids(ended.screen) == "back rematch review more", "the bar of a finished game: " .. ids(ended.screen))
+ended.screen:paintTo(Screen.bb, 0, 0)
+Screen.bb:writePNG(out_dir .. "/end_card.png")
+-- A tap beside the card's buttons does nothing; one on "See the board" closes it.
+local layout = ended.screen:card_layout()
+ended.screen:onTap(nil, { pos = { x = layout.x + 4, y = layout.y + 4 } })
+check(ended.screen.state.card ~= nil, "a tap beside the buttons leaves the card")
+local see = layout.buttons[#layout.buttons]
+ended.screen:onTap(nil, { pos = { x = see.x + 2, y = see.y + 2 } })
+check(ended.screen.state.card == nil, "See the board closes the card")
+-- The review of a game Lichess analyzed opens on its summary.
+export_body = rapidjson.encode(export_of(true))
+local pages_before = #home.pages
+ended.screen.on_button("review")
+local lichess_summary = home.pages[#home.pages]
+check(#home.pages == pages_before + 1 and lichess_summary.title == s.review_summary, "a game Lichess analyzed opens on its summary")
+if lichess_summary then
+    local texts, chart, buttons = {}, nil, nil
+    for _, line in ipairs(lichess_summary.lines) do
+        texts[#texts + 1] = tostring(line.text)
+        if line.kind == "drawing" then chart = line end
+        if line.kind == "buttons" then buttons = line end
+    end
+    check(texts[1] == s.review_lichess_analysis, "the summary says the analysis is Lichess's")
+    check(table.concat(texts, "|"):find(string.format(s.review_you, "Me"), 1, true), "the reader's side is marked")
+    check(chart and chart.points == 7, "the chart has a point per move")
+    check(buttons and buttons.items[1].disabled and buttons.items[1].text == s.no_mistake_of_mine, "white made no mistake, and the button says so")
+    lichess_summary:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/end_summary_lichess.png")
+    local review = top_board()
+    -- A tap on the chart goes to the nearest move, even a little to the right of its point.
+    local chart_hit
+    for _, hit in ipairs(lichess_summary.hits) do
+        if hit.h == lichess_summary:px(150) then chart_hit = hit end
+    end
+    check(chart_hit, "the chart answers taps")
+    if chart_hit then
+        lichess_summary:onTap(nil, { pos = { x = chart_hit.x + math.floor(chart_hit.w * 6 / 7 + chart_hit.w / 21), y = chart_hit.y + 10 } })
+    end
+    check(review.state.status:find("Nf6", 1, true), "the chart goes to the move tapped: " .. tostring(review.state.status))
+    check(review.state.top.tag == nil, "Lichess's analysis needs no tag")
+    UIManager:close(review)
+end
+-- A game from a position is read from it.
+local from_position = home:open_review_of({ id = "abcd1236", variant = "fromPosition", initialFen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+    moves = "e4 Kd7 Kd2", status = "draw", players = export_of(false).players }, {})
+check(from_position.available == 3, "a game from a position is read from it: " .. from_position.available)
+UIManager:close(from_position.screen)
+-- Seen from black, the button goes to the reader's first mistake.
+home.my_id = "rival"
+export_body = rapidjson.encode(export_of(true))
+home:review_finished_game("abcd1234", true)
+local black_summary = home.pages[#home.pages]
+local black_review = top_board()
+for _, line in ipairs(black_summary and black_summary.lines or {}) do
+    if line.kind == "buttons" then
+        check(line.items[1].text == s.my_first_mistake and not line.items[1].disabled, "black has a first mistake to go to")
+        line.items[1].callback()
+    end
+end
+if black_summary then UIManager:close(black_summary) end
+check(black_review.state.status:find("Nc6", 1, true), "the first mistake of black is Nc6: " .. tostring(black_review.state.status))
+UIManager:close(black_review)
+home.my_id = "me"
+-- Without an analysis and without the plugin's engine, the review just opens.
+export_body = rapidjson.encode(export_of(false))
+pages_before = #home.pages
+ended.screen.on_button("review")
+if not os.getenv("INK_KNIGHT_STOCKFISH") then
+    check(#home.pages == pages_before and top_board() ~= ended.screen, "with no engine, the review just opens")
+end
+while #home.pages > pages_before do
+    UIManager:close(home.pages[#home.pages])
+end
+if top_board() ~= ended.screen then
+    UIManager:close(top_board())
+end
+UIManager:close(ended.screen)
+-- A game that had already ended when its board opened gets no card, as in correspondence.
+local old = LiveGame.open(home, "abcd1235")
+feed({ type = "gameFull", speed = "correspondence", white = { id = "me", name = "Me" }, black = { id = "rival", name = "Rival" },
+    state = { moves = MATE_MOVES, status = "mate", winner = "white" } })
+check(old.screen.state.card == nil and ids(old.screen):find("review", 1, true), "a game already over opens without the card, with Review on the bar: " .. ids(old.screen))
+UIManager:close(old.screen)
+home.net = real_net
+
 -- With a Stockfish: the same game analyzed by it, every move judged as Lichess judges them, and a summary with figures.
 if os.getenv("INK_KNIGHT_STOCKFISH") then
     local util = require("ffi/util")
@@ -178,10 +311,11 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     local judged = deep.review_game and deep.review_game.moves[6]
     check(judged and judged.judgment == "Blunder" and judged.best ~= nil, "Stockfish should call Nf6 a blunder and name a better move: " .. tostring(judged and judged.judgment))
     check(deep.review_game and deep.review_game.summary and deep.review_game.summary.black.blunder >= 1, "the summary should count black's blunder")
+    check(judged and judged.white_cp ~= nil, "the offline analysis keeps the scores for the chart")
     local deep_review = top_board()
     deep_review.on_button("more")
     local deep_more = home.pages[#home.pages]
-    check(deep_more and deep_more.lines[1].text == s.review_summary, "a summary with figures comes first in More")
+    check(deep_more and deep_more.lines[1].text == s.review_summary, "a summary with figures comes first in More: " .. tostring(deep_more and deep_more.title) .. " " .. tostring(deep_more and deep_more.lines[1] and deep_more.lines[1].text))
     UIManager:close(deep_more)
     UIManager:close(deep_review)
     UIManager:close(deep.screen)
@@ -244,10 +378,60 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     check(dying.game.summary == nil, "a dead engine should leave no summary")
     check(notices[#notices] == s.engine_stopped, "a dead engine should end the analysis with a notice: " .. tostring(notices[#notices]))
     UIManager:close(dying.screen)
+    -- At the end of a game Lichess did not analyze: the plugin's engine offered first, with the time it takes.
+    home:save_setting("analyze_always", false)
+    home.net = fake_net
+    export_body = rapidjson.encode(export_of(false))
+    home:review_finished_game("abcd1234", false)
+    local offer_page = home.pages[#home.pages]
+    local end_review = top_board()
+    check(offer_page and offer_page.title == s.review_game, "a game without analysis offers the plugin's engine")
+    local primary, always
+    for _, line in ipairs(offer_page and offer_page.lines or {}) do
+        if line.kind == "primary" then primary = line end
+        if line.kind == "toggle" then always = line end
+    end
+    check(primary and primary.text == s.analyze_plugin and always and always.on == false, "the offer has the engine first and the option off")
+    offer_page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/end_offer.png")
+    primary.callback()
+    check(end_review.state.progress and end_review.state.progress.total == 8, "the analysis shows its progress as a bar")
+    end_review:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/end_progress.png")
+    wait(function() return home.pages[#home.pages] and home.pages[#home.pages].title == s.review_summary end)
+    local plugin_summary = home.pages[#home.pages]
+    check(plugin_summary.lines[1].text == s.review_plugin_analysis, "the summary says the analysis is the plugin's")
+    plugin_summary:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/end_summary_plugin.png")
+    UIManager:close(plugin_summary)
+    check(end_review.state.top.tag == s.engine_tag, "every move of the plugin's analysis carries the tag")
+    end_review:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/end_review_tag.png")
+    -- The option goes on from More, and then the next review analyzes at once.
+    end_review.on_button("more")
+    local more = home.pages[#home.pages]
+    local toggle
+    for _, line in ipairs(more.lines) do
+        if line.kind == "toggle" then toggle = line end
+    end
+    check(toggle and toggle.text == s.analyze_always, "More of the reader's game has the option")
+    toggle.callback()
+    check(home:option("analyze_always") == true, "the option turns on from More")
+    UIManager:close(more)
+    UIManager:close(end_review)
+    pages_before = #home.pages
+    home:review_finished_game("abcd1234", false)
+    local auto_review = top_board()
+    check(#home.pages == pages_before and auto_review.state.progress ~= nil, "with the option on, the analysis starts with no question")
+    UIManager:close(auto_review)
+    check(engines_running() == 0, "no Stockfish left after the reviews: " .. engines_running())
+    home:save_setting("analyze_always", false)
 end
 
 home.settings:delSetting("two_player_game")
 home.settings:delSetting("offline_game")
+home.settings:delSetting("analyze_always")
+home.net, home.game_closed = real_net, real_closed
 if failures > 0 then
     print(failures .. " failed")
     os.exit(1)

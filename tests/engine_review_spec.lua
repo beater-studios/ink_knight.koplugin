@@ -66,5 +66,15 @@ test("a mate allowed, and a mate announced, written as Lichess writes them", fun
     eq(summary.w.acpl, 1000)
 end)
 
+test("the score after each move for white, for the chart, a mate counted as a thousand", function()
+    local scores = { [0] = { cp = 30 }, [1] = { cp = -20 }, [2] = { cp = 2500 }, [3] = { mate = 0 } }
+    local moves = EngineReview.judge(scores, { "w", "b", "w" })
+    eq(moves[1].white_cp, 20, "black to move at -0.20 is white at +0.20")
+    eq(moves[2].white_cp, 1000, "a large score is capped")
+    eq(moves[3].white_cp, 1000, "white mated")
+    local black_mates = EngineReview.judge({ [0] = { cp = -900 }, [1] = { mate = 0 } }, { "b" })
+    eq(black_mates[1].white_cp, -1000, "black mated")
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

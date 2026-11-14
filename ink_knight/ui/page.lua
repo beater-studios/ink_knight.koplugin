@@ -13,7 +13,8 @@
 -- "split": text, white, draws, black, value: a move of an explorer, with a bar of how its games ended.
 -- "metric": text, value, detail: a number in large, with what it is and a line below it.
 -- "figures": items of { value, label }: numbers side by side over what they count, without borders.
--- "drawing": height, draw(bb, x, y, w, h): a picture of its own, the width of the page.
+-- "drawing": height, draw(bb, x, y, w, h): a picture of its own, the width of the page; with points and
+-- on_point(index), a tap on it gives the nearest of points + 1 marks spread evenly across it, from 0.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -469,7 +470,14 @@ function Page:paint_line(bb, row, y, h)
         self:paint_text(bb, row.value, REGULAR, 16, self.width - m - value_w, y, value_w, h, "right", GRAY)
         bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
     elseif row.kind == "drawing" then
-        row.draw(bb, m, y, self.width - 2 * m, h)
+        local w = self.width - 2 * m
+        row.draw(bb, m, y, w, h)
+        if row.points and row.on_point then
+            self:add_hit(m, y, w, h, function()
+                local tap_x = self.tap_x or m
+                row.on_point(math.max(0, math.min(row.points, math.floor((tap_x - m) / w * row.points + 0.5))))
+            end)
+        end
     elseif row.kind == "figures" then
         -- Numbers side by side, each over what it counts; not buttons, so no borders.
         local count = #row.items
@@ -617,6 +625,8 @@ end
 
 function Page:onTap(_, ges)
     local x, y = ges.pos.x, ges.pos.y
+    -- For a drawing that answers where it was tapped.
+    self.tap_x = x
     for _, hit in ipairs(self.hits or {}) do
         if x >= hit.x and x < hit.x + hit.w and y >= hit.y and y < hit.y + hit.h then
             self:press(hit)

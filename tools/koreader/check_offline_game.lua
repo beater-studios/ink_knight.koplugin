@@ -313,9 +313,15 @@ do
             end
         end
     end
-    check(summary_page.lines[1].kind == "section" and summary_page.lines[2].kind == "metric" and summary_page.lines[2].value == "91%", "white's accuracy in large first")
-    local figures = summary_page.lines[3]
-    check(figures.kind == "figures" and #figures.items == 4 and figures.items[3].value == "0" and figures.items[3].label == s.review_blunders, "white's counts side by side")
+    check(summary_page.lines[1].kind == "text" and summary_page.lines[1].text == s.review_lichess_analysis, "the summary says whose analysis it is")
+    local figures
+    for _, line in ipairs(summary_page.lines) do
+        if line.kind == "figures" and not figures then
+            figures = line
+        end
+    end
+    check(figures and #figures.items == 5 and figures.items[1].value == "91%" and figures.items[1].label == s.review_accuracy_label, "white's accuracy first among the figures")
+    check(figures and figures.items[4].value == "0" and figures.items[4].label == s.review_blunders, "white's counts side by side")
     check(row_with(s.review_middlegame) and row_with(s.review_middlegame).value == string.format(s.review_move_value, "9...")
         and row_with(s.review_endgame).value == string.format(s.review_move_value, "31."), "the counts and the phases with their moves")
     summary_page:paintTo(Screen.bb, 0, 0)

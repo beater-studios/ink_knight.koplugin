@@ -21,7 +21,7 @@ function EngineAnalysis.available(app)
 end
 
 -- opts: app, window (the screen whose timers it uses), initial_fen, moves (UCI, as a list), on_progress(position, total),
--- counted from 1, on_done(result): result is { moves = { { judgment, eval_text, best } }, summary = { white, black } },
+-- counted from 1, on_done(result): result is { moves = { { judgment, eval_text, best, white_cp } }, summary = { white, black } },
 -- or nil when the engine stopped answering.
 function EngineAnalysis.start(opts)
     local binary = Stockfish.find(opts.app.plugin_dir)

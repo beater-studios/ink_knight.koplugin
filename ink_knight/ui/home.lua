@@ -2647,12 +2647,56 @@ local function add_game_analysis(moves, analysis)
         if moves[index] and type(entry) == "table" then
             if entry.eval or entry.mate then
                 moves[index].eval_text = Api.eval_text(entry.eval, entry.mate)
+                -- For the chart: a mate counts as a thousand, as the largest score does.
+                local cp = tonumber(entry.eval) or ((tonumber(entry.mate) or 0) > 0 and 1000 or -1000)
+                moves[index].white_cp = math.max(-1000, math.min(1000, cp))
             end
             if type(entry.judgment) == "table" then
                 moves[index].judgment = entry.judgment.name
             end
         end
     end
+end
+
+-- The review of a game as Lichess exports it. opts: flipped, bookmarked, plus what ReviewScreen.open takes.
+function Home:open_review_of(game, opts)
+    local s = self.strings
+    local players = game.players or {}
+    -- A game of Chess960, or one from a position, starts from it, the castling of Chess960 read as such.
+    local initial_fen = type(game.initialFen) == "string" and game.initialFen or nil
+    if initial_fen and game.variant == "chess960" then
+        initial_fen = Chess.as_chess960(initial_fen)
+    end
+    local moves = Pgn.san_list_to_moves(game.moves, initial_fen)
+    add_game_analysis(moves, game.analysis)
+    opts.game_id = Api.is_safe_id(game.id) and game.id or nil
+    opts.reader_color = Game.color_of(game, self.my_id)
+    return ReviewScreen.open(self, {
+        moves = moves,
+        initial_fen = initial_fen,
+        white = Game.player_name(players.white, s.anonymous), black = Game.player_name(players.black, s.anonymous),
+        intro = game.opening and game.opening.name,
+        opening = game.opening and game.opening.name,
+        result_text = game_result_text(s, game),
+        summary = Game.analysis_summary(game),
+    }, opts)
+end
+
+-- The review of a game the reader just finished, from the board: the summary of Lichess when the site analyzed it,
+-- otherwise the choice of analyzing it with the plugin's engine, or that analysis at once when the reader asked for it
+-- always. on_black: the reader played black.
+function Home:review_finished_game(id, on_black)
+    self.net:request(Api.game_export(id), function(status, body)
+        self:report_or(status, function()
+            local game = self.decode(body)
+            if type(game) ~= "table" or type(game.moves) ~= "string" then
+                self:info(self.strings.action_failed)
+                return
+            end
+            local review = self:open_review_of(game, { flipped = on_black })
+            review:open_at_end()
+        end)
+    end)
 end
 
 -- player_id: whose side the list takes, for the results and for which way the board faces.
@@ -2663,27 +2707,13 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
             local rows = {}
             for game in json_lines(body) do
                 if game and game.moves and (game.variant == "standard" or game.variant == nil or game.variant == "chess960") then
-                    local players = game.players or {}
-                    local white, black = Game.player_name(players.white, s.anonymous), Game.player_name(players.black, s.anonymous)
                     local text, detail, on_black = Game.past_summary(s, game, player_id, self.my_id)
                     rows[#rows + 1] = {
                         kind = "game",
                         text = text,
                         detail = detail,
                         callback = function()
-                            -- A game of Chess960 starts from its position, its castling read as Chess960.
-                            local initial_fen = game.variant == "chess960" and game.initialFen and Chess.as_chess960(game.initialFen) or nil
-                            local moves = Pgn.san_list_to_moves(game.moves, initial_fen)
-                            add_game_analysis(moves, game.analysis)
-                            ReviewScreen.open(self, {
-                                moves = moves,
-                                initial_fen = initial_fen,
-                                white = white, black = black,
-                                intro = game.opening and game.opening.name,
-                                opening = game.opening and game.opening.name,
-                                result_text = game_result_text(s, game),
-                                summary = Game.analysis_summary(game),
-                            }, { flipped = on_black, game_id = Api.is_safe_id(game.id) and game.id or nil, bookmarked = bookmarked, reader_color = Game.color_of(game, self.my_id) })
+                            self:open_review_of(game, { flipped = on_black, bookmarked = bookmarked })
                         end,
                     }
                 end

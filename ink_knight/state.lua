@@ -18,6 +18,8 @@ State.OPTIONS = {
     rating_margin = { { 0, 100, 200, 300, 500 }, 0 },
     rated = { { true, false }, false },
     confirm_moves = { { true, false }, false },
+    -- The plugin's engine analyzing a game of Lichess the site did not, as soon as the reader reviews it at its end.
+    analyze_always = { { true, false }, false },
     auto_queen = { { true, false }, false },
     variant = { { "standard", "chess960" }, "standard" },
     board_coordinates = { { true, false }, false },

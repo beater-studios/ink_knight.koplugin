@@ -5,6 +5,7 @@ local logger = require("logger")
 local Api = require("ink_knight/api")
 local Awake = require("ink_knight/awake")
 local BoardScreen = require("ink_knight/ui/board_screen")
+local Broadcast = require("ink_knight/broadcast")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
 local MoveList = require("ink_knight/ui/move_list")
@@ -62,7 +63,12 @@ function LiveGame:on_line(line)
         return
     end
     local moves_before = self.game.moves
+    local was_active = self.game.loaded and self.game:is_active()
     self.game:on_event(event, os.time())
+    -- A game that ends with its board open gets the card with the review; one that ended away from it opens without.
+    if was_active and not self.game:is_active() and self:can_review() then
+        self.card_open = true
+    end
     -- Only a new list of moves replaces the move on its way. A state that just brings an offer, while the move
     -- is still being sent, would otherwise put the piece back and let a second move go out.
     if event.type == "gameFull" or self.game.moves ~= moves_before or not self.game:is_active() then
@@ -133,6 +139,34 @@ function LiveGame:status_text()
     return string.format(s.status_their_turn, self:opponent_name())
 end
 
+-- A finished game Lichess can review: not aborted, with moves, of a variant the review reads.
+function LiveGame:can_review()
+    local game = self.game
+    return game.loaded and not game:is_active() and game:is_supported() and game:outcome() ~= "aborted" and game:move_count() > 0
+end
+
+-- The card over the board of a game that just ended: the result, how it ended, and the review first.
+function LiveGame:card()
+    local s, game = self.s, self.game
+    local result = "1/2-1/2"
+    if game.winner == "white" then
+        result = "1-0"
+    elseif game.winner == "black" then
+        result = "0-1"
+    end
+    local buttons = { { id = "review", label = s.review_game, primary = true } }
+    if game:rematch_request() then
+        buttons[#buttons + 1] = { id = "rematch", label = s.rematch }
+    end
+    buttons[#buttons + 1] = { id = "see_board", label = s.see_board }
+    return {
+        title = Broadcast.result_text(result),
+        text = self:outcome_text(),
+        detail = string.format(s.game_card_moves, math.ceil(game:move_count() / 2)),
+        buttons = buttons,
+    }
+end
+
 function LiveGame:opponent_name()
     local name
     if self.game.my_color == "b" then
@@ -156,11 +190,25 @@ function LiveGame:buttons()
         if game:rematch_request() then
             list[#list + 1] = { id = "rematch", label = s.rematch }
         end
+        local rest = {}
         if game.opponent_id then
-            list[#list + 1] = { id = "profile", label = s.view_profile }
+            rest[#rest + 1] = { id = "profile", label = s.view_profile }
         end
         if game:move_count() > 0 then
-            list[#list + 1] = { id = "moves", label = s.moves }
+            rest[#rest + 1] = { id = "moves", label = s.moves }
+        end
+        -- The review first; the profile and the moves wait behind More when it is there.
+        self.more_actions = nil
+        if self:can_review() then
+            list[#list + 1] = { id = "review", label = s.review }
+            if #rest > 0 then
+                list[#list + 1] = { id = "more", label = s.more }
+                self.more_actions = rest
+            end
+        else
+            for _, action in ipairs(rest) do
+                list[#list + 1] = action
+            end
         end
         return list
     end
@@ -255,6 +303,7 @@ function LiveGame:render(what)
         bottom = self:player_info(me, now),
         status = self:status_text(),
         buttons = self:buttons(),
+        card = self.card_open and self:card() or nil,
     }, what)
 end
 
@@ -403,6 +452,13 @@ function LiveGame:on_button(button)
             initial_fen = game.initial_fen,
             moves = finished and game.moves or nil,
         })
+    elseif button == "review" then
+        self.card_open = nil
+        self:render()
+        self.app:review_finished_game(self.id, self.game.my_color == "b")
+    elseif button == "see_board" then
+        self.card_open = nil
+        self:render()
     elseif button == "profile" then
         Players.show(self.app, self.game.opponent_id)
     elseif button == "draw_yes" then

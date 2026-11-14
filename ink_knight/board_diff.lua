@@ -5,7 +5,7 @@ local function bar_text(info)
     if not info then
         return ""
     end
-    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active) }, "|")
+    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active), tostring(info.tag) }, "|")
 end
 
 local function buttons_text(buttons)
@@ -51,14 +51,16 @@ function BoardDiff.snapshot(state)
         top = bar_text(state.top) .. "|" .. tostring(state.banner),
         overlay = overlay_text(state),
         bottom = bar_text(state.bottom),
-        status = tostring(state.status),
+        status = tostring(state.status) .. "|" .. (state.progress and (tostring(state.progress.done) .. "/" .. tostring(state.progress.total)) or ""),
         buttons = buttons_text(state.buttons),
+        -- A card over the board changes much of it at once.
+        card = state.card and table.concat({ tostring(state.card.title), tostring(state.card.text), tostring(state.card.detail), buttons_text(state.card.buttons) }, "|") or "",
     }
 end
 
 -- Returns squares, the list that changed, plus top, bottom, status and buttons. whole means everything moved.
 function BoardDiff.changes(old, new)
-    if not old or old.flipped ~= new.flipped or old.has_position ~= new.has_position then
+    if not old or old.flipped ~= new.flipped or old.has_position ~= new.has_position or old.card ~= new.card then
         return { whole = true, squares = {} }
     end
     local squares = {}

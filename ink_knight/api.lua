@@ -302,6 +302,14 @@ function Api.past_games(username, max)
     }
 end
 
+-- One game, finished or not, as a single JSON with the same fields as a game of past_games.
+function Api.game_export(id)
+    return {
+        method = "GET", accept = "application/json",
+        path = "/game/export/" .. path_id(id) .. "?moves=true&clocks=false&evals=true&accuracy=true&division=true&opening=true",
+    }
+end
+
 function Api.bookmarks(max)
     return {
         method = "GET", accept = "application/x-ndjson",
