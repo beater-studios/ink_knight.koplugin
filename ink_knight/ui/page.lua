@@ -26,6 +26,7 @@ local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local logger = require("logger")
 
+local MoveText = require("ink_knight/ui/move_text")
 local Portrait = require("ink_knight/portrait")
 local Refresh = require("ink_knight/refresh")
 local Sleep = require("ink_knight/sleep")
@@ -439,7 +440,7 @@ function Page:paint_line(bb, row, y, h)
                 if current then
                     bb:paintRect(x, y + self:px(6), column_w - self:px(12), h - self:px(12), BLACK)
                 end
-                self:paint_text(bb, text, BOLD, 20, x + self:px(10), y, column_w - self:px(32), h, "left", current and WHITE or BLACK)
+                MoveText.paint(self, bb, text, BOLD, 20, x + self:px(10), y, column_w - self:px(32), h, "left", current and WHITE or BLACK)
                 self:add_hit(x, y, column_w, h, row[side .. "_callback"])
             end
         end
@@ -448,7 +449,7 @@ function Page:paint_line(bb, row, y, h)
         -- A move of an explorer: its name, a bar of how its games ended (white, draws, black, as on Lichess) and
         -- how many games.
         local name_w, value_w, gap = self:px(110), self:px(90), self:px(12)
-        self:paint_text(bb, row.text, BOLD, 20, m, y, name_w - self:px(8), h, "left")
+        MoveText.paint(self, bb, row.text, BOLD, 20, m, y, name_w - self:px(8), h, "left")
         local bar_x, bar_w = m + name_w, self.width - 2 * m - name_w - value_w - gap
         local bar_h = self:px(32)
         local bar_y = y + math.floor((h - bar_h) / 2)

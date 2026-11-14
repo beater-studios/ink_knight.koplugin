@@ -50,23 +50,32 @@ function GameReview.judge(best, played)
     return nil
 end
 
--- The score of the position after the move, as Lichess writes it, for white: "+1.20", or "#3" and "#-3" for a mate in
--- so many moves. The engine counts the plies to the mate from before the move, so the move itself comes off; a move
--- that mates leaves nothing to write.
-function GameReview.eval_text(score, mover)
+-- The score of the position after the move for white: centipawns, or the moves to a mate (negative when black mates),
+-- or both nil. The engine counts the plies to the mate from before the move, so the move itself comes off; a move
+-- that mates leaves nothing.
+function GameReview.white_score(score, mover)
     if not score then
-        return nil
+        return nil, nil
     end
     local white = mover == "w" and score or -score
     if is_mate(white) or is_mated(white) then
         local after = Engine.MATE - math.abs(white) - 1
         if after <= 0 then
-            return nil
+            return nil, nil
         end
         local moves = math.ceil(after / 2)
-        return Api.eval_text(nil, white > 0 and moves or -moves)
+        return nil, white > 0 and moves or -moves
     end
-    return Api.eval_text(white, nil)
+    return white, nil
+end
+
+-- The same as Lichess writes it: "+1.20", or "#3" and "#-3" for a mate in so many moves.
+function GameReview.eval_text(score, mover)
+    local cp, mate = GameReview.white_score(score, mover)
+    if not cp and not mate then
+        return nil
+    end
+    return Api.eval_text(cp, mate)
 end
 
 -- The moves to look at: { index, position before it, uci, mover }. Only the moves of only_color when given (the

@@ -115,6 +115,13 @@ for _ = 1, 6 do
 end
 check(review.state.status:find(s.judgments.Blunder, 1, true) and review.state.status:find(knight.best, 1, true),
     "the review should mark the blunder and name the better move: " .. tostring(review.state.status))
+-- The panel: the move with its sign, the judgment in a solid tag, the better move with its arrow, the score in words.
+local panel = review.state.panel
+check(panel and panel.move == "3... Nf6??" and panel.tag == s.judgments.Blunder and panel.tag_solid, "the panel shows the move with its sign and judgment: " .. tostring(panel and panel.move))
+check(panel and panel.detail == string.format(s.review_better_arrow, knight.best), "the panel names the better move on its arrow: " .. tostring(panel and panel.detail))
+check(panel and panel.evaluation == string.format(s.eval_white_mate, 1), "the panel says the score in words: " .. tostring(panel and panel.evaluation))
+local arrow = review.state.shapes and review.state.shapes[1]
+check(arrow and arrow.from == Chess.square_from_name("g7") and arrow.to == Chess.square_from_name("g6"), "the arrow shows the better move")
 review:paintTo(Screen.bb, 0, 0)
 Screen.bb:writePNG(out_dir .. "/game_review_blunder.png")
 -- The small engine gives counts in a notice, not the figures of a summary: More does not offer one.
@@ -196,7 +203,19 @@ feed({ type = "gameFull", speed = "rapid", rated = true, clock = { initial = 600
     white = { id = "me", name = "Me" }, black = { id = "rival", name = "Rival" },
     state = { moves = "e2e4 e7e5 d1h5 b8c6 f1c4 g8f6", status = "started", wtime = 500000, btime = 500000 } })
 check(ended.screen.state.card == nil, "a game under way has no card")
+-- A change of the whole screen goes with a flash, which waits for the update before it on the Kindle; one without
+-- a flash, right after another, lost the bar of buttons there.
+UIManager:forceRePaint()
+local refreshes = {}
+local real_refresh = UIManager._refresh
+UIManager._refresh = function(manager, mode, region, ...)
+    refreshes[#refreshes + 1] = tostring(mode)
+    return real_refresh(manager, mode, region, ...)
+end
 feed({ type = "gameState", moves = MATE_MOVES, status = "mate", winner = "white", wtime = 490000, btime = 480000 })
+UIManager:forceRePaint()
+UIManager._refresh = real_refresh
+check(table.concat(refreshes, " "):find("full", 1, true), "the card comes with a full refresh: " .. table.concat(refreshes, " "))
 local card = ended.screen.state.card
 check(card and card.title == "1-0" and card.text == s.ending_win_mate, "a game that ends with its board open gets the card: " .. tostring(card and card.text))
 check(card and card.buttons[1].id == "review" and card.buttons[1].primary, "the review comes first on the card")
@@ -242,6 +261,7 @@ if lichess_summary then
     end
     check(review.state.status:find("Nf6", 1, true), "the chart goes to the move tapped: " .. tostring(review.state.status))
     check(review.state.top.tag == nil, "Lichess's analysis needs no tag")
+    check(review.coordinates == true, "the review always shows the coordinates")
     UIManager:close(review)
 end
 -- A game from a position is read from it.
@@ -249,6 +269,13 @@ local from_position = home:open_review_of({ id = "abcd1236", variant = "fromPosi
     moves = "e4 Kd7 Kd2", status = "draw", players = export_of(false).players }, {})
 check(from_position.available == 3, "a game from a position is read from it: " .. from_position.available)
 UIManager:close(from_position.screen)
+-- On the last move, a better move and the result both show: the result in place of the evaluation.
+local ending = ReviewScreen.open(home, { moves = { { uci = "e2e4", san = "e4" }, { uci = "f7f6", san = "f6", judgment = "Mistake", best_uci = "e7e5", white_score = 80 } },
+    white = "A", black = "B", result_text = s.white_wins })
+ending:go(2)
+local ending_panel = ending.screen.state.panel
+check(ending_panel.detail == string.format(s.review_better_arrow, "e5") and ending_panel.evaluation == s.white_wins, "the last move keeps the result beside the better move: " .. tostring(ending_panel.evaluation))
+UIManager:close(ending.screen)
 -- Seen from black, the button goes to the reader's first mistake.
 home.my_id = "rival"
 export_body = rapidjson.encode(export_of(true))
@@ -292,6 +319,35 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     local util = require("ffi/util")
     local ReviewScreen = require("ink_knight/ui/review_screen")
     home.plugin_dir = plugin_dir
+    -- The engine is started by "sh", which on a Mac is bash. The Kindle's is busybox, a POSIX shell that treats the
+    -- input of a job in the background differently, as dash does: when the Mac has dash, "sh" becomes dash here.
+    local dash = io.open("/bin/dash", "rb")
+    if dash then
+        dash:close()
+        local shim = out_dir .. "/posix_sh"
+        os.execute("mkdir -p '" .. shim .. "' && ln -sf /bin/dash '" .. shim .. "/sh'")
+        local ffi = require("ffi")
+        require("ffi/posix_h")
+        ffi.C.setenv("PATH", shim .. ":" .. os.getenv("PATH"), 1)
+        print("engine started by dash, a POSIX shell like the Kindle's")
+    end
+    -- First of all, the engine answers: one that gets no input quits at once, and every analysis below would wait for
+    -- it to the limit.
+    local Stockfish = require("ink_knight/stockfish")
+    local probe = Stockfish.start(Stockfish.find(plugin_dir), home:engine_dir())
+    local ready = false
+    local deadline = os.time() + 10
+    while not ready and os.time() < deadline do
+        for _, line in ipairs(probe:read_lines()) do
+            ready = ready or line == "readyok"
+        end
+        util.usleep(50000)
+    end
+    probe:stop()
+    if not ready then
+        print("FAILED: the engine should answer readyok; nothing else with Stockfish is checked")
+        os.exit(1)
+    end
     local function wait(done, seconds)
         local deadline = os.time() + (seconds or 60)
         while not done() and os.time() < deadline do
@@ -312,12 +368,23 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     check(judged and judged.judgment == "Blunder" and judged.best ~= nil, "Stockfish should call Nf6 a blunder and name a better move: " .. tostring(judged and judged.judgment))
     check(deep.review_game and deep.review_game.summary and deep.review_game.summary.black.blunder >= 1, "the summary should count black's blunder")
     check(judged and judged.white_cp ~= nil, "the offline analysis keeps the scores for the chart")
+    -- The summary opens by itself after the analysis, as at the end of a Lichess game, with the reader's side marked.
+    local deep_summary = home.pages[#home.pages]
+    check(deep_summary and deep_summary.title == s.review_summary, "the summary opens after the analysis of an offline game")
+    if deep_summary and deep_summary.title == s.review_summary then
+        UIManager:close(deep_summary)
+    end
     local deep_review = top_board()
     deep_review.on_button("more")
     local deep_more = home.pages[#home.pages]
     check(deep_more and deep_more.lines[1].text == s.review_summary, "a summary with figures comes first in More: " .. tostring(deep_more and deep_more.title) .. " " .. tostring(deep_more and deep_more.lines[1] and deep_more.lines[1].text))
     UIManager:close(deep_more)
     UIManager:close(deep_review)
+    -- Opened again, the review comes on its board, without the summary over it.
+    local pages_now = #home.pages
+    deep.screen.on_button("analyze")
+    check(#home.pages == pages_now, "the review opened again comes without the summary")
+    UIManager:close(top_board())
     UIManager:close(deep.screen)
     -- A game of Lichess the site did not analyze: the plugin's engine analyzes it, and the review says so.
     local online = ReviewScreen.open(home, { moves = {
@@ -365,7 +432,7 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     -- Killed by its own pid once it has one: the shell starts it a moment after the screen asks.
     local engine_pid
     wait(function()
-        local file = io.open(home:engine_dir() .. "/stockfish.pid", "rb")
+        local file = dying.analysis and io.open(dying.analysis.engine.pid_path, "rb")
         engine_pid = file and tonumber(file:read("*a"))
         if file then
             file:close()

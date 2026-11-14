@@ -37,6 +37,9 @@ function ReviewScreen.open(app, game, opts)
     self.index = opts.refresh and self.available or 0
     self.screen = BoardScreen:new{
         state = { flipped = self.flipped },
+        -- The review names squares, in the moves and the better ones, so they are always on its board.
+        coordinates = true,
+        panel = true,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
@@ -148,31 +151,71 @@ function ReviewScreen:phase_at(index)
     end
 end
 
-function ReviewScreen:status_text()
+local SIGNS = { Blunder = "??", Mistake = "?", Inaccuracy = "?!" }
+
+-- The evaluation after a move in words, for white or black, or nil without one.
+function ReviewScreen:evaluation_words(move)
+    local s = self.s
+    if move.white_mate then
+        return string.format(move.white_mate > 0 and s.eval_white_mate or s.eval_black_mate, math.abs(move.white_mate))
+    elseif move.white_score then
+        local pawns = math.abs(move.white_score) / 100
+        if pawns < 0.3 then
+            return s.eval_equal
+        end
+        local value = string.format("%.1f", pawns):gsub("%.", s.decimal_separator)
+        return string.format(move.white_score > 0 and s.eval_white or s.eval_black, value)
+    end
+end
+
+-- The better move of a marked move, as a move of the position before it, or nil.
+function ReviewScreen:better_move(index)
+    local move = self.game.moves[index]
+    if not move or not move.judgment or not move.best_uci or move.best_uci == move.uci or not self.positions[index - 1] then
+        return nil
+    end
+    return Chess.parse_uci(self.positions[index - 1], move.best_uci)
+end
+
+-- The panel under the board: the move, its sign and judgment, the better move with its arrow, the evaluation in words.
+function ReviewScreen:panel()
     local s, game = self.s, self.game
-    local move = game.moves[self.index]
-    local parts = {}
-    if self.analysis then
-        return string.format(s.engine_progress, self.progress_done or 1, self.progress_total or 1)
-    end
     if self.index == 0 then
-        parts[1] = game.intro or s.start_pos
-    else
-        parts[1] = self:move_label(self.index) .. " " .. (move.san or move.uci)
-        -- Right after the move, since the line has room for one line only and the end is what gets cut.
-        parts[#parts + 1] = self:phase_at(self.index)
-        if move.eval_text then
-            parts[#parts + 1] = move.eval_text
-        end
-        if move.judgment then
-            parts[#parts + 1] = s.judgments[move.judgment] or move.judgment
-        end
-        if move.best then
-            parts[#parts + 1] = string.format(s.review_best, move.best)
-        end
+        return { detail = game.intro or s.start_pos }
     end
-    if self.index == self.available and game.result_text then
-        parts[#parts + 1] = game.result_text
+    local move = game.moves[self.index]
+    local panel = { move = self:move_label(self.index) .. " " .. (move.san or move.uci) .. (SIGNS[move.judgment] or "") }
+    local phase = self:phase_at(self.index)
+    if move.judgment then
+        panel.tag, panel.tag_solid = s.judgments[move.judgment] or move.judgment, true
+    elseif phase then
+        panel.tag, phase = phase, nil
+    end
+    local better = self:better_move(self.index)
+    local better_san = move.best or (better and Chess.to_san(self.positions[self.index - 1], better))
+    panel.evaluation = self:evaluation_words(move)
+    local result = self.index == self.available and game.result_text or nil
+    if better_san then
+        panel.detail = string.format(better and s.review_better_arrow or s.review_better, better_san)
+        -- On the last move the result says more than the evaluation it ended with.
+        panel.evaluation = result or panel.evaluation
+    elseif result then
+        panel.detail = result
+    elseif phase then
+        panel.detail = phase
+    end
+    return panel
+end
+
+-- The panel in one line, for what reads the status of a board; the review draws the panel itself.
+function ReviewScreen:status_text()
+    if self.analysis then
+        return string.format(self.s.engine_progress, self.progress_done or 1, self.progress_total or 1)
+    end
+    local panel = self:panel()
+    local parts = {}
+    for _, key in ipairs({ "move", "tag", "detail", "evaluation" }) do
+        parts[#parts + 1] = panel[key]
     end
     return table.concat(parts, " · ")
 end
@@ -198,6 +241,8 @@ function ReviewScreen:render(what)
         top = top,
         bottom = bottom,
         status = self:status_text(),
+        panel = self:panel(),
+        shapes = self:better_shapes(),
         progress = self.analysis and { done = self.progress_done or 1, total = self.progress_total or 1 } or nil,
         buttons = {
             { id = "back", label = s.back },
@@ -208,6 +253,13 @@ function ReviewScreen:render(what)
             self.analysis and { id = "stop", label = s.stop } or { id = "more", label = s.more },
         },
     }, what)
+end
+
+function ReviewScreen:better_shapes()
+    local better = self.index > 0 and self:better_move(self.index)
+    if better then
+        return { { from = better.from, to = better.to, brush = "yellow" } }
+    end
 end
 
 function ReviewScreen:go(index)
@@ -238,11 +290,11 @@ function ReviewScreen:on_button(button)
     end
 end
 
--- The choice of analyzing every game of the reader at its end, where the reader reviews: once on, the question of
--- open_at_end no longer shows, so here is where it goes off again.
+-- The choice of analyzing every game of Lichess of the reader at its end, where the reader reviews: once on, the
+-- question of open_at_end no longer shows, so here is where it goes off again.
 function ReviewScreen:analyze_always_row(page)
     local s, app = self.s, self.app
-    if not self.opts.reader_color or not EngineAnalysis.available(app) then
+    if not self.opts.reader_color or not self.opts.game_id or not EngineAnalysis.available(app) then
         return nil
     end
     return { kind = "toggle", text = s.analyze_always, on = app:option("analyze_always"), on_text = s.yes, off_text = s.no, callback = function()
@@ -359,6 +411,7 @@ function ReviewScreen:analyze_here()
                 local move = self.game.moves[i]
                 if move then
                     move.eval_text, move.judgment, move.best, move.white_cp = entry.eval_text, entry.judgment, entry.best, entry.white_cp
+                    move.best_uci, move.white_score, move.white_mate = entry.best_uci, entry.white_score, entry.white_mate
                 end
             end
             self.game.summary = result.summary

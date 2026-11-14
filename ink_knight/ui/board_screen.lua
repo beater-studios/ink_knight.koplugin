@@ -12,6 +12,7 @@ local ffi = require("ffi")
 local logger = require("logger")
 
 local BoardDiff = require("ink_knight/board_diff")
+local MoveText = require("ink_knight/ui/move_text")
 local Page = require("ink_knight/ui/page")
 local Portrait = require("ink_knight/portrait")
 local Refresh = require("ink_knight/refresh")
@@ -76,6 +77,8 @@ local BoardScreen = InputContainer:extend{
     broken_text = nil,
     -- Lines of text in place of the top bar, for a goal that does not fit one line, as in the lessons.
     banner_lines = nil,
+    -- Two lines under the board instead of one, for the panel of a move in the review.
+    panel = false,
 }
 
 -- The hints of the lessons: the colors of the app become grays, and the arrows that warn are black.
@@ -336,7 +339,7 @@ function BoardScreen:px(value)
 end
 
 function BoardScreen:layout()
-    local bar_h, status_h, button_h = self:px(46), self:px(34), self:px(58)
+    local bar_h, status_h, button_h = self:px(46), self:px(self.panel and 76 or 34), self:px(58)
     local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(12) or bar_h
     local room = self.height - StatusStrip.height() - top_h - bar_h - status_h - button_h
     self.square = math.floor(math.min(self.width, room) / 8)
@@ -713,15 +716,53 @@ function BoardScreen:paint_game(bb)
     if progress then
         -- A bar filled as far as the work went, with the status written over it.
         local m = self:px(16)
-        local x, y, w, h = m, rect.y + self:px(3), rect.w - 2 * m, rect.h - self:px(6)
+        local h = math.min(rect.h - self:px(6), self:px(28))
+        local x, y, w = m, rect.y + math.floor((rect.h - h) / 2), rect.w - 2 * m
         local total = math.max(1, progress.total or 1)
         bb:paintRect(x, y, math.floor(w * math.min(total, progress.done or 0) / total), h, PROGRESS_FILL)
         bb:paintBorder(x, y, w, h, self:px(2), BLACK)
         self:paint_text(bb, self.state.status, BOLD, 16, x + self:px(6), y, w - self:px(12), h, "center")
-    else
-        self:paint_text(bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
+    elseif self.state.panel then
+        self:paint_panel(bb, rect, self.state.panel)
+    elseif self.state.status then
+        MoveText.paint(self, bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
     end
     self:paint_card(bb)
+end
+
+-- The panel of a move, in two lines: the move large with its sign, its judgment in a tag (solid for a mistake,
+-- outlined for a phase that starts there); then the better move, with its arrow on the board, and the evaluation in
+-- words. panel: move, tag, tag_solid, detail, evaluation, each of them optional.
+function BoardScreen:paint_panel(bb, rect, panel)
+    local m = self:px(12)
+    bb:paintRect(m, rect.y + self:px(2), rect.w - 2 * m, 1, Blitbuffer.Color8(0xDD))
+    local line_h = self:px(34)
+    local top = rect.y + self:px(5)
+    local tag_w = 0
+    if panel.tag then
+        tag_w = math.min(self:px(190), MoveText.width(panel.tag, BOLD, 17 * self.scale) + self:px(24))
+        local x, y, h = rect.w - m - tag_w, top + self:px(4), line_h - self:px(8)
+        if panel.tag_solid then
+            bb:paintRect(x, y, tag_w, h, BLACK)
+        else
+            bb:paintBorder(x, y, tag_w, h, self:px(2), BLACK)
+        end
+        self:paint_text(bb, panel.tag, BOLD, 17, x, y, tag_w, h, "center", panel.tag_solid and WHITE or BLACK)
+        tag_w = tag_w + self:px(10)
+    end
+    if panel.move then
+        MoveText.paint(self, bb, panel.move, BOLD, 23, m, top, rect.w - 2 * m - tag_w, line_h, "left")
+    end
+    local bottom = top + line_h
+    local evaluation_w = 0
+    if panel.evaluation then
+        evaluation_w = math.min(math.floor(rect.w / 2), MoveText.width(panel.evaluation, REGULAR, 16 * self.scale) + self:px(4))
+        self:paint_text(bb, panel.evaluation, REGULAR, 16, rect.w - m - evaluation_w, bottom, evaluation_w, line_h, "right", CARD_GRAY)
+        evaluation_w = evaluation_w + self:px(10)
+    end
+    if panel.detail then
+        MoveText.paint(self, bb, panel.detail, REGULAR, 17, m, bottom, rect.w - 2 * m - evaluation_w, line_h, "left")
+    end
 end
 
 -- The card over the board, and the rectangles of its buttons, in the same place on every paint.
@@ -829,11 +870,14 @@ function BoardScreen:refresh(what)
         self:dirty_rect("fast", self.bottom_bar)
         return
     end
-    if what == "full" then
+    -- A change of the whole screen (the game arriving, a card, the board turned) goes with a flash: a flash waits
+    -- for the update before it, where an update without one would collide with it on the Kindle and lose a part,
+    -- as the bar of buttons was lost when a game came right after the flash of its opening.
+    if what == "full" or changes.whole then
         self.refresh_count:reset()
     end
     local mode = self.refresh_count:mode("cells")
-    if mode == "full" or changes.whole then
+    if mode == "full" then
         Sleep.dirty(self, function() return mode, self.dimen end)
         return
     end

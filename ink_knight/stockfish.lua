@@ -43,16 +43,34 @@ function Stockfish.find(plugin_dir)
     return found[plugin_dir] or nil
 end
 
+-- Each process has files of its own, so two analyses at once never read each other's.
+local started = 0
+
 -- dir: a private folder for its output. Returns the process, or nil when it cannot start.
 function Stockfish.start(binary, dir)
     os.execute("mkdir -p " .. quote(dir) .. " && chmod 700 " .. quote(dir))
-    local self = setmetatable({ out_path = dir .. "/stockfish.out", pid_path = dir .. "/stockfish.pid", offset = 0, partial = "" }, Stockfish)
+    -- What a session that ended without stopping its engines left, and the single pair of names of earlier versions.
+    if started == 0 then
+        os.execute("rm -f " .. quote(dir) .. "/stockfish.out " .. quote(dir) .. "/stockfish.pid " .. quote(dir) .. "/stockfish-*.out " .. quote(dir) .. "/stockfish-*.pid")
+    end
+    started = started + 1
+    local base = string.format("%s/stockfish-%d", dir, started)
+    local self = setmetatable({ out_path = base .. ".out", pid_path = base .. ".pid", offset = 0, partial = "" }, Stockfish)
     os.remove(self.out_path)
     os.remove(self.pid_path)
     -- Stockfish runs beside the shell, which keeps reading the pipe after it ends: a write to an engine that died
-    -- never meets a closed pipe, whose signal would close KOReader. The pid is Stockfish's own (nice runs it in place).
-    local script = string.format("nice -n 19 %s <&0 > %s 2>&1 & echo $! > %s; wait $!; cat > /dev/null",
-        quote(binary), quote(self.out_path), quote(self.pid_path))
+    -- never meets a closed pipe, whose signal would close KOReader. The pid is Stockfish's own (nice runs it in place),
+    -- and its file goes once the shell sees it end, so a number the system gives to another process is never killed.
+    -- The pipe reaches it through descriptor 3: a POSIX shell such as busybox's on the Kindle, unlike bash, gives a
+    -- job in the background /dev/null as its input before any redirection, so "<&0" would hand it /dev/null and it
+    -- would quit at once. What else KOReader has open (pipes, sockets) is closed first where /proc lists it, so the
+    -- engine holds none of it; numbers of two digits only where the shell can close them (busybox can, dash cannot,
+    -- and would end at the attempt). Only the job's "Killed", after stop(), is kept out of KOReader's log.
+    local script = string.format("exec 3<&0; big=; (eval 'exec 10<&-') 2>/dev/null && big=1; "
+        .. "for fd in /proc/$$/fd/*; do n=${fd##*/}; [ \"$n\" -gt 3 ] 2>/dev/null || continue; "
+        .. "[ ${#n} -gt 1 ] && [ -z \"$big\" ] && continue; eval \"exec $n<&-\"; done; "
+        .. "nice -n 19 %s <&3 3<&- > %s 2>&1 & echo $! > %s; wait $! 2>/dev/null; rm -f %s; cat > /dev/null",
+        quote(binary), quote(self.out_path), quote(self.pid_path), quote(self.pid_path))
     self.pipe = io.popen("sh -c " .. quote(script), "w")
     if not self.pipe then
         return nil

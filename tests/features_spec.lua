@@ -4,6 +4,7 @@ package.loaded.socket = package.loaded.socket or { gettime = os.clock }
 local Analysis = require("ink_knight/analysis")
 local Api = require("ink_knight/api")
 local BoardDiff = require("ink_knight/board_diff")
+local Figurine = require("ink_knight/figurine")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
 local Engine = require("ink_knight/engine")
@@ -825,6 +826,26 @@ test("a move only touches the squares it changed", function()
     eq(#changes.squares, 2)
     eq(changes.squares[1], Chess.square_from_name("e2")); eq(changes.squares[2], Chess.square_from_name("e4"))
     eq(changes.top, false); eq(changes.status, false); eq(changes.buttons, false)
+end)
+
+test("moves are written with the pieces as symbols, and only moves", function()
+    local function shown(text)
+        local out = {}
+        for _, part in ipairs(Figurine.parts(text)) do
+            out[#out + 1] = part.symbol and "[" .. part.text .. "]" or part.text
+        end
+        return table.concat(out)
+    end
+    local knight, bishop, queen, rook = "\226\153\158", "\226\153\157", "\226\153\155", "\226\153\156"
+    eq(shown("5... Bxd1??"), "5... [" .. bishop .. "]xd1??")
+    eq(shown("Nbd7"), "[" .. knight .. "]bd7")
+    eq(shown("R1e2+"), "[" .. rook .. "]1e2+")
+    eq(shown("exd8=Q#"), "exd8=[" .. queen .. "]#")
+    eq(shown("9...Nf6"), "9...[" .. knight .. "]f6")
+    eq(shown("O-O-O"), "O-O-O")
+    eq(shown("Better was Nxe5, on the arrow"), "Better was [" .. knight .. "]xe5, on the arrow")
+    eq(shown("Nenhum erro seu"), "Nenhum erro seu", "a word is not a move")
+    eq(shown("Brancas"), "Brancas")
 end)
 
 test("a card over the board, the progress of a search and a tag each redraw what they cover", function()

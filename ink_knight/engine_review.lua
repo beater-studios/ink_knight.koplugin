@@ -35,8 +35,9 @@ end
 
 -- scores[i]: the score of the position after i moves, for the side to move there ({ cp } or { mate }), i from 0;
 -- movers[i]: who played move i ("w" or "b"); best[i]: the best move in the position before move i (UCI), from the
--- search of position i - 1. Returns, for each move, { judgment, eval_text, loss, white_cp }, white_cp being the score
--- after the move for white in centipawns, a mate as a thousand, for the chart; and, per side, the counts, average
+-- search of position i - 1. Returns, for each move, { judgment, eval_text, loss, white_cp, white_score, white_mate },
+-- white_cp being the score after the move for white in centipawns, a mate as a thousand, for the chart, and
+-- white_score or white_mate the score as the engine gave it, for white; and, per side, the counts, average
 -- loss and accuracy: { w = { inaccuracy, mistake, blunder, acpl, accuracy }, b = { ... } }.
 function EngineReview.judge(scores, movers)
     local moves, sides = {}, { w = { losses = {}, accuracies = {} }, b = { losses = {}, accuracies = {} } }
@@ -75,7 +76,11 @@ function EngineReview.judge(scores, movers)
                 eval_text = Api.eval_text(sign * (after.cp or 0), nil)
             end
             local for_white = mover == "w" and cp_after or -cp_after
-            moves[i] = { judgment = judgment, eval_text = eval_text, loss = loss, white_cp = math.max(-cap, math.min(cap, for_white)) }
+            moves[i] = {
+                judgment = judgment, eval_text = eval_text, loss = loss, white_cp = math.max(-cap, math.min(cap, for_white)),
+                white_score = not after.mate and sign * (after.cp or 0) or nil,
+                white_mate = after.mate and after.mate ~= 0 and sign * after.mate or nil,
+            }
         end
     end
     local summary = {}

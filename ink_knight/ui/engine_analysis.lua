@@ -21,7 +21,8 @@ function EngineAnalysis.available(app)
 end
 
 -- opts: app, window (the screen whose timers it uses), initial_fen, moves (UCI, as a list), on_progress(position, total),
--- counted from 1, on_done(result): result is { moves = { { judgment, eval_text, best, white_cp } }, summary = { white, black } },
+-- counted from 1, on_done(result): result is { moves = { { judgment, eval_text, best, best_uci, white_cp, white_score,
+-- white_mate } }, summary = { white, black } },
 -- or nil when the engine stopped answering.
 function EngineAnalysis.start(opts)
     local binary = Stockfish.find(opts.app.plugin_dir)
@@ -110,6 +111,7 @@ function EngineAnalysis:finish()
         if entry.judgment and best and best ~= self.opts.moves[i] then
             local move = Chess.parse_uci(self.positions[i - 1], best)
             entry.best = move and Chess.to_san(self.positions[i - 1], move) or nil
+            entry.best_uci = move and best or nil
         end
         moves[i] = entry
     end

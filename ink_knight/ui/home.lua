@@ -2650,6 +2650,11 @@ local function add_game_analysis(moves, analysis)
                 -- For the chart: a mate counts as a thousand, as the largest score does.
                 local cp = tonumber(entry.eval) or ((tonumber(entry.mate) or 0) > 0 and 1000 or -1000)
                 moves[index].white_cp = math.max(-1000, math.min(1000, cp))
+                moves[index].white_score, moves[index].white_mate = tonumber(entry.eval), tonumber(entry.mate)
+            end
+            -- The better move of a marked one, for its arrow; the review writes it.
+            if type(entry.best) == "string" and entry.best:match("^[a-h][1-8][a-h][1-8][qrbn]?$") then
+                moves[index].best_uci = entry.best
             end
             if type(entry.judgment) == "table" then
                 moves[index].judgment = entry.judgment.name

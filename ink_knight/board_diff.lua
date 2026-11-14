@@ -51,7 +51,8 @@ function BoardDiff.snapshot(state)
         top = bar_text(state.top) .. "|" .. tostring(state.banner),
         overlay = overlay_text(state),
         bottom = bar_text(state.bottom),
-        status = tostring(state.status) .. "|" .. (state.progress and (tostring(state.progress.done) .. "/" .. tostring(state.progress.total)) or ""),
+        status = tostring(state.status) .. "|" .. (state.progress and (tostring(state.progress.done) .. "/" .. tostring(state.progress.total)) or "")
+            .. "|" .. (state.panel and table.concat({ tostring(state.panel.move), tostring(state.panel.tag), tostring(state.panel.detail), tostring(state.panel.evaluation) }, "|") or ""),
         buttons = buttons_text(state.buttons),
         -- A card over the board changes much of it at once.
         card = state.card and table.concat({ tostring(state.card.title), tostring(state.card.text), tostring(state.card.detail), buttons_text(state.card.buttons) }, "|") or "",

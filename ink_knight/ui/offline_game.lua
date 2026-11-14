@@ -413,7 +413,8 @@ function OfflineGame:finish_stockfish_analysis(result, ucis)
     local moves = {}
     for index, uci in ipairs(ucis) do
         local entry = result.moves[index] or {}
-        moves[index] = { uci = uci, san = sans[index], eval_text = entry.eval_text, judgment = entry.judgment, best = entry.best, white_cp = entry.white_cp }
+        moves[index] = { uci = uci, san = sans[index], eval_text = entry.eval_text, judgment = entry.judgment, best = entry.best,
+            best_uci = entry.best_uci, white_cp = entry.white_cp, white_score = entry.white_score, white_mate = entry.white_mate }
     end
     local function line(name, data)
         return string.format(s.review_side_full, name, data.blunder, data.mistake, data.inaccuracy)
@@ -440,7 +441,7 @@ function OfflineGame:set_review_game(moves, notice, summary)
         black = self.two_players and s.color_black or (self.my_color == "b" and you or engine),
     }
     self:render()
-    self:open_review()
+    self:open_review(true)
 end
 
 function OfflineGame:cancel_analysis()
@@ -464,9 +465,11 @@ function OfflineGame:finish_analysis()
         local entry = { uci = uci, san = sans[index] }
         if result then
             entry.eval_text = GameReview.eval_text(result.played, result.mover)
+            entry.white_score, entry.white_mate = GameReview.white_score(result.played, result.mover)
             entry.judgment = result.judgment
             if result.judgment and result.best and Chess.move_to_uci(result.best) ~= uci then
                 entry.best = Chess.to_san(result.position, result.best)
+                entry.best_uci = Chess.move_to_uci(result.best)
             end
         end
         moves[index] = entry
@@ -493,9 +496,21 @@ function OfflineGame:finish_analysis()
     self:set_review_game(moves, summary, nil)
 end
 
-function OfflineGame:open_review()
-    require("ink_knight/ui/review_screen").open(self.app, self.review_game, { flipped = self.flipped })
-    self.app:info(self.review_game.notice, 6)
+-- Right after the analysis, the summary of Stockfish opens first, as at the end of a Lichess game; the small engine has
+-- only its notice. Opened again later, the review opens on the board.
+function OfflineGame:open_review(just_analyzed)
+    local reader_color
+    if not self.two_players then
+        reader_color = self.my_color == "b" and "black" or "white"
+    end
+    local review = require("ink_knight/ui/review_screen").open(self.app, self.review_game, { flipped = self.flipped, reader_color = reader_color })
+    if self.review_game.summary then
+        if just_analyzed then
+            review:show_summary()
+        end
+    else
+        self.app:info(self.review_game.notice, 6)
+    end
 end
 
 function OfflineGame:apply(move)
