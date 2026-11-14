@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0]
 
 - The plugin checks once, the first time it needs Stockfish, that it runs on the device (about half a second on a Kindle), and keeps the small engine where it does not, as on e-readers where the binary cannot run. An engine that stops in the middle of an analysis is noticed at once.
 - Review at the end of a Lichess game: a game that ends with its board open shows a card with the result and Review the game first, and the bar of a finished game has Review. A game the site analyzed opens on its summary; one it did not offers the plugin's engine, with how long it takes, and an option to always analyze at the end of the game, which goes off again from More of the review. The analysis shows its progress as a bar, and every move it judged carries the tag "plugin's engine".
