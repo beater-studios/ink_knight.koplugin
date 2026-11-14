@@ -7,6 +7,8 @@ local Stockfish = {}
 Stockfish.__index = Stockfish
 
 Stockfish.BINARY = "bin/stockfish-armhf"
+-- The line the shell adds to the output once the engine ended, however it ended.
+Stockfish.ENDED = "ink_knight: the engine ended"
 -- Small, as the searches are short: 8 MB of hash, and Stockfish takes about 30 MB in all on the Kindle.
 Stockfish.HASH_MB = 8
 
@@ -21,6 +23,17 @@ local function exists(path)
         return true
     end
     return false
+end
+
+-- The size of a file, or nil, so a binary replaced by an update is told from the one before.
+function Stockfish.size(path)
+    local file = io.open(path, "rb")
+    if not file then
+        return nil
+    end
+    local size = file:seek("end")
+    file:close()
+    return size
 end
 
 local found = {}
@@ -58,19 +71,12 @@ function Stockfish.start(binary, dir)
     local self = setmetatable({ out_path = base .. ".out", pid_path = base .. ".pid", offset = 0, partial = "" }, Stockfish)
     os.remove(self.out_path)
     os.remove(self.pid_path)
-    -- Stockfish runs beside the shell, which keeps reading the pipe after it ends: a write to an engine that died
-    -- never meets a closed pipe, whose signal would close KOReader. The pid is Stockfish's own (nice runs it in place),
-    -- and its file goes once the shell sees it end, so a number the system gives to another process is never killed.
-    -- The pipe reaches it through descriptor 3: a POSIX shell such as busybox's on the Kindle, unlike bash, gives a
-    -- job in the background /dev/null as its input before any redirection, so "<&0" would hand it /dev/null and it
-    -- would quit at once. What else KOReader has open (pipes, sockets) is closed first where /proc lists it, so the
-    -- engine holds none of it; numbers of two digits only where the shell can close them (busybox can, dash cannot,
-    -- and would end at the attempt). Only the job's "Killed", after stop(), is kept out of KOReader's log.
+    -- Stockfish runs beside the shell, which keeps reading the pipe after it ends: a write to an engine that died never meets a closed pipe, whose signal would close KOReader. The pid is Stockfish's own (nice runs it in place), and its file goes once the shell sees it end, so a number the system gives to another process is never killed. The shell then writes ENDED on a line of its own, even after a line the engine left unfinished when it was killed, which tells an engine that died at once from one still thinking. The pipe reaches it through descriptor 3: a POSIX shell such as busybox's on the Kindle, unlike bash, gives a job in the background /dev/null as its input before any redirection, so "<&0" would hand it /dev/null and it would quit at once. What else KOReader has open (pipes, sockets) is closed first where /proc lists it, so the engine holds none of it; numbers of two digits only where the shell can close them (busybox can, dash cannot, and would end at the attempt). Only the job's "Killed", after stop(), is kept out of KOReader's log.
     local script = string.format("exec 3<&0; big=; (eval 'exec 10<&-') 2>/dev/null && big=1; "
         .. "for fd in /proc/$$/fd/*; do n=${fd##*/}; [ \"$n\" -gt 3 ] 2>/dev/null || continue; "
         .. "[ ${#n} -gt 1 ] && [ -z \"$big\" ] && continue; eval \"exec $n<&-\"; done; "
-        .. "nice -n 19 %s <&3 3<&- > %s 2>&1 & echo $! > %s; wait $! 2>/dev/null; rm -f %s; cat > /dev/null",
-        quote(binary), quote(self.out_path), quote(self.pid_path), quote(self.pid_path))
+        .. "nice -n 19 %s <&3 3<&- > %s 2>&1 & echo $! > %s; wait $! 2>/dev/null; rm -f %s; { echo; echo %s; } >> %s; cat > /dev/null",
+        quote(binary), quote(self.out_path), quote(self.pid_path), quote(self.pid_path), quote(Stockfish.ENDED), quote(self.out_path))
     self.pipe = io.popen("sh -c " .. quote(script), "w")
     if not self.pipe then
         return nil
@@ -165,17 +171,21 @@ function Stockfish:poll()
     if not self.searching then
         return nil
     end
+    -- Every line read is looked at, so the end of an engine that died right after answering is not lost with the rest of the batch.
+    local answer
     for _, line in ipairs(self:read_lines()) do
-        if not Stockfish.read_info(line, self.result) then
+        if line == Stockfish.ENDED then
+            self.ended = true
+        elseif not answer and not Stockfish.read_info(line, self.result) then
             local best = line:match("^bestmove (%S+)")
             if best then
                 self.searching = false
                 self.result.best = best ~= "(none)" and best or nil
-                return self.result
+                answer = self.result
             end
         end
     end
-    return nil
+    return answer
 end
 
 -- Ends the process: asked to quit, then killed if it has not, so closing never waits on it.

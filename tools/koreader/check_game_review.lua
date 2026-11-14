@@ -331,23 +331,32 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
         ffi.C.setenv("PATH", shim .. ":" .. os.getenv("PATH"), 1)
         print("engine started by dash, a POSIX shell like the Kindle's")
     end
-    -- First of all, the engine answers: one that gets no input quits at once, and every analysis below would wait for
-    -- it to the limit.
+    -- First of all, the engine answers: one that gets no input quits at once, and every analysis below would wait for it to the limit.
     local Stockfish = require("ink_knight/stockfish")
-    local probe = Stockfish.start(Stockfish.find(plugin_dir), home:engine_dir())
-    local ready = false
-    local deadline = os.time() + 10
-    while not ready and os.time() < deadline do
-        for _, line in ipairs(probe:read_lines()) do
-            ready = ready or line == "readyok"
-        end
-        util.usleep(50000)
-    end
-    probe:stop()
-    if not ready then
+    local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+    if not EngineAnalysis.check(Stockfish.find(plugin_dir), home:engine_dir()) then
         print("FAILED: the engine should answer readyok; nothing else with Stockfish is checked")
         os.exit(1)
     end
+    -- A binary that cannot be the engine is refused at once, each, from the line its shell writes, so a device where it does not run keeps the small one without waiting.
+    local function refused_quickly(binary, what)
+        local started_at = util.getTimestamp()
+        local works = EngineAnalysis.check(binary, home:engine_dir())
+        local took = util.getTimestamp() - started_at
+        check(works == false and took < 1, string.format("%s is refused at once: %s in %.2f s", what, tostring(works), took))
+    end
+    refused_quickly("/usr/bin/true", "a program that ends at once")
+    local not_executable = out_dir .. "/not_executable"
+    local file = io.open(not_executable, "wb")
+    file:write("not a program\n")
+    file:close()
+    os.execute("chmod 600 '" .. not_executable .. "'")
+    refused_quickly(not_executable, "a file that cannot run")
+    -- The real one passes, and the answer is kept with the binary, so it is not asked again.
+    home.settings:delSetting("engine_check")
+    check(EngineAnalysis.available(home) == true, "the Stockfish of the check runs")
+    local kept = home.settings:readSetting("engine_check")
+    check(kept and kept.binary == os.getenv("INK_KNIGHT_STOCKFISH") and kept.size and kept.size > 0 and kept.modified, "a yes is kept with the binary, its size and its date")
     local function wait(done, seconds)
         local deadline = os.time() + (seconds or 60)
         while not done() and os.time() < deadline do
@@ -441,7 +450,9 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     end, 5)
     check(engine_pid, "the engine should write its pid")
     os.execute(string.format("kill -9 %d", engine_pid or 0))
+    local killed_at = os.time()
     wait(function() return dying.analysis == nil end, 30)
+    check(os.time() - killed_at <= 3, "a dead engine is noticed at once, from the line its shell writes: " .. (os.time() - killed_at) .. " s")
     check(dying.game.summary == nil, "a dead engine should leave no summary")
     check(notices[#notices] == s.engine_stopped, "a dead engine should end the analysis with a notice: " .. tostring(notices[#notices]))
     UIManager:close(dying.screen)
@@ -498,6 +509,7 @@ end
 home.settings:delSetting("two_player_game")
 home.settings:delSetting("offline_game")
 home.settings:delSetting("analyze_always")
+home.settings:delSetting("engine_check")
 home.net, home.game_closed = real_net, real_closed
 if failures > 0 then
     print(failures .. " failed")

@@ -76,5 +76,24 @@ test("the score after each move for white, for the chart, a mate counted as a th
     eq(black_mates[1].white_cp, -1000, "black mated")
 end)
 
+test("the end of the engine is read in the same batch as its answer, and after a line it left unfinished", function()
+    local path = os.tmpname()
+    local function engine_with(text)
+        local file = assert(io.open(path, "wb"))
+        file:write(text)
+        file:close()
+        return setmetatable({ out_path = path, offset = 0, partial = "", searching = true, result = { depth = 0 } }, Stockfish)
+    end
+    local answered = engine_with("info depth 5 score cp 10 pv e2e4\nbestmove e2e4\n\n" .. Stockfish.ENDED .. "\n")
+    local result = answered:poll()
+    eq(result and result.best, "e2e4", "the answer")
+    eq(answered.ended, true, "and the end right after it")
+    -- Killed in the middle of a line: the shell starts a line of its own for the end.
+    local cut = engine_with("info depth 9 sco\n" .. Stockfish.ENDED .. "\n")
+    eq(cut:poll(), nil, "no answer")
+    eq(cut.ended, true, "but the end is seen")
+    os.remove(path)
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

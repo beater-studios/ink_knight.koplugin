@@ -1,6 +1,10 @@
 -- A game analyzed by Stockfish on the device: each position searched in turn, a little at a time between the frames
 -- of the screen, then each move judged as Lichess judges it (engine_review.lua). Only where the plugin has a Stockfish
--- for the device (stockfish.lua); elsewhere the offline games keep the small engine.
+-- for the device (stockfish.lua) and it runs there; elsewhere the offline games keep the small engine.
+local lfs = require("libs/libkoreader-lfs")
+local logger = require("logger")
+local util = require("ffi/util")
+
 local Chess = require("ink_knight/chess")
 local EngineReview = require("ink_knight/engine_review")
 local Sleep = require("ink_knight/sleep")
@@ -16,8 +20,60 @@ local POLL_SECONDS = 0.15
 -- ends the analysis, checked every few seconds; past the last limit it ends anyway, so it never waits forever.
 local CHECK_AFTER_SECONDS, CHECK_EVERY_SECONDS, GIVE_UP_SECONDS = 15, 2, 60
 
+-- How long a first start may take to answer, and the pause between looks at what it said. On the Kindle it answers in 0.6 s.
+EngineAnalysis.CHECK_SECONDS = 3
+local CHECK_POLL_MICROSECONDS = 20000
+
+local function now()
+    local seconds, microseconds = util.gettime()
+    return seconds + microseconds / 1000000
+end
+
+-- Whether the engine runs here: started once, it must answer readyok. The package goes to every device that runs KOReader, and on some the binary cannot run (another processor, a folder where nothing may be executed), so there the small engine stays. One that ended before answering is given up on at once.
+function EngineAnalysis.check(binary, dir)
+    local engine = Stockfish.start(binary, dir)
+    if not engine then
+        return false
+    end
+    local deadline = now() + EngineAnalysis.CHECK_SECONDS
+    local ready, ended = false, false
+    while not ready and not ended and now() < deadline do
+        for _, line in ipairs(engine:read_lines()) do
+            ready = ready or line == "readyok"
+            ended = ended or line == Stockfish.ENDED
+        end
+        if not ready and not ended then
+            util.usleep(CHECK_POLL_MICROSECONDS)
+        end
+    end
+    engine:stop()
+    return ready
+end
+
+-- The answer of check for each binary in this session.
+local checked = {}
+
+-- Whether the plugin's Stockfish can be used here, asked by everything that would use it. The first time on a device the engine is started to see (0.6 s on the Kindle, at most CHECK_SECONDS where it hangs). Only a yes is kept in the settings, with the binary's path, size and date, so it is not asked again until an update brings another binary; a no lasts this session only, since it may come from a busy moment, and the next session asks again.
 function EngineAnalysis.available(app)
-    return app.plugin_dir ~= nil and Stockfish.find(app.plugin_dir) ~= nil
+    local binary = app.plugin_dir and Stockfish.find(app.plugin_dir)
+    if not binary then
+        return false
+    end
+    if checked[binary] == nil then
+        local key = { binary = binary, size = Stockfish.size(binary), modified = lfs.attributes(binary, "modification") }
+        local saved = app.settings:readSetting("engine_check")
+        if type(saved) == "table" and saved.binary == key.binary and saved.size == key.size and saved.modified == key.modified then
+            checked[binary] = true
+        else
+            checked[binary] = EngineAnalysis.check(binary, app:engine_dir())
+            if checked[binary] then
+                app:save_setting("engine_check", key)
+            else
+                logger.warn("Ink Knight: Stockfish did not answer on this device, the small engine stays for this session")
+            end
+        end
+    end
+    return checked[binary]
 end
 
 -- opts: app, window (the screen whose timers it uses), initial_fen, moves (UCI, as a list), on_progress(position, total),
@@ -25,7 +81,7 @@ end
 -- white_mate } }, summary = { white, black } },
 -- or nil when the engine stopped answering.
 function EngineAnalysis.start(opts)
-    local binary = Stockfish.find(opts.app.plugin_dir)
+    local binary = EngineAnalysis.available(opts.app) and Stockfish.find(opts.app.plugin_dir)
     local engine = binary and Stockfish.start(binary, opts.app:engine_dir())
     if not engine then
         return nil
@@ -81,8 +137,9 @@ function EngineAnalysis:step()
         if not result then
             local now = os.time()
             local waited = now - self.searched_at
-            local dead = false
-            if waited > CHECK_AFTER_SECONDS and now - (self.checked_at or 0) >= CHECK_EVERY_SECONDS then
+            -- An engine that ended is known at once from its output; one that hangs, by asking the system.
+            local dead = self.engine.ended == true
+            if not dead and waited > CHECK_AFTER_SECONDS and now - (self.checked_at or 0) >= CHECK_EVERY_SECONDS then
                 self.checked_at = now
                 dead = not self.engine:alive()
             end
