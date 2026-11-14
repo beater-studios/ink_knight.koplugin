@@ -2,7 +2,7 @@
 -- from the practice lessons of the official Lichess app (lichess-org/mobile, GPL-3.0), which the app generates from
 -- lichess.org/practice. Only the chapters the plugin can judge come in: the ones to mate, to mate in so many moves or
 -- to promote, played against the engine; the ones judged by an evaluation that have a tree of moves in
--- tools/practice/eval_trees.json, worked out with Stockfish by tools/practice/eval_trees.py; and the guided ones and
+-- tools/practice/eval_trees.json, worked out with Stockfish by tools/practice/eval_trees.py; the long endgames to hold the draw or equalize, which no tree can hold, marked engine = true and judged on the device by the plugin's Stockfish, where it runs; and the guided ones and
 -- the commented game, which need no engine. Every move is read with the rules of the plugin itself, so a move it
 -- cannot read stops the build.
 -- Usage, from the plugin folder: luajit tools/practice/build.lua <folder with practice.json>
@@ -434,7 +434,7 @@ end
 
 local trees, tree_ids = {}, {}
 
-local sections, counts, seen = {}, { goal = 0, tree = 0, table = 0, guided = 0, lesson = 0, left = 0 }, {}
+local sections, counts, seen = {}, { goal = 0, tree = 0, table = 0, engine = 0, guided = 0, lesson = 0, left = 0 }, {}
 for _, section in ipairs(data.sections or fail("no sections")) do
     local section_key = SECTIONS[section.id] or fail("unknown section " .. tostring(section.id))
     local out_section = { id = section.id, name = section_key, studies = {} }
@@ -490,6 +490,10 @@ for _, section in ipairs(data.sections or fail("no sections")) do
                     end
                     out = { kind = "goal", goal = "draw_in", moves = goal.moves }
                     counts.table = counts.table + 1
+                elseif (goal.result == "drawIn" or goal.result == "equalIn") and type(goal.moves) == "number" then
+                    -- Too long for a tree: judged move by move by the plugin's Stockfish, as the app judges it, and left out of the lists where it does not run.
+                    out = { kind = "goal", goal = goal.result == "drawIn" and "draw_in" or "equal_in", moves = goal.moves, engine = true }
+                    counts.engine = counts.engine + 1
                 else
                     counts.left = counts.left + 1
                 end
@@ -560,6 +564,9 @@ for _, section in ipairs(sections) do
                 end
                 if chapter.cp then
                     fields[#fields + 1] = "cp = " .. chapter.cp
+                end
+                if chapter.engine then
+                    fields[#fields + 1] = "engine = true"
                 end
                 if chapter.shapes then
                     fields[#fields + 1] = "shapes = " .. quote(chapter.shapes)
@@ -656,6 +663,6 @@ file = assert(io.open(OUT_TREES, "wb"))
 file:write(table.concat(tree_out, "\n"))
 file:close()
 
-print(string.format("%s: %d chapters with a goal, %d judged by a tree of moves, %d by the table of king and pawn, %d guided, %d commented game; %d left out (judged by evaluation)",
-    OUT, counts.goal, counts.tree, counts.table, counts.guided, counts.lesson, counts.left))
+print(string.format("%s: %d chapters with a goal, %d judged by a tree of moves, %d by the table of king and pawn, %d by Stockfish on the device, %d guided, %d commented game; %d left out",
+    OUT, counts.goal, counts.tree, counts.table, counts.engine, counts.guided, counts.lesson, counts.left))
 print(string.format("%s: %d texts", OUT_TEXTS, #text_keys))

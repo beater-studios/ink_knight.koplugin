@@ -9,6 +9,7 @@ local Chess = require("ink_knight/chess")
 local ChessClock = require("ink_knight/chess_clock")
 local Engine = require("ink_knight/engine")
 local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+local EnginePlayer = require("ink_knight/ui/engine_player")
 local Game = require("ink_knight/game")
 local GameReview = require("ink_knight/game_review")
 local MoveList = require("ink_knight/ui/move_list")
@@ -21,6 +22,8 @@ OfflineGame.__index = OfflineGame
 -- How long the engine works before giving the screen its turn.
 local SLICE_SECONDS = 0.04
 local SLICE_PAUSE = 0.02
+-- How long Stockfish looks for a hint: depth 12 or so on the Kindle, against 3 for the small engine in 3 s.
+OfflineGame.HINT_MILLISECONDS = 1500
 
 function OfflineGame.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings }, OfflineGame)
@@ -40,6 +43,12 @@ function OfflineGame.open(app, opts)
         end
     else
         self.level = saved and saved.level or opts.level or 1
+        -- "stockfish" for the 8 levels of the plugin's Stockfish, nil for the 4 of the small engine, kept with the game. One saved where Stockfish no longer runs goes on with the small engine, at the level closest to it.
+        self.engine_kind = saved and saved.engine or opts.engine
+        if self.engine_kind == "stockfish" and not EngineAnalysis.available(app) then
+            self.engine_kind = nil
+            self.level = math.ceil(self.level / 2)
+        end
         -- "random", "white" or "black": kept for the next game, so playing again keeps the choice.
         self.color_choice = saved and saved.color_choice or opts.color_choice or "random"
         local chosen = self.color_choice == "white" and "w" or self.color_choice == "black" and "b" or nil
@@ -148,7 +157,7 @@ function OfflineGame:save()
             initial_fen = self.initial_fen,
         })
     else
-        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves, initial_fen = self.initial_fen })
+        self.app.settings:saveSetting(self.save_key, { version = State.GAME_VERSION, level = self.level, engine = self.engine_kind, my_color = self.my_color, color_choice = self.color_choice, moves = self.moves, initial_fen = self.initial_fen })
     end
     self.app.settings:flush()
 end
@@ -280,7 +289,7 @@ end
 
 function OfflineGame:show_state(buttons, what)
     local s = self.s
-    local top, bottom = { name = string.format(s.offline_level, self.level or 1) }, { name = s.you }
+    local top, bottom = { name = self:level_name() }, { name = s.you }
     if self.two_players then
         local running = self.clock and ChessClock.running(self.clock)
         top = { name = s.color_black, clock = self:clock_info("b"), active = running and self.position.turn == "b" }
@@ -363,6 +372,11 @@ function OfflineGame:analyze_next()
 end
 
 function OfflineGame:analyze_with_stockfish()
+    -- The analysis has its own Stockfish; the game's goes until a move taken back needs it again.
+    if self.engine_player then
+        self.engine_player:close()
+        self.engine_player = nil
+    end
     local moves = {}
     for uci in self.moves:gmatch("%S+") do
         moves[#moves + 1] = uci
@@ -433,7 +447,7 @@ end
 -- when the analysis made one, the summary with figures.
 function OfflineGame:set_review_game(moves, notice, summary)
     local s = self.s
-    local you, engine = s.you, string.format(s.offline_level, self.level or 1)
+    local you, engine = s.you, self:level_name()
     self.review_game = {
         moves = moves, intro = not self.two_players and notice or nil, notice = notice, summary = summary,
         initial_fen = self.initial_fen, result_text = self:status_text(),
@@ -580,6 +594,28 @@ end
 -- Stops the computer or a hint, so nothing found for a position that is gone lands on the board.
 function OfflineGame:stop_search()
     self.search, self.thinking, self.hinting = nil, false, false
+    if self.engine_player then
+        self.engine_player:cancel()
+    end
+end
+
+-- The plugin's Stockfish for this game, or nil where it does not run or stopped answering: then the small engine plays and hints, as before.
+function OfflineGame:stockfish()
+    return EnginePlayer.of(self, self.app, self.screen)
+end
+
+-- "Level 3 of 8": of the levels of the engine that plays this game.
+function OfflineGame:level_name()
+    local count = self.engine_kind == "stockfish" and #EnginePlayer.LEVELS or #Engine.LEVELS
+    return string.format(self.s.offline_level, self.level or 1, count)
+end
+
+-- Stockfish stopped answering in the middle of the game: the small engine goes on, at the level closest to it, and the reader is told.
+function OfflineGame:fall_back_to_small_engine()
+    self.engine_kind = nil
+    self.level = math.max(1, math.min(#Engine.LEVELS, math.ceil((self.level or 1) / 2)))
+    self:save()
+    self.app:info(string.format(self.s.engine_fallback, self.level, #Engine.LEVELS))
 end
 
 function OfflineGame:maybe_think()
@@ -588,13 +624,30 @@ function OfflineGame:maybe_think()
     end
     self.thinking = true
     self:render()
-    self:run_search({ level = self.level }, function(move)
+    local function play(move)
         self.thinking = false
         if move then
             self:apply(move)
         end
         self:render()
-    end)
+    end
+    if self.engine_kind == "stockfish" then
+        local player = self:stockfish()
+        if player then
+            local level = EnginePlayer.LEVELS[self.level] or EnginePlayer.LEVELS[#EnginePlayer.LEVELS]
+            player:best_move({ initial_fen = self.initial_fen, moves = self.moves, milliseconds = level.milliseconds, skill = level.skill, depth = level.depth }, function(move)
+                if move or player:usable() then
+                    play(move)
+                else
+                    self:fall_back_to_small_engine()
+                    self:run_search({ level = self.level }, play)
+                end
+            end)
+            return
+        end
+        self:fall_back_to_small_engine()
+    end
+    self:run_search({ level = self.level }, play)
 end
 
 -- Marks the piece and its square, so a tap on the square plays it, and names the move below the board.
@@ -606,7 +659,7 @@ function OfflineGame:hint()
     self.hinting = true
     self.selected, self.targets, self.hint_text = nil, nil, nil
     self:render()
-    self:run_search({ limits = Engine.HINT }, function(move)
+    local function show(move)
         self.hinting = false
         if move and self.position == position then
             self.selected = move.from
@@ -615,6 +668,19 @@ function OfflineGame:hint()
             self.hint_text = string.format(self.s.hint_status, Chess.to_san(position, move))
         end
         self:render()
+    end
+    local player = self:stockfish()
+    if not player then
+        self:run_search({ limits = Engine.HINT }, show)
+        return
+    end
+    player:best_move({ initial_fen = self.initial_fen, moves = self.moves, milliseconds = OfflineGame.HINT_MILLISECONDS }, function(move)
+        if move or player:usable() then
+            show(move)
+        else
+            -- Stockfish stopped answering: the small engine gives this hint and the next ones.
+            self:run_search({ limits = Engine.HINT }, show)
+        end
     end)
 end
 
@@ -738,7 +804,7 @@ function OfflineGame:on_button(button)
         if self.two_players then
             OfflineGame.open(self.app, { two_players = true, clock = self.clock_preset, initial_fen = self.initial_fen })
         else
-            OfflineGame.open(self.app, { level = self.level, color_choice = self.color_choice, initial_fen = self.initial_fen })
+            OfflineGame.open(self.app, { level = self.level, engine = self.engine_kind, color_choice = self.color_choice, initial_fen = self.initial_fen })
         end
     end
 end
@@ -749,6 +815,9 @@ function OfflineGame:closed()
         self.analysis.runner:cancel()
     end
     self.analysis = nil
+    if self.engine_player then
+        self.engine_player:close()
+    end
     if self.clock and not self:is_over() then
         self:stop_clock()
         self:save()

@@ -504,6 +504,143 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     UIManager:close(auto_review)
     check(engines_running() == 0, "no Stockfish left after the reviews: " .. engines_running())
     home:save_setting("analyze_always", false)
+    -- Hints from Stockfish, kept open while the screen is: in an offline game, a mate in one is found.
+    local scholar = OfflineGame.open(home, { initial_fen = "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", color_choice = "white", level = 1 })
+    scholar:on_button("hint")
+    check(scholar.hinting, "the hint should be searching")
+    wait(function() return not scholar.hinting end, 15)
+    check(scholar.hint_text == string.format(s.hint_status, "Qxf7#"), "Stockfish finds the mate: " .. tostring(scholar.hint_text))
+    check(scholar.engine_player and scholar.engine_player.engine ~= nil, "the hint came from Stockfish, kept open for the next one")
+    check(engines_running() == 1, "one Stockfish for the game: " .. engines_running())
+    UIManager:close(scholar.screen)
+    check(engines_running() == 0, "no Stockfish left after the game: " .. engines_running())
+    -- One that dies in the middle of a hint: the small engine gives it, and the next ones. From the start, where the search takes all its time.
+    local opening = OfflineGame.open(home, { color_choice = "white", level = 1 })
+    opening:on_button("hint")
+    local hint_pid
+    wait(function()
+        local player = opening.engine_player
+        local file = player and player.engine and io.open(player.engine.pid_path, "rb")
+        hint_pid = file and tonumber(file:read("*a"))
+        if file then
+            file:close()
+        end
+        return hint_pid ~= nil
+    end, 5)
+    os.execute(string.format("kill -9 %d", hint_pid or 0))
+    wait(function() return not opening.hinting end, 30)
+    check(opening.hint_text ~= nil and not opening.engine_player:usable(), "the small engine gives the hint once Stockfish is gone: " .. tostring(opening.hint_text))
+    UIManager:close(opening.screen)
+    check(engines_running() == 0, "no Stockfish left after the game: " .. engines_running())
+    -- The opponent: 8 levels where Stockfish runs, its moves, the kind of engine kept with the game.
+    check(#home:level_tiles(function() end) == 8, "with Stockfish, the offline games have 8 levels")
+    local versus = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "black" })
+    check(versus.thinking and versus.screen.state.top.name == string.format(s.offline_level, 8, 8), "Stockfish plays white at level 8 of 8: " .. tostring(versus.screen.state.top.name))
+    wait(function() return not versus.thinking end, 15)
+    local function count_moves(text)
+        local n = 0
+        for _ in text:gmatch("%S+") do n = n + 1 end
+        return n
+    end
+    check(count_moves(versus.moves) == 1 and versus.engine_player and versus.engine_player.engine ~= nil, "Stockfish made the first move: " .. versus.moves)
+    local saved_game = home.settings:readSetting("offline_game")
+    check(saved_game and saved_game.engine == "stockfish" and saved_game.level == 8, "the game is kept with its engine")
+    -- A move taken back while it thinks: its answer never lands, nor counts for the next search.
+    local reply = Chess.legal_moves(versus.position)[1]
+    versus:on_square(reply.from)
+    versus:on_square(Chess.target_square(versus.position, reply))
+    check(versus.thinking, "Stockfish thinks after the reader's move")
+    versus:on_button("undo")
+    check(count_moves(versus.moves) == 1 and not versus.thinking, "the dropped search plays nothing: " .. versus.moves)
+    -- At once, with the dropped search still answering: the next move must get its own answer.
+    reply = Chess.legal_moves(versus.position)[2]
+    versus:on_square(reply.from)
+    versus:on_square(Chess.target_square(versus.position, reply))
+    wait(function() return not versus.thinking end, 15)
+    check(count_moves(versus.moves) == 3, "the next search answers its own position: " .. versus.moves)
+    -- Stockfish gone in the middle of its turn: the small engine goes on, at the closest of its levels, and says so.
+    reply = Chess.legal_moves(versus.position)[1]
+    versus:on_square(reply.from)
+    versus:on_square(Chess.target_square(versus.position, reply))
+    local file = io.open(versus.engine_player.engine.pid_path, "rb")
+    local opponent_pid = file and tonumber(file:read("*a"))
+    if file then
+        file:close()
+    end
+    os.execute(string.format("kill -9 %d", opponent_pid or 0))
+    wait(function() return not versus.thinking end, 30)
+    check(count_moves(versus.moves) == 5 and versus.engine_kind == nil and versus.level == 4, "the small engine took over at level 4: " .. versus.moves)
+    check(notices[#notices] == string.format(s.engine_fallback, 4, 4), "the reader is told: " .. tostring(notices[#notices]))
+    check(home.settings:readSetting("offline_game").engine == nil, "and the game is kept with it")
+    UIManager:close(versus.screen)
+    check(engines_running() == 0, "no Stockfish left after the game: " .. engines_running())
+    home.settings:delSetting("offline_game")
+    -- In practice, a chapter of mate against the engine: the hint from Stockfish, and none left after.
+    local PracticeScreen = require("ink_knight/ui/practice_screen")
+    local sections = require("ink_knight/data/practice")
+    local practice = PracticeScreen.open(home, sections[1].studies[1], 1)
+    practice.screen.on_button("hint")
+    wait(function() return not practice.hinting end, 15)
+    check(practice.hint_move ~= nil and practice.engine_player and practice.engine_player.engine ~= nil, "the practice hint comes from Stockfish")
+    UIManager:close(practice.screen)
+    check(engines_running() == 0, "no Stockfish left after the practice: " .. engines_running())
+    -- The long endgames, judged by Stockfish: in the lists where it runs, a good move answered, a blunder failed with the better move named.
+    local Practice = require("ink_knight/practice")
+    local engine_chapters = 0
+    for _, section in ipairs(home:practice_sections()) do
+        for _, study in ipairs(section.studies) do
+            for _, chapter in ipairs(study.chapters) do
+                engine_chapters = engine_chapters + (chapter.engine and 1 or 0)
+            end
+        end
+    end
+    check(engine_chapters == 8, "with Stockfish, the 8 long endgames are in the practice: " .. engine_chapters)
+    local _, back_rank_study, back_rank_index = Practice.find(sections, "MhmGZ37h")
+    local endgame = PracticeScreen.open(home, back_rank_study, back_rank_index)
+    wait(function() return endgame.before and endgame.before.done end, 15)
+    check(endgame.before and endgame.before.best and endgame.before.score, "Stockfish looks at the position while the reader thinks")
+    endgame:play_goal(endgame.before.best)
+    check(endgame.thinking, "the move is being judged")
+    wait(function() return not endgame.thinking end, 20)
+    check(endgame.state.status == "playing" and endgame.state.played == 1 and Practice.is_player_turn(endgame.state), "a good move is answered: " .. tostring(endgame.state.status) .. " " .. tostring(endgame.state.reason))
+    endgame.screen:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/practice_engine_chapter.png")
+    -- A hint and a move before the look at the position is done: both wait for it instead of starting it again.
+    endgame:start(back_rank_index)
+    endgame.screen.on_button("hint")
+    check(endgame.hinting and not endgame.before.done, "the hint waits for the look under way")
+    wait(function() return not endgame.hinting end, 15)
+    check(endgame.hint_move ~= nil, "the hint is the best move of the look")
+    endgame:start(back_rank_index)
+    endgame:play_goal(Chess.parse_uci(endgame.state.position, "a8a7"))
+    wait(function() return not endgame.thinking end, 20)
+    check(endgame.state.played == 1 and (endgame.state.status ~= "playing" or Practice.is_player_turn(endgame.state)), "a move before the look is judged and answered: " .. tostring(endgame.state.status) .. " " .. tostring(endgame.state.reason))
+    -- Again, with the rook given away.
+    endgame:start(back_rank_index)
+    wait(function() return endgame.before and endgame.before.done end, 15)
+    endgame:play_goal(Chess.parse_uci(endgame.state.position, "a8a2"))
+    wait(function() return not endgame.thinking end, 20)
+    check(endgame.state.status == "failed" and endgame.state.reason == "mistake" and endgame.state.better ~= nil, "giving the rook away fails, naming the better move: " .. tostring(endgame.state.reason) .. " " .. tostring(endgame.state.better))
+    -- Stockfish gone while it judges: the chapter ends, saying so.
+    endgame:start(back_rank_index)
+    wait(function() return endgame.before and endgame.before.done end, 15)
+    local file = io.open(endgame.engine_player.engine.pid_path, "rb")
+    local judge_pid = file and tonumber(file:read("*a"))
+    if file then
+        file:close()
+    end
+    os.execute(string.format("kill -9 %d", judge_pid or 0))
+    endgame:play_goal(Chess.parse_uci(endgame.state.position, "a8a7"))
+    wait(function() return not endgame.thinking end, 20)
+    check(endgame.state.status == "failed" and endgame.state.reason == "engine" and endgame.screen.state.status == s.practice_failed_engine, "without Stockfish the chapter ends, saying so: " .. tostring(endgame.screen.state.status))
+    UIManager:close(endgame.screen)
+    -- One where the opponent starts: its first move comes from Stockfish.
+    local _, queen_study, queen_index = Practice.find(sections, "RB7tMeRo")
+    local queen = PracticeScreen.open(home, queen_study, queen_index)
+    wait(function() return not queen.thinking end, 20)
+    check(queen.state.position.turn == "b" and queen.state.status == "playing", "Stockfish played white's first move")
+    UIManager:close(queen.screen)
+    check(engines_running() == 0, "no Stockfish left after the endgames: " .. engines_running())
 end
 
 home.settings:delSetting("two_player_game")

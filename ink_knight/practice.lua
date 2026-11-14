@@ -4,9 +4,10 @@
 -- judged by an evaluation (reach an advantage or equalize in so many moves) follows a tree worked out with Stockfish
 -- when the data is built (ink_knight/data/practice_trees.lua): the reader's moves it accepts, with the opponent's
 -- answer to each. One to hold the draw in king and pawn against king is judged exactly, with the table of that
--- ending (ink_knight/kpk.lua). A guided chapter is a line to find move by move, with the author's comments; the
+-- ending (ink_knight/kpk.lua). The long endgames to hold the draw or equalize (engine = true) are judged move by move by the plugin's Stockfish, as the app judges them, and only where it runs. A guided chapter is a line to find move by move, with the author's comments; the
 -- commented game is only shown. No KOReader here, so the tests can use it.
 local Chess = require("ink_knight/chess")
+local EngineReview = require("ink_knight/engine_review")
 local Kpk = require("ink_knight/kpk")
 
 local Practice = {}
@@ -276,6 +277,9 @@ function Practice.play(state, chapter, move)
         end
         return "over"
     end
+    if by_player and chapter.engine then
+        return "engine_judge"
+    end
     if by_player and chapter.goal == "draw_in" then
         if strong_wins(state.position, strong_side(state)) then
             local best = drawing_moves({ position = before, player = state.player })[1]
@@ -308,6 +312,56 @@ function Practice.play(state, chapter, move)
         return "reply"
     end
     return "move"
+end
+
+-- The judgment of the app for the long endgames (practice_goal.dart and practice_comment.dart of lichess-org/mobile, from lila's studyPracticeSuccess.ts) -----------------------------------------------------------------------------
+
+-- An evaluation counts from this depth, as in the app; a shallower one judges nothing.
+Practice.SOLID_DEPTH = 15
+-- The shifts of winning chances (from -1 to 1) of the app's verdicts, and the chances past which a position is won.
+local GOOD_SHIFT, INACCURACY_SHIFT, MISTAKE_SHIFT, WINNING = 0.05, 0.11, 0.24, 0.5
+
+-- "good", "not_best", "inaccuracy", "mistake" or "blunder", from the reader's chances before and after the move and whether the engine had a better one.
+function Practice.verdict(before_chances, after_chances, has_better_move)
+    local shift = before_chances - after_chances
+    if not has_better_move or shift < GOOD_SHIFT then
+        return "good"
+    elseif before_chances >= WINNING and after_chances >= WINNING then
+        return "not_best"
+    elseif shift < INACCURACY_SHIFT then
+        return "inaccuracy"
+    elseif shift < MISTAKE_SHIFT then
+        return "mistake"
+    end
+    return "blunder"
+end
+
+-- Whether a score is roughly level (no mate, less than a pawn and a half), or nil without one.
+local function drawish(score)
+    if not score then
+        return nil
+    end
+    return score.mate == nil and math.abs(score.cp or 0) < 150
+end
+
+-- After a move of the reader in a long endgame. before and after: the scores of the positions before and after the move, for the reader ({ cp } or { mate }), each nil when the engine did not reach SOLID_DEPTH; better: the engine's move before, in the usual notation, when it was not the one played. Ends the chapter, or returns "reply" for the engine's answer.
+function Practice.judge_engine(state, chapter, before, after, better)
+    if before and after then
+        local verdict = Practice.verdict(EngineReview.score_chances(before), EngineReview.score_chances(after), better ~= nil)
+        if verdict == "mistake" or verdict == "blunder" then
+            state.status, state.reason, state.better = "failed", "mistake", better
+            return "over"
+        end
+    end
+    local level = drawish(after)
+    if level == false or state.played > chapter.moves then
+        state.status, state.reason = "failed", "short"
+        return "over"
+    elseif level and state.played >= chapter.moves then
+        state.status = "solved"
+        return "over"
+    end
+    return "reply"
 end
 
 -- After a promotion: score is the engine's for the side to move, nil when its search found nothing, which is let

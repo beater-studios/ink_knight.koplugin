@@ -133,6 +133,17 @@ check(practice.state.status == "failed" and practice.screen.state.status == stri
 UIManager:close(practice.screen)
 run_queue()
 
+-- Without the plugin's Stockfish, the long endgames that need it are not in the lists.
+local listed_engine_chapters = 0
+for _, section in ipairs(home:practice_sections()) do
+    for _, listed_study in ipairs(section.studies) do
+        for _, chapter in ipairs(listed_study.chapters) do
+            listed_engine_chapters = listed_engine_chapters + (chapter.engine and 1 or 0)
+        end
+    end
+end
+check(listed_engine_chapters == 0, "without Stockfish, the long endgames are left out: " .. listed_engine_chapters)
+
 -- Against the engine: a hint, then a move, and the engine's answer.
 local mate_chapter_study = sections[1].studies[1]
 practice = PracticeScreen.open(home, mate_chapter_study, 1)

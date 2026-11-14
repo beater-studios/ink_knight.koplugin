@@ -177,16 +177,12 @@ function EditorScreen:done()
     self:save()
     local fen = Editor.fen(self.position)
     local OfflineGame = require("ink_knight/ui/offline_game")
-    local items = {}
-    for level = 1, 4 do
-        items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
-            app:ask_color(function(color)
-                UIManager:close(self.screen)
-                app:close_pages()
-                OfflineGame.open(app, { level = level, color_choice = color, initial_fen = fen })
-            end)
-        end }
-    end
+    local items = app:level_tiles(function(opts)
+        UIManager:close(self.screen)
+        app:close_pages()
+        opts.initial_fen = fen
+        OfflineGame.open(app, opts)
+    end)
     local rows = {
         { kind = "section", text = s.editor_vs_engine },
         { kind = "tiles", columns = 4, items = items },

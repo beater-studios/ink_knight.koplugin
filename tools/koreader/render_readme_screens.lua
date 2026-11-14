@@ -96,7 +96,7 @@ for _, language in ipairs({ "en", "pt" }) do
         position = hint_position, last_move = select(2, Chess.from_moves(nil, "e2e4 e7e5 g1f3 b8c6")),
         selected = bishop,
         targets = { [Chess.square_from_name("b5")] = Chess.targets_from(hint_position, bishop)[Chess.square_from_name("b5")] },
-        top = { name = string.format(s.offline_level, 2) },
+        top = { name = string.format(s.offline_level, 2, 4) },
         bottom = { name = s.you },
         status = string.format(s.hint_status, "Bb5"),
         buttons = { { id = "back", label = s.back }, { id = "undo", label = s.undo }, { id = "hint", label = s.hint }, { id = "moves", label = s.moves }, { id = "resign", label = s.resign } },

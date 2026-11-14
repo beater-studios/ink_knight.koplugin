@@ -43,8 +43,16 @@ test("the lessons: the chapters the plugin can judge, in their studies", functio
         kinds[chapter.kind] = (kinds[chapter.kind] or 0) + 1
     end)
     eq(#sections, 5)
-    -- 165 judged by the engine or the rules, 103 by a tree of moves and 3 by the table of king and pawn.
-    eq(kinds.goal, 271)
+    -- 165 judged by the engine or the rules, 103 by a tree of moves, 3 by the table of king and pawn and 8 by Stockfish on the device.
+    eq(kinds.goal, 279)
+    local by_stockfish = 0
+    each_chapter(function(chapter)
+        if chapter.engine then
+            by_stockfish = by_stockfish + 1
+            assert(chapter.goal == "draw_in" or chapter.goal == "equal_in", chapter.id .. ": only the long endgames need Stockfish")
+        end
+    end)
+    eq(by_stockfish, 8)
     eq(kinds.guided, 36)
     eq(kinds.lesson, 1)
     -- Every study has chapters the plugin can judge.
@@ -295,7 +303,7 @@ test("every tree: legal moves, the reader to move, a way to the goal from every 
         end
     end
     each_chapter(function(chapter)
-        if Practice.TREE_GOALS[chapter.goal] then
+        if Practice.TREE_GOALS[chapter.goal] and not chapter.engine then
             local tree = assert(trees[chapter.id], chapter.id .. " has no tree")
             local position = Chess.parse_fen(chapter.fen)
             if tree.first then
@@ -332,7 +340,7 @@ end
 
 test("the best moves of every tree solve its chapter, within its moves", function()
     each_chapter(function(chapter)
-        if Practice.TREE_GOALS[chapter.goal] then
+        if Practice.TREE_GOALS[chapter.goal] and not chapter.engine then
             local state = play_scripted(chapter, function(s) return Practice.best_move(s, chapter) end)
             if state.status ~= "solved" then
                 error(chapter.id .. ": " .. tostring(state.reason))
@@ -422,7 +430,7 @@ end)
 test("holding the draw in king and pawn: the drawing moves solve it, a losing one fails it", function()
     local count = 0
     each_chapter(function(chapter)
-        if chapter.goal == "draw_in" then
+        if chapter.goal == "draw_in" and not chapter.engine then
             count = count + 1
             local state = play_scripted(chapter, function(s) return Practice.best_move(s, chapter) end)
             eq(state.status, "solved")
@@ -444,6 +452,33 @@ test("holding the draw in king and pawn: the drawing moves solve it, a losing on
         end
     end)
     eq(count, 3)
+end)
+
+test("the long endgames are judged as the app judges them: a mistake fails, a level score at the end solves", function()
+    eq(Practice.verdict(0.0, -0.03, true), "good", "a small loss")
+    eq(Practice.verdict(0.0, -0.08, true), "inaccuracy")
+    eq(Practice.verdict(0.0, -0.2, true), "mistake")
+    eq(Practice.verdict(0.0, -0.5, true), "blunder")
+    eq(Practice.verdict(0.0, -0.5, false), "good", "the engine's own move is never a mistake")
+    eq(Practice.verdict(0.8, 0.6, true), "not_best", "still winning")
+    local chapter = { kind = "goal", goal = "equal_in", moves = 2, engine = true, fen = "8/8/8/8/8/8/8/8 w - - 0 1", color = "w" }
+    local state = { played = 1, status = "playing" }
+    eq(Practice.judge_engine(state, chapter, { cp = 0 }, { cp = -20 }, "Rb1"), "reply", "level, with moves to go")
+    state.played = 2
+    eq(Practice.judge_engine(state, chapter, { cp = 0 }, { cp = 10 }, nil), "over")
+    eq(state.status, "solved", "level after the moves asked")
+    state = { played = 1, status = "playing" }
+    Practice.judge_engine(state, chapter, { cp = 0 }, { cp = -400 }, "Ra8")
+    eq(state.status .. " " .. state.reason .. " " .. tostring(state.better), "failed mistake Ra8", "a blunder names the better move")
+    state = { played = 1, status = "playing" }
+    Practice.judge_engine(state, chapter, nil, { cp = -200 }, nil)
+    eq(state.status .. " " .. state.reason, "failed short", "a score past a pawn and a half is no longer level")
+    state = { played = 2, status = "playing" }
+    eq(Practice.judge_engine(state, chapter, nil, nil, nil), "reply", "without a deep enough score the game goes on")
+    -- A move of the reader in such a chapter is handed to the engine.
+    local rook = { kind = "goal", goal = "equal_in", moves = 10, engine = true, fen = "R7/8/8/6p1/8/7k/1r6/6K1 w - - 0 1", color = "w" }
+    local start = Practice.start_goal(rook)
+    eq(Practice.play(start, rook, Chess.parse_uci(start.position, "a8a3")), "engine_judge")
 end)
 
 local function find(id)

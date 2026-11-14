@@ -118,11 +118,12 @@ end
 
 -- Starts a search of the position after moves (UCI, separated by spaces) from fen, for so many milliseconds; with the
 -- moves Stockfish sees the repetitions. poll() gives the result.
-function Stockfish:search(fen, milliseconds, moves)
+-- depth, optional: a limit of depth besides the time, for the weaker levels of the opponent; whichever comes first ends the search.
+function Stockfish:search(fen, milliseconds, moves, depth)
     self.result = { depth = 0 }
     self.searching = true
     self:send("position fen " .. fen .. (moves and moves ~= "" and (" moves " .. moves) or ""))
-    self:send("go movetime " .. math.floor(milliseconds))
+    self:send("go " .. (depth and ("depth " .. math.floor(depth) .. " ") or "") .. "movetime " .. math.floor(milliseconds))
 end
 
 -- Whether the process still runs, asked of the system only when a search takes too long.
@@ -141,7 +142,7 @@ end
 
 -- Chess960, for a game that is one: castling then goes as the king taking its rook, as the plugin writes it.
 function Stockfish:set_chess960(on)
-    self:send("setoption name UCI_Chess960 value " .. (on and "true" or "false"))
+    self:set_option("UCI_Chess960", on and "true" or "false")
 end
 
 -- What a line of "info" says about the best line: depth, score (centipawns or mate, for the side to move) and the
@@ -165,6 +166,24 @@ function Stockfish.read_info(line, into)
     return true
 end
 
+-- Drops the search under way: Stockfish stops, and the bestmove it still sends for it is skipped, with what came before it. Not a readyok after the stop: Stockfish answers isready at once, while the search it stopped answers later, so the readyok can come first.
+function Stockfish:cancel()
+    if self.searching then
+        self:send("stop")
+        self.searching = false
+        self.dropped = (self.dropped or 0) + 1
+    end
+end
+
+-- A UCI option, such as "Skill Level", sent only when it changes.
+function Stockfish:set_option(name, value)
+    self.options = self.options or {}
+    if self.options[name] ~= value then
+        self.options[name] = value
+        self:send("setoption name " .. name .. " value " .. tostring(value))
+    end
+end
+
 -- nil while it thinks; then { best, cp or mate, depth, pv } for the side to move, best being nil when the position has
 -- no move.
 function Stockfish:poll()
@@ -176,6 +195,10 @@ function Stockfish:poll()
     for _, line in ipairs(self:read_lines()) do
         if line == Stockfish.ENDED then
             self.ended = true
+        elseif (self.dropped or 0) > 0 then
+            if line:match("^bestmove ") then
+                self.dropped = self.dropped - 1
+            end
         elseif not answer and not Stockfish.read_info(line, self.result) then
             local best = line:match("^bestmove (%S+)")
             if best then

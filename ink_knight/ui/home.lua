@@ -29,6 +29,9 @@ local I18n = require("ink_knight/i18n")
 local LiveGame = require("ink_knight/ui/live_game")
 local Net = require("ink_knight/net")
 local OfflineGame = require("ink_knight/ui/offline_game")
+local Engine = require("ink_knight/engine")
+local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+local EnginePlayer = require("ink_knight/ui/engine_player")
 local Page = require("ink_knight/ui/page")
 local Pgn = require("ink_knight/pgn")
 local Players = require("ink_knight/ui/players")
@@ -1538,16 +1541,10 @@ function Home:offline_rows(page)
         end }
     end
     rows[#rows + 1] = { kind = "section", text = s.new_game }
-    local items = {}
-    for level = 1, 4 do
-        items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
-            self:ask_color(function(color)
-                self:close_pages()
-                OfflineGame.open(self, { level = level, color_choice = color })
-            end)
-        end }
-    end
-    rows[#rows + 1] = { kind = "tiles", columns = 4, items = items }
+    rows[#rows + 1] = { kind = "tiles", columns = 4, items = self:level_tiles(function(opts)
+        self:close_pages()
+        OfflineGame.open(self, opts)
+    end) }
     rows[#rows + 1] = { text = s.two_players, detail = s.two_players_detail, callback = function()
         self:choose_clock(s.two_players, true, function(preset)
             self:close_pages()
@@ -1625,6 +1622,20 @@ function Home.draw_chess960()
     return math.random(0, 959)
 end
 
+-- A tile for each level of the computer, each asking the color and then calling start with { level, engine, color_choice }: the 8 of the plugin's Stockfish where it runs, the 4 of the small engine elsewhere.
+function Home:level_tiles(start)
+    local stockfish = EngineAnalysis.available(self)
+    local items = {}
+    for level = 1, stockfish and #EnginePlayer.LEVELS or #Engine.LEVELS do
+        items[#items + 1] = { text = tostring(level), detail = self.strings.level_short, callback = function()
+            self:ask_color(function(color)
+                start({ level = level, engine = stockfish and "stockfish" or nil, color_choice = color })
+            end)
+        end }
+    end
+    return items
+end
+
 function Home:chess960_menu(number)
     local s = self.strings
     local chosen = number
@@ -1636,12 +1647,7 @@ function Home:chess960_menu(number)
     end
     page = self:open_page{ title = s.chess960, build = function()
         local rank = Chess.chess960_fen(chosen):match("/(%a+) w ")
-        local items = {}
-        for level = 1, 4 do
-            items[#items + 1] = { text = tostring(level), detail = s.level_short, callback = function()
-                self:ask_color(function(color) start({ level = level, color_choice = color }) end)
-            end }
-        end
+        local items = self:level_tiles(start)
         return {
             { kind = "metric", text = s.chess960_position, detail = s.chess960_position_detail, value = tostring(chosen) },
             { kind = "drawing", height = 84, rank = rank, draw = function(bb, x, y, w, h)
@@ -1834,8 +1840,30 @@ function Home:practice_texts()
     return self.practice_text_cache.texts
 end
 
-local function practice_sections()
-    return require("ink_knight/data/practice")
+-- The practice lessons, without the long endgames that only the plugin's Stockfish can judge where it does not run.
+function Home:practice_sections()
+    local sections = require("ink_knight/data/practice")
+    if EngineAnalysis.available(self) then
+        return sections
+    end
+    if not self.practice_without_engine then
+        local list = {}
+        for _, section in ipairs(sections) do
+            local studies = {}
+            for _, study in ipairs(section.studies) do
+                local chapters = {}
+                for _, chapter in ipairs(study.chapters) do
+                    if not chapter.engine then
+                        chapters[#chapters + 1] = chapter
+                    end
+                end
+                studies[#studies + 1] = setmetatable({ chapters = chapters }, { __index = study })
+            end
+            list[#list + 1] = setmetatable({ studies = studies }, { __index = section })
+        end
+        self.practice_without_engine = list
+    end
+    return self.practice_without_engine
 end
 
 function Home:practice_progress()
@@ -1851,7 +1879,7 @@ function Home:practice_record(id, moves)
 end
 
 function Home:practice_percent()
-    return Practice.percent(practice_sections(), self:practice_progress())
+    return Practice.percent(self:practice_sections(), self:practice_progress())
 end
 
 function Home:practice_menu()
@@ -1859,7 +1887,7 @@ function Home:practice_menu()
     self:open_page{ title = t.practice, build = function()
         local progress = self:practice_progress()
         local rows = {}
-        for _, section in ipairs(practice_sections()) do
+        for _, section in ipairs(self:practice_sections()) do
             rows[#rows + 1] = { kind = "section", text = t[section.name] }
             for _, study in ipairs(section.studies) do
                 local done = Practice.count_done(study, progress)
@@ -1903,14 +1931,14 @@ end
 function Home:practice_study_done(study)
     local s, t = self.strings, self:learn_texts()
     local all = {}
-    for _, section in ipairs(practice_sections()) do
+    for _, section in ipairs(self:practice_sections()) do
         for _, item in ipairs(section.studies) do
             all[#all + 1] = item
         end
     end
     local following
     for index, item in ipairs(all) do
-        if item == study then
+        if item.id == study.id then
             following = all[index + 1]
             break
         end

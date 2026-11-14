@@ -25,6 +25,11 @@ function EngineReview.chances(cp)
     return 2 / (1 + math.exp(-0.00368208 * cp)) - 1
 end
 
+-- The winning chances of a score { cp } or { mate }, for the side it is for.
+function EngineReview.score_chances(score)
+    return EngineReview.chances(centipawns(score))
+end
+
 -- The score of a position after its game ended, for the side to move: mated ({ mate = 0 }), or a draw.
 function EngineReview.final_score(position_ending)
     if position_ending == "mate" then

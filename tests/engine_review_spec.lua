@@ -95,5 +95,19 @@ test("the end of the engine is read in the same batch as its answer, and after a
     os.remove(path)
 end)
 
+test("a stopped search never answers for the next one, even when Stockfish says readyok before its bestmove", function()
+    local path = os.tmpname()
+    local file = assert(io.open(path, "wb"))
+    file:write("info depth 3 score cp 5 pv a2a3\nreadyok\nbestmove a2a3\ninfo depth 9 score cp 30 pv e2e4\nbestmove e2e4\n")
+    file:close()
+    local engine = setmetatable({ out_path = path, offset = 0, partial = "", searching = true, result = { depth = 0 }, pipe = nil }, Stockfish)
+    engine.searching, engine.dropped = true, 1
+    local result = engine:poll()
+    eq(result and result.best, "e2e4", "the answer of the search asked")
+    eq(result.depth, 9)
+    eq(engine.dropped, 0)
+    os.remove(path)
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

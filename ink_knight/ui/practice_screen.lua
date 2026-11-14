@@ -8,6 +8,7 @@ local socket = require("socket")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Chess = require("ink_knight/chess")
 local Engine = require("ink_knight/engine")
+local EnginePlayer = require("ink_knight/ui/engine_player")
 local Practice = require("ink_knight/practice")
 local Sleep = require("ink_knight/sleep")
 
@@ -18,6 +19,8 @@ PracticeScreen.__index = PracticeScreen
 -- and a wrong move with nothing to read is taken back after a moment.
 local OPPONENT_DELAY, FIRST_MOVE_DELAY, TAKE_BACK_DELAY = 1, 0.3, 0.8
 local SLICE_SECONDS, SLICE_PAUSE = 0.04, 0.02
+-- How long Stockfish looks for a hint, where it runs.
+PracticeScreen.HINT_MILLISECONDS = 1500
 
 -- study: one of ink_knight/data/practice.lua. opts.on_study_done(study): when the reader goes on from its last
 -- chapter. For a study of Lichess instead of the practice: opts.title, its name; opts.load(index), which reads the
@@ -33,6 +36,9 @@ function PracticeScreen.open(app, study, index, opts)
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
             self.is_closed = true
+            if self.engine_player then
+                self.engine_player:close()
+            end
             if app.reload_pages then
                 app:reload_pages()
             end
@@ -48,6 +54,9 @@ end
 function PracticeScreen:start(index, what, again)
     Sleep.unschedule(self.screen, self.later_callback)
     self.search, self.thinking, self.hinting, self.pending = nil, false, false, nil
+    if self.engine_player then
+        self.engine_player:cancel()
+    end
     self.index = index
     if self.opts.load then
         local chapter, texts = self.opts.load(index)
@@ -62,7 +71,13 @@ function PracticeScreen:start(index, what, again)
     local chapter = self.chapter
     if chapter.kind == "goal" then
         self.state = Practice.start_goal(chapter)
-        if not Practice.is_player_turn(self.state) then
+        if chapter.engine then
+            if Practice.is_player_turn(self.state) then
+                self:look_ahead()
+            else
+                self:engine_chapter_reply()
+            end
+        elseif not Practice.is_player_turn(self.state) then
             self:engine_reply()
         end
     else
@@ -380,6 +395,10 @@ end
 function PracticeScreen:play_goal(move)
     local state, chapter = self.state, self.chapter
     self.selected, self.targets, self.hint_move = nil, nil, nil
+    if chapter.engine then
+        self:play_engine_chapter(move)
+        return
+    end
     local next_step = Practice.play(state, chapter, move)
     if next_step == "judge" then
         self.thinking = true
@@ -407,7 +426,22 @@ function PracticeScreen:hint()
     if not Practice.is_player_turn(self.state) or self.thinking or self.hinting then
         return
     end
-    local best = Practice.SCRIPTED_GOALS[self.chapter.goal] and Practice.best_move(self.state, self.chapter)
+    if self.chapter.engine and self:stockfish() then
+        -- The best move of the look at the position, waited for when it is under way.
+        local state, position = self.state, self.state.position
+        self.hinting = true
+        self.selected, self.targets, self.hint_move = nil, nil, nil
+        self:render()
+        self:when_looked(position, function(look)
+            self.hinting = false
+            if self.state == state and state.position == position and look.best then
+                self.hint_move = look.best
+            end
+            self:render()
+        end)
+        return
+    end
+    local best = Practice.SCRIPTED_GOALS[self.chapter.goal] and not self.chapter.engine and Practice.best_move(self.state, self.chapter)
     if best then
         self.selected, self.targets, self.state.notice = nil, nil, nil
         self.hint_move = best
@@ -417,14 +451,195 @@ function PracticeScreen:hint()
     self.hinting = true
     self.selected, self.targets, self.hint_move = nil, nil, nil
     self:render()
-    local state = self.state
-    self:run_engine(Engine.HINT, function(result)
+    local state, position = self.state, self.state.position
+    local function show(move)
         self.hinting = false
-        if state == self.state and result and result.best then
-            self.hint_move = result.best
+        if state == self.state and state.position == position and move then
+            self.hint_move = move
         end
         self:render()
+    end
+    local function small_engine()
+        self:run_engine(Engine.HINT, function(result)
+            show(result and result.best)
+        end)
+    end
+    local player = self:stockfish()
+    if not player then
+        small_engine()
+        return
+    end
+    player:best_move({ fen = Chess.to_fen(position), milliseconds = PracticeScreen.HINT_MILLISECONDS }, function(move)
+        if move or player:usable() then
+            show(move)
+        else
+            small_engine()
+        end
     end)
+end
+
+-- The long endgames, judged by Stockfish as the app judges them --------------------------------------------------
+
+-- Each look at a position goes to the depth the app needs to judge, within this time at most.
+PracticeScreen.JUDGE_MILLISECONDS = 6000
+
+-- A score of Stockfish, which is for the side to move in position, as one for the reader, or nil when the search did not reach the depth the judgment needs.
+local function reader_score(result, position, player)
+    if not result or (result.depth or 0) < Practice.SOLID_DEPTH or not (result.cp or result.mate) then
+        return nil
+    end
+    local sign = position.turn == player and 1 or -1
+    return { cp = result.cp and sign * result.cp, mate = result.mate and sign * result.mate }
+end
+
+-- milliseconds: more than JUDGE_MILLISECONDS when asked again for a depth not reached.
+function PracticeScreen:judge_search(position, on_done, milliseconds)
+    local player = self:stockfish()
+    if not player then
+        on_done(nil, nil)
+        return
+    end
+    player:best_move({ fen = Chess.to_fen(position), milliseconds = milliseconds or PracticeScreen.JUDGE_MILLISECONDS, depth = Practice.SOLID_DEPTH }, on_done)
+end
+
+-- Stockfish stopped answering: these chapters cannot go on without it.
+function PracticeScreen:engine_gone(state)
+    if self.state ~= state then
+        return
+    end
+    self.thinking, self.hinting = false, false
+    state.status, state.reason = "failed", "engine"
+    self:render()
+end
+
+-- Looks at the position the reader is to move in while they think: the reader's move is judged against it and a hint is its best move. What needs it before it is done waits for it (when_looked), so the search is never thrown away and started again.
+function PracticeScreen:look_ahead()
+    local state = self.state
+    local look = { position = state.position, waiting = {} }
+    self.before = look
+    self:judge_search(look.position, function(move, result)
+        if self.state ~= state or self.before ~= look then
+            return
+        end
+        look.done, look.best, look.failed = true, move, result == nil
+        look.score = reader_score(result, look.position, state.player)
+        for _, callback in ipairs(look.waiting) do
+            callback(look)
+        end
+        look.waiting = {}
+    end)
+end
+
+-- Calls on_look(look) with the look at position once there is one: at once when done, after it when under way, or after a search of its own when none was asked.
+function PracticeScreen:when_looked(position, on_look)
+    local look = self.before
+    if look and look.position == position then
+        if look.done then
+            on_look(look)
+        else
+            look.waiting[#look.waiting + 1] = on_look
+        end
+        return
+    end
+    local state = self.state
+    self:judge_search(position, function(move, result)
+        if self.state == state then
+            on_look({ position = position, done = true, best = move, failed = result == nil, score = reader_score(result, position, state.player) })
+        end
+    end)
+end
+
+-- The opponent's move in a long endgame, then the look at the reader's position.
+function PracticeScreen:engine_chapter_reply()
+    local state = self.state
+    self.thinking = true
+    self:judge_search(state.position, function(move)
+        if self.state ~= state then
+            return
+        end
+        if not move then
+            self:engine_gone(state)
+            return
+        end
+        self.thinking = false
+        Practice.play(state, self.chapter, move)
+        self:finish_goal()
+        self:render()
+        if Practice.is_player_turn(state) then
+            self:look_ahead()
+        end
+    end)
+end
+
+-- The reader's move in a long endgame: judged against the look at the position before it and the one after it, and answered with the best move of the latter.
+function PracticeScreen:play_engine_chapter(move)
+    local state, chapter = self.state, self.chapter
+    local before_position = state.position
+    local played = Chess.move_to_uci(move)
+    if Practice.play(state, chapter, move) ~= "engine_judge" then
+        self:finish_goal()
+        self:render()
+        return
+    end
+    self.thinking = true
+    self:render()
+    local after_position = state.position
+    local function judge(look, reply, result)
+        local better = look.best and Chess.move_to_uci(look.best) ~= played and Chess.to_san(before_position, look.best) or nil
+        local after = reader_score(result, after_position, state.player)
+        local next_step = Practice.judge_engine(state, chapter, look.score, after, better)
+        if next_step == "reply" then
+            if not reply then
+                self:engine_gone(state)
+                return
+            end
+            Practice.play(state, chapter, reply)
+            if Practice.is_player_turn(state) then
+                self:look_ahead()
+            end
+        end
+        self.thinking = false
+        self:finish_goal()
+        self:render()
+    end
+    self:when_looked(before_position, function(look)
+        if self.state ~= state then
+            return
+        end
+        if look.failed then
+            self:engine_gone(state)
+            return
+        end
+        self:judge_search(after_position, function(reply, result)
+            if self.state ~= state then
+                return
+            end
+            if not result then
+                self:engine_gone(state)
+                return
+            end
+            -- The last move asked is not let pass without a judgment for want of depth: it gets more time once.
+            if (result.depth or 0) < Practice.SOLID_DEPTH and state.played >= chapter.moves then
+                self:judge_search(after_position, function(again_reply, again)
+                    if self.state ~= state then
+                        return
+                    end
+                    if not again then
+                        self:engine_gone(state)
+                        return
+                    end
+                    judge(look, again_reply, again)
+                end, 3 * PracticeScreen.JUDGE_MILLISECONDS)
+                return
+            end
+            judge(look, reply, result)
+        end)
+    end)
+end
+
+-- The plugin's Stockfish for the hints, or nil where it does not run or stopped answering: then the small engine hints, as before.
+function PracticeScreen:stockfish()
+    return EnginePlayer.of(self, self.app, self.screen)
 end
 
 -- What a guided chapter does by itself after a change: its end is recorded, and an opponent's move or the taking

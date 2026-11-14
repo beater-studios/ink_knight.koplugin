@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- The offline opponent is Stockfish, with 8 levels like the computer of Lichess, from a beginner to the full engine. Where it does not run, the small engine plays with its 4 levels as before, and if Stockfish stops in the middle of a game the small engine goes on at the closest level, saying so. A game in progress keeps the engine it started with.
+- Hints come from Stockfish too, in the offline game and in practice, much stronger than the small engine's.
+- Practice has its last 8 chapters, long endgames of rook or queen to hold the draw or equalize for 7 to 30 moves, judged move by move by Stockfish on the device as the Lichess app judges them. They show only where Stockfish runs.
+
 ## [0.6.0]
 
 - The plugin checks once, the first time it needs Stockfish, that it runs on the device (about half a second on a Kindle), and keeps the small engine where it does not, as on e-readers where the binary cannot run. An engine that stops in the middle of an analysis is noticed at once.
