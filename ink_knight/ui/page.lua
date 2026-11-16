@@ -1,19 +1,26 @@
--- Every screen outside the board: a title with a way back, and rows laid out for a finger on e-ink.
--- Rows are plain tables, and a page that does not fit is split in sheets, turned with a swipe or the arrows.
+-- Every screen outside the board: a title in a black band with a way back, and rows laid out for a finger on
+-- e-ink, on a light gray ground. Rows that list things share a white card with the rows next to them; buttons,
+-- headings, texts and tiles stand on the ground. Rows are plain tables, and a page that does not fit is split in
+-- sheets, turned with a swipe or the buttons at the foot.
 --
--- kind nil: text, detail, value, bold, dim, callback. "game": the same, with mine for a game waiting for the reader.
+-- kind nil: text, detail, value, tag, piece, bold, dim, callback. tag: a short state in a black pill before the
+-- value, such as "Your turn". piece: a piece ("K" or "k") in a light circle before the name. "game": the same.
 -- "section": text, action_text, action. "primary" and "secondary": text, callback. "stat": text, value.
--- "toggle": text, on, on_text, off_text, callback. "text": text, center. "hero": icon, text, detail.
--- "tiles": columns, items of { text, detail, icon, callback }, and fill to grow into the room left on the page.
+-- "toggle": text, on, on_text, off_text, callback, a switch with its word inside. "text": text, center.
+-- "hero": icon, text, detail. "tiles": columns, items of { text, detail, icon, solid, callback }, and fill to
+-- grow into the room left on the page; solid draws the tile in black, as the one chosen.
 -- disabled, on a row or a tile: shown in gray, and tapping it does nothing.
 -- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide.
 -- "moves": number, white, black, white_current, black_current, white_callback, black_callback, as on a score sheet.
+-- "phase": text, a heading inside the score sheet, where a phase of the game begins.
 -- focus, on any row: the page opens on the sheet that holds it.
 -- "buttons": items of { text, callback, primary }, side by side in equal parts, the text made smaller if it does not fit.
 -- "split": text, white, draws, black, value: a move of an explorer, with a bar of how its games ended.
--- "metric": text, value, detail: a number in large, with what it is and a line below it.
--- "figures": items of { value, label }: numbers side by side over what they count, without borders.
--- "drawing": height, draw(bb, x, y, w, h): a picture of its own, the width of the page; with points and
+-- "metric": text, value, detail: a number in large, with what it is beside it.
+-- "figures": items of { value, label }: numbers side by side over what they count.
+-- "state": text, detail, piece: what the page has instead of its rows, loading, empty or failed, with fill to
+-- stand in the middle of the page; the piece tells which ("N" loading, "P" empty, "r" no connection, "b" error).
+-- "drawing": height, draw(bb, x, y, w, h): a picture of its own, the width of its card; with points and
 -- on_point(index), a tap on it gives the nearest of points + 1 marks spread evenly across it, from 0.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
@@ -26,27 +33,38 @@ local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local logger = require("logger")
 
+local Draw = require("ink_knight/ui/draw")
 local MoveText = require("ink_knight/ui/move_text")
 local Portrait = require("ink_knight/portrait")
 local Refresh = require("ink_knight/refresh")
 local Sleep = require("ink_knight/sleep")
 local StatusStrip = require("ink_knight/ui/status_strip")
+local Style = require("ink_knight/ui/style")
 
 local Screen = Device.screen
 
-local BOLD = "noto/NotoSans-Bold.ttf"
-local REGULAR = "noto/NotoSans-Regular.ttf"
+local BOLD, REGULAR = Style.BOLD, Style.REGULAR
 local SYMBOLS = "freefont/FreeSerif.ttf"
-local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
-local GRAY = Blitbuffer.Color8(0x55)
-local LINE = Blitbuffer.Color8(0xBB)
+local BLACK, WHITE = Style.BLACK, Style.WHITE
+local GRAY = Style.DARK
+local LINE = Style.LIGHT
 local DISABLED = Blitbuffer.Color8(0x99)
-local DRAW_GRAY = Blitbuffer.Color8(0xAA)
+local DRAW_GRAY = Style.LIGHT
 
-local HEADER_H, FOOTER_H, MARGIN = 66, 58, 16
+local FOOTER_H, MARGIN = 58, 16
+-- Room above a card and below it, and inside it on the sides.
+local GAP, PAD = 14, 16
+-- Above the first row, under the header.
+local TOP = 6
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
 local MAX_FILL_EXTRA = 110
-local HEIGHTS = { section = 46, primary = 80, secondary = 70, stat = 50, toggle = 64, game = 76, hero = 190, moves = 48, buttons = 80, split = 58, metric = 76, figures = 82 }
+local HEIGHTS = { section = 40, primary = 76, secondary = 72, stat = 50, toggle = 60, game = 68, hero = 190, moves = 40, phase = 34, buttons = 76, split = 56, metric = 84, figures = 82 }
+-- The rows that sit in a white card with the ones next to them; the others stand on the gray ground.
+local CARDED = { game = true, toggle = true, stat = true, metric = true, moves = true, phase = true, split = true, figures = true, drawing = true }
+
+local function carded(line)
+    return line ~= nil and (line.kind == nil or CARDED[line.kind] == true)
+end
 
 local Page = InputContainer:extend{
     name = "ink_knight_page",
@@ -64,6 +82,11 @@ local Page = InputContainer:extend{
     on_back = nil,
     -- Shown in place of the rows when they cannot be drawn.
     broken_text = nil,
+    -- "center" or "bottom" for a question or a choice in a card over the screen, which stays visible around it;
+    -- icon, the name of an icon of ui/draw.lua over the title of a question; hint, a line at the foot of a choice.
+    dialog = nil,
+    icon = nil,
+    hint = nil,
 }
 
 -- One count for every page of the plugin, since they open and close over each other with the same layout:
@@ -97,6 +120,9 @@ end
 
 -- Everything init does, after the screen is in portrait. A failure here gives the rotation back.
 function Page:setup()
+    if self.dialog then
+        self.covers_fullscreen = false
+    end
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.scale = math.min(self.width / 600, self.height / 800)
@@ -126,33 +152,58 @@ end
 function Page:text_box(row)
     return TextBoxWidget:new{
         text = row.text,
-        face = face(REGULAR, 18 * self.scale),
+        face = face(REGULAR, 17 * self.scale),
         width = self.width - 2 * self:px(MARGIN) - 2 * self:px(4),
         alignment = row.center and "center" or "left",
         fgcolor = BLACK,
-        bgcolor = WHITE,
+        bgcolor = Style.PAPER,
     }
 end
 
--- The width the name of a row has, beside its value and chevron.
+-- The card of a group of rows: where it is, how wide, and where the rows draw inside it.
+function Page:card_box()
+    local m = self:px(MARGIN)
+    local w = self.width - 2 * m - self:px(Style.CARD_SHADOW)
+    return m, w, m + self:px(PAD), w - 2 * self:px(PAD)
+end
+
+-- What a row shows before its name: a drawing of its own, or a piece in a circle.
+function Page:lead_width(row)
+    if row.preview then
+        return self:px(40) * (row.preview_columns or 1) + self:px(14)
+    elseif row.piece then
+        return self:px(48)
+    end
+    return 0
+end
+
+function Page:tag_width(row)
+    if not row.tag or row.disabled then
+        return 0
+    end
+    return Draw.text_width(row.tag, BOLD, 12 * self.scale) + self:px(20) + self:px(10)
+end
+
+-- The width the name of a row has, beside its value, its tag and its arrow.
 function Page:nav_text_width(row)
-    local chevron_w = row.callback and self:px(24) or 0
-    local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
-    return self.width - 2 * self:px(MARGIN) - chevron_w - value_w
+    local _, _, _, inner_w = self:card_box()
+    local arrow_w = row.callback and self:px(28) or 0
+    local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 220 or 150) or 0
+    return inner_w - self:lead_width(row) - arrow_w - value_w - self:tag_width(row)
 end
 
 -- The name of a row with wrap, on as many lines as it needs, with its detail below when it has one.
 function Page:wrapped_box(row, color)
     return TextBoxWidget:new{
         text = row.text,
-        face = face((row.bold and BOLD or REGULAR), 20 * self.scale),
+        face = face(BOLD, 18 * self.scale),
         width = self:nav_text_width(row),
         fgcolor = color or BLACK,
         bgcolor = WHITE,
     }
 end
 
-function Page:row_height(row)
+function Page:base_height(row)
     if row.kind == "drawing" then
         return self:px(row.height)
     elseif row.wrap and not row.kind then
@@ -167,13 +218,21 @@ function Page:row_height(row)
         return height + self:px(18)
     elseif row.kind == "tile_line" then
         return self:px(row.has_icon and 116 or (row.has_detail and 92 or 76))
+    elseif row.kind == "state" then
+        local inner = self.width - 2 * self:px(MARGIN)
+        return self:px(150) + self:box_height(row.text, BOLD, 21, inner) + (row.detail and self:box_height(row.detail, REGULAR, 16, inner) + self:px(6) or 0) + self:px(24)
     elseif HEIGHTS[row.kind] then
         return self:px(HEIGHTS[row.kind])
     end
-    return self:px(row.detail and 76 or 64)
+    return self:px(row.detail and 68 or 60)
 end
 
--- Tiles become lines, so that a sheet can end between them.
+-- A row with the room around its card: above the first row of a card that has no heading over it, and below the last.
+function Page:row_height(row)
+    return self:base_height(row) + (row.gap_before and self:px(GAP) or 0) + (row.gap_after and self:px(GAP) or 0)
+end
+
+-- Tiles become lines, so that a sheet can end between them; the rows next to each other share a card.
 local function flatten(rows)
     local lines = {}
     for _, row in ipairs(rows or {}) do
@@ -193,11 +252,16 @@ local function flatten(rows)
             lines[#lines + 1] = row
         end
     end
+    for index, line in ipairs(lines) do
+        local before, after = lines[index - 1], lines[index + 1]
+        line.gap_before = carded(line) and not carded(before) and not (before and before.kind == "section")
+        line.gap_after = carded(line) and not carded(after)
+    end
     return lines
 end
 
 function Page:content_top()
-    return self.header and self:px(HEADER_H) or 0
+    return (self.header and self:px(Style.BAND) or 0) + self:px(TOP)
 end
 
 function Page:split(lines)
@@ -273,7 +337,7 @@ end
 -- full screen is drawn again when that one closes, so it asks for nothing now.
 function Page:redraw()
     if self:is_visible() then
-        Sleep.dirty(self, function() return Page.refresh_mode(), self.dimen end)
+        Sleep.dirty(self, function() return Page.refresh_mode(), self.card_rect or self.dimen end)
     end
 end
 
@@ -313,35 +377,41 @@ function Page:add_hit(x, y, w, h, callback, keep_open)
 end
 
 function Page:paint_header(bb)
-    local height = self:px(HEADER_H)
-    local back = self:px(60)
-    self:paint_text(bb, "\226\128\185", BOLD, 40, 0, 0, back, height - self:px(6), "center")
+    local height = self:px(Style.BAND)
+    local back = self:px(52)
+    bb:paintRect(0, 0, self.width, height, BLACK)
+    Draw.icon(bb, "back", self:px(26), math.floor(height / 2), self:px(24), WHITE)
     local subtitle_w = self.subtitle and self:px(170) or 0
-    self:paint_text(bb, self.title, BOLD, 24, back, 0, self.width - back - subtitle_w - self:px(MARGIN), height, "left")
+    self:paint_text(bb, self.title, BOLD, Style.TITLE, back, 0, self.width - back - subtitle_w - self:px(MARGIN), height, "left", WHITE)
     if self.subtitle then
-        self:paint_text(bb, self.subtitle, REGULAR, 15, self.width - subtitle_w - self:px(MARGIN), 0, subtitle_w, height, "right", GRAY)
+        self:paint_text(bb, self.subtitle, REGULAR, 15, self.width - subtitle_w - self:px(MARGIN), 0, subtitle_w, height, "right", Style.PALE)
     end
-    bb:paintRect(0, height - self:px(2), self.width, self:px(2), BLACK)
     self:add_hit(0, 0, back + self:px(40), height, function() UIManager:close(self) end, true)
 end
 
+-- A piece in a light circle, before the name of a row: the side of a game, a player.
+function Page:paint_piece(bb, piece, x, y, h)
+    local radius = self:px(20)
+    local cx, cy = x + radius, y + math.floor(h / 2)
+    bb:paintCircle(cx, cy, radius, Style.PALE)
+    local BoardScreen = require("ink_knight/ui/board_screen")
+    BoardScreen.paint_piece_fit(bb, BoardScreen.piece_set, piece, cx, cy, math.floor(radius * 1.45))
+end
+
 function Page:paint_nav(bb, row, y, h)
-    local m = self:px(MARGIN)
-    local x = m
-    if row.kind == "game" and row.mine and not row.disabled then
-        bb:paintRect(0, y, self:px(8), h, BLACK)
-    end
-    local chevron_w = row.callback and self:px(24) or 0
-    local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 250 or 170) or 0
+    local _, _, x, inner_w = self:card_box()
+    local right = x + inner_w
+    local arrow_w = row.callback and self:px(28) or 0
+    local value_w = row.value and row.value ~= "" and self:px(row.wide_value and 220 or 150) or 0
+    local tag_w = self:tag_width(row)
     local text_w = self:nav_text_width(row)
     if row.preview then
         local size = self:px(40)
         row.preview(bb, x, y + math.floor((h - size) / 2), size)
-        local used = size * (row.preview_columns or 1) + self:px(14)
-        x = x + used
-        text_w = text_w - used
+    elseif row.piece then
+        self:paint_piece(bb, row.piece, x, y, h)
     end
-    local name = (row.bold or row.kind == "game") and BOLD or REGULAR
+    x = x + self:lead_width(row)
     local color = row.disabled and DISABLED or (row.dim and GRAY or BLACK)
     local detail_color = row.disabled and DISABLED or GRAY
     if row.wrap and not row.kind then
@@ -350,218 +420,422 @@ function Page:paint_nav(bb, row, y, h)
         if row.detail then
             local top = y + math.floor((h - box_h - self:px(22)) / 2)
             box:paintTo(bb, x, top)
-            self:paint_text(bb, row.detail, REGULAR, 15, x, top + box_h, text_w, self:px(22), "left", detail_color)
+            self:paint_text(bb, row.detail, REGULAR, 14, x, top + box_h, text_w, self:px(22), "left", detail_color)
         else
             box:paintTo(bb, x, y + math.floor((h - box_h) / 2))
         end
         box:free()
     elseif row.detail then
-        self:paint_text(bb, row.text, name, 20, x, y + self:px(10), text_w, self:px(32), "left", color)
-        self:paint_text(bb, row.detail, REGULAR, 15, x, y + self:px(41), text_w, self:px(24), "left", detail_color)
+        local top = y + math.floor((h - self:px(52)) / 2)
+        self:paint_text(bb, row.text, BOLD, 18, x, top, text_w, self:px(30), "left", color)
+        self:paint_text(bb, row.detail, REGULAR, 14, x, top + self:px(30), text_w, self:px(22), "left", detail_color)
     else
-        self:paint_text(bb, row.text, name, 20, x, y, text_w, h, "left", color)
+        self:paint_text(bb, row.text, BOLD, 18, x, y, text_w, h, "left", color)
     end
+    local cursor = right - arrow_w
     if value_w > 0 then
-        self:paint_text(bb, row.value, row.kind == "game" and BOLD or REGULAR, 17, self.width - m - chevron_w - value_w, y, value_w, h, "right", row.kind == "game" and color or detail_color)
+        self:paint_text(bb, row.value, REGULAR, 16, cursor - value_w, y, value_w - self:px(4), h, "right", detail_color)
+        cursor = cursor - value_w
+    end
+    if tag_w > 0 then
+        local tag_h = self:px(24)
+        Draw.tag(bb, row.tag, cursor - tag_w + self:px(4), y + math.floor((h - tag_h) / 2), tag_h, self.scale, true)
     end
     if row.callback then
-        self:paint_text(bb, "\226\128\186", BOLD, 28, self.width - m - chevron_w, y, chevron_w, h - self:px(4), "right", GRAY)
+        Draw.icon(bb, "next", right - self:px(9), y + math.floor(h / 2), self:px(18))
     end
-    bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
-    self:add_hit(0, y, self.width, h, row.callback, row.keep_open)
 end
 
 function Page:paint_tile(bb, item, x, y, w, h)
-    local color = item.disabled and DISABLED or BLACK
-    bb:paintBorder(x, y, w, h, self:px(2), item.disabled and LINE or BLACK)
+    local shadow = self:px(Style.CARD_SHADOW)
+    w, h = w - shadow, h - shadow
+    local solid = item.solid and not item.disabled
+    local color = item.disabled and DISABLED or (solid and WHITE or BLACK)
+    local detail_color = item.disabled and DISABLED or (solid and WHITE or GRAY)
+    if item.disabled then
+        local radius = self:px(Style.CARD_RADIUS)
+        bb:paintRoundedRect(x, y, w, h, WHITE, radius)
+        bb:paintBorder(x, y, w, h, self:px(2), LINE, radius)
+    else
+        Draw.card(bb, x, y, w, h, self.scale, solid)
+    end
     local pad = self:px(6)
     if item.icon then
-        -- The icon takes what the label leaves, and the two stay together in the middle of the tile.
-        local label_h = self:px(36)
-        local icon_h = math.min(h - label_h - self:px(12), self:px(96))
-        local cursor_y = y + math.floor((h - icon_h - label_h) / 2)
-        self:paint_text(bb, item.icon, SYMBOLS, math.floor(icon_h * 0.8 / self.scale), x, cursor_y, w, icon_h, "center", color)
-        self:paint_text(bb, item.text, BOLD, 18, x + pad, cursor_y + icon_h, w - 2 * pad, label_h, "center", color)
+        -- The piece in a light band on top, the name below it.
+        local label_h = self:px(40)
+        local border = math.max(1, math.floor(Style.CARD_BORDER * self.scale + 0.5))
+        local radius = math.max(1, self:px(Style.CARD_RADIUS) - border)
+        local band_h = h - label_h - border
+        if not solid and not item.disabled then
+            bb:paintRoundedRect(x + border, y + border, w - 2 * border, band_h, Style.PALE, radius)
+            bb:paintRect(x + border, y + border + band_h - radius, w - 2 * border, radius, Style.PALE)
+        end
+        local icon_h = math.min(band_h - self:px(8), self:px(96))
+        -- A chess sign fills about two thirds of its size.
+        self:paint_text(bb, item.icon, SYMBOLS, math.floor(icon_h * 1.25 / self.scale), x, y + border + math.floor((band_h - icon_h) / 2), w, icon_h, "center", color)
+        self:paint_text(bb, item.text, BOLD, 18, x + pad, y + h - label_h, w - 2 * pad, label_h, "center", color)
     elseif item.detail then
-        self:paint_text(bb, item.text, BOLD, 24, x + pad, y + self:px(10), w - 2 * pad, self:px(38), "center", color)
-        self:paint_text(bb, item.detail, REGULAR, 15, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", item.disabled and DISABLED or GRAY)
+        local top = y + math.floor((h - self:px(66)) / 2)
+        self:paint_text(bb, item.text, BOLD, 24, x + pad, top, w - 2 * pad, self:px(40), "center", color)
+        self:paint_text(bb, item.detail, REGULAR, 14, x + pad, top + self:px(40), w - 2 * pad, self:px(24), "center", detail_color)
     else
         self:paint_text(bb, item.text, BOLD, 19, x + pad, y, w - 2 * pad, h, "center", color)
     end
     self:add_hit(x, y, w, h, item.callback, item.keep_open)
 end
 
+-- A button in a pill: black when it does what the page is for, outlined otherwise, gray when it does nothing.
+function Page:paint_pill_button(bb, x, y, w, h, text, solid, disabled)
+    solid = solid and not disabled
+    if disabled then
+        bb:paintRoundedRect(x, y, w, h, WHITE, math.floor(h / 2))
+        bb:paintBorder(x, y, w, h, self:px(2), LINE, math.floor(h / 2))
+    else
+        Draw.pill(bb, x, y, w, h, self.scale, solid)
+    end
+    local pad = self:px(10)
+    local size = self:fitting_size(text, BOLD, 20, 14, w - 2 * pad)
+    self:paint_text(bb, text, BOLD, size, x + pad, y, w - 2 * pad, h, "center", solid and WHITE or (disabled and DISABLED or BLACK))
+end
+
+-- The switch of a Yes/No row: its word inside, beside the knob.
+function Page:paint_switch(bb, row, x, y, w, h)
+    local knob = math.floor(h / 2) - self:px(5)
+    if row.on then
+        Draw.pill(bb, x, y, w, h, self.scale, true)
+        bb:paintCircle(x + w - math.floor(h / 2), y + math.floor(h / 2), knob, WHITE)
+        self:paint_text(bb, row.on_text, BOLD, 13, x + self:px(6), y, w - h - self:px(4), h, "center", WHITE)
+    else
+        Draw.pill(bb, x, y, w, h, self.scale, false)
+        bb:paintCircle(x + math.floor(h / 2), y + math.floor(h / 2), knob, BLACK)
+        self:paint_text(bb, row.off_text, BOLD, 13, x + h - self:px(2), y, w - h - self:px(4), h, "center", BLACK)
+    end
+end
+
+-- A bar of how the games of a move ended, white, draws and black, as on Lichess, in a pill.
+function Page:paint_result_bar(bb, row, x, y, w, h)
+    local total = math.max(1, row.white + row.draws + row.black)
+    -- Each part ends where the games so far end, rounded once, so the parts fill the bar exactly.
+    local cursor, counted = x, 0
+    local labels = {}
+    for _, part in ipairs({ { row.white, WHITE, BLACK }, { row.draws, DRAW_GRAY, BLACK }, { row.black, BLACK, WHITE } }) do
+        counted = counted + part[1]
+        local part_w = x + math.floor(w * counted / total + 0.5) - cursor
+        if part_w > 0 then
+            bb:paintRect(cursor, y, part_w, h, part[2])
+            if part_w >= self:px(48) then
+                labels[#labels + 1] = { string.format("%d%%", math.floor(part[1] / total * 100 + 0.5)), cursor, part_w, part[3] }
+            end
+        end
+        cursor = cursor + part_w
+    end
+    local radius = math.floor(h / 2)
+    Draw.round_corners(bb, x, y, w, h, radius, WHITE)
+    bb:paintBorder(x, y, w, h, self:px(2), BLACK, radius)
+    for _, label in ipairs(labels) do
+        self:paint_text(bb, label[1], BOLD, 14, label[2], y, label[3], h, "center", label[4])
+    end
+end
+
 function Page:paint_line(bb, row, y, h)
     local m = self:px(MARGIN)
+    local _, _, cx, cw = self:card_box()
     if row.kind == "section" then
-        self:paint_text(bb, row.text, BOLD, 15, m, y + self:px(10), self.width - 2 * m - self:px(170), h - self:px(10), "left", GRAY)
+        local action_w = row.action_text and self:px(170) or 0
+        self:paint_text(bb, Draw.upper(row.text), BOLD, Style.SECTION_TEXT, m + self:px(8), y + self:px(12), self.width - 2 * m - self:px(8) - action_w, h - self:px(14), "left", GRAY)
         if row.action_text then
-            local action_w = self:px(170)
-            self:paint_text(bb, row.action_text, BOLD, 16, self.width - m - action_w, y + self:px(10), action_w, h - self:px(10), "right")
+            self:paint_text(bb, row.action_text, BOLD, 15, self.width - m - action_w, y + self:px(12), action_w, h - self:px(14), "right")
             self:add_hit(self.width - m - action_w - self:px(20), y, action_w + m + self:px(20), h, row.action, true)
         end
     elseif row.kind == "primary" or row.kind == "secondary" then
-        local gap = self:px(8)
-        local bh = h - 2 * gap
-        local solid = row.kind == "primary" and not row.disabled
-        if solid then
-            bb:paintRect(m, y + gap, self.width - 2 * m, bh, BLACK)
-        else
-            bb:paintBorder(m, y + gap, self.width - 2 * m, bh, self:px(2), row.disabled and LINE or BLACK)
-        end
-        self:paint_text(bb, row.text, BOLD, 20, m, y + gap, self.width - 2 * m, bh, "center", solid and WHITE or (row.disabled and DISABLED or BLACK))
-        self:add_hit(m, y + gap, self.width - 2 * m, bh, row.callback, row.keep_open)
+        local bh = math.min(h - self:px(16), self:px(Style.BUTTON))
+        local by = y + math.floor((h - bh) / 2)
+        self:paint_pill_button(bb, m, by, self.width - 2 * m, bh, row.text, row.kind == "primary", row.disabled)
+        self:add_hit(m, by, self.width - 2 * m, bh, row.callback, row.keep_open)
     elseif row.kind == "buttons" then
         local gap = self:px(8)
         local count = #row.items
         local w = math.floor((self.width - 2 * m - gap * (count - 1)) / count)
-        local bh = h - 2 * gap
+        local bh = math.min(h - 2 * gap, self:px(Style.BUTTON))
+        local by = y + math.floor((h - bh) / 2)
         for index, item in ipairs(row.items) do
             local x = m + (index - 1) * (w + gap)
-            local solid = item.primary and not item.disabled
-            if solid then
-                bb:paintRect(x, y + gap, w, bh, BLACK)
-            else
-                bb:paintBorder(x, y + gap, w, bh, self:px(2), item.disabled and LINE or BLACK)
-            end
-            local pad = self:px(10)
-            local size = self:fitting_size(item.text, BOLD, 20, 14, w - 2 * pad)
-            self:paint_text(bb, item.text, BOLD, size, x + pad, y + gap, w - 2 * pad, bh, "center", solid and WHITE or (item.disabled and DISABLED or BLACK))
-            self:add_hit(x, y + gap, w, bh, item.callback, item.keep_open)
+            self:paint_pill_button(bb, x, by, w, bh, item.text, item.primary, item.disabled)
+            self:add_hit(x, by, w, bh, item.callback, item.keep_open)
         end
     elseif row.kind == "moves" then
-        local number_w, column_w = self:px(80), self:px(200)
-        self:paint_text(bb, row.number, REGULAR, 18, m, y, number_w, h, "left", GRAY)
+        local number_w = self:px(70)
+        local column_w = math.floor((cw - number_w) / 2)
+        self:paint_text(bb, row.number, REGULAR, 17, cx, y, number_w, h, "left", GRAY)
         for index, side in ipairs({ "white", "black" }) do
-            local x = m + number_w + (index - 1) * column_w
+            local x = cx + number_w + (index - 1) * column_w
             local text = row[side]
             if text then
                 local current = row[side .. "_current"]
                 if current then
-                    bb:paintRect(x, y + self:px(6), column_w - self:px(12), h - self:px(12), BLACK)
+                    local pill_h = h - self:px(8)
+                    Draw.pill(bb, x - self:px(10), y + self:px(4), column_w - self:px(20), pill_h, self.scale, true)
                 end
-                MoveText.paint(self, bb, text, BOLD, 20, x + self:px(10), y, column_w - self:px(32), h, "left", current and WHITE or BLACK)
-                self:add_hit(x, y, column_w, h, row[side .. "_callback"])
+                MoveText.paint(self, bb, text, BOLD, 19, x, y, column_w - self:px(40), h, "left", current and WHITE or BLACK)
+                self:add_hit(x - self:px(10), y, column_w, h, row[side .. "_callback"])
             end
         end
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+    elseif row.kind == "phase" then
+        local ph = h - self:px(10)
+        bb:paintRoundedRect(cx, y + self:px(5), cw, ph, Style.PALE, math.floor(ph / 2))
+        self:paint_text(bb, Draw.upper(row.text), BOLD, 12, cx + self:px(10), y + self:px(5), cw - self:px(20), ph, "center", GRAY)
     elseif row.kind == "split" then
-        -- A move of an explorer: its name, a bar of how its games ended (white, draws, black, as on Lichess) and
-        -- how many games.
-        local name_w, value_w, gap = self:px(110), self:px(90), self:px(12)
-        MoveText.paint(self, bb, row.text, BOLD, 20, m, y, name_w - self:px(8), h, "left")
-        local bar_x, bar_w = m + name_w, self.width - 2 * m - name_w - value_w - gap
-        local bar_h = self:px(32)
-        local bar_y = y + math.floor((h - bar_h) / 2)
-        local total = math.max(1, row.white + row.draws + row.black)
-        -- Each part ends where the games so far end, rounded once, so the parts fill the bar exactly.
-        local x, counted = bar_x, 0
-        for _, part in ipairs({ { row.white, WHITE, BLACK }, { row.draws, DRAW_GRAY, BLACK }, { row.black, BLACK, WHITE } }) do
-            counted = counted + part[1]
-            local w = bar_x + math.floor(bar_w * counted / total + 0.5) - x
-            if w > 0 then
-                bb:paintRect(x, bar_y, w, bar_h, part[2])
-                if w >= self:px(48) then
-                    self:paint_text(bb, string.format("%d%%", math.floor(part[1] / total * 100 + 0.5)), BOLD, 15, x, bar_y, w, bar_h, "center", part[3])
-                end
-            end
-            x = x + w
-        end
-        bb:paintBorder(bar_x, bar_y, bar_w, bar_h, self:px(2), BLACK)
-        self:paint_text(bb, row.value, REGULAR, 16, self.width - m - value_w, y, value_w, h, "right", GRAY)
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+        -- A move of an explorer: its name, a bar of how its games ended and how many games.
+        local name_w, value_w, gap = self:px(100), self:px(74), self:px(12)
+        MoveText.paint(self, bb, row.text, BOLD, 19, cx, y, name_w - self:px(8), h, "left")
+        local bar_x, bar_w = cx + name_w, cw - name_w - value_w - gap
+        local bar_h = self:px(30)
+        self:paint_result_bar(bb, row, bar_x, y + math.floor((h - bar_h) / 2), bar_w, bar_h)
+        self:paint_text(bb, row.value, REGULAR, 15, cx + cw - value_w, y, value_w, h, "right", GRAY)
     elseif row.kind == "drawing" then
-        local w = self.width - 2 * m
-        row.draw(bb, m, y, w, h)
+        row.draw(bb, cx, y, cw, h)
         if row.points and row.on_point then
-            self:add_hit(m, y, w, h, function()
-                local tap_x = self.tap_x or m
-                row.on_point(math.max(0, math.min(row.points, math.floor((tap_x - m) / w * row.points + 0.5))))
+            self:add_hit(cx, y, cw, h, function()
+                local tap_x = self.tap_x or cx
+                row.on_point(math.max(0, math.min(row.points, math.floor((tap_x - cx) / cw * row.points + 0.5))))
             end)
         end
     elseif row.kind == "figures" then
-        -- Numbers side by side, each over what it counts; not buttons, so no borders.
+        -- Numbers side by side, each over what it counts.
         local count = #row.items
-        local w = math.floor((self.width - 2 * m) / count)
+        local w = math.floor(cw / count)
         local pad = self:px(4)
         for index, item in ipairs(row.items) do
-            local x = m + (index - 1) * w
+            local x = cx + (index - 1) * w
             if index > 1 then
                 bb:paintRect(x, y + self:px(14), 1, h - self:px(28), LINE)
             end
             self:paint_text(bb, item.value, BOLD, 26, x + pad, y + self:px(8), w - 2 * pad, self:px(40), "center")
-            self:paint_text(bb, item.label, REGULAR, 14, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", GRAY)
+            self:paint_text(bb, item.label, REGULAR, 13, x + pad, y + self:px(48), w - 2 * pad, self:px(24), "center", GRAY)
         end
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
     elseif row.kind == "metric" then
         -- A number that matters, large, with what it is beside it.
-        local value_w = self:px(140)
+        local value_w = self:px(150)
         if row.detail then
-            self:paint_text(bb, row.text, REGULAR, 20, m, y + self:px(10), self.width - 2 * m - value_w, self:px(32), "left")
-            self:paint_text(bb, row.detail, REGULAR, 15, m, y + self:px(42), self.width - 2 * m - value_w, self:px(24), "left", GRAY)
+            self:paint_text(bb, row.text, BOLD, 18, cx, y + self:px(14), cw - value_w, self:px(30), "left")
+            self:paint_text(bb, row.detail, REGULAR, 14, cx, y + self:px(44), cw - value_w, self:px(24), "left", GRAY)
         else
-            self:paint_text(bb, row.text, REGULAR, 20, m, y, self.width - 2 * m - value_w, h, "left")
+            self:paint_text(bb, row.text, BOLD, 18, cx, y, cw - value_w, h, "left")
         end
-        self:paint_text(bb, row.value, BOLD, 34, self.width - m - value_w, y, value_w, h, "right")
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+        self:paint_text(bb, row.value, BOLD, 36, cx + cw - value_w, y, value_w, h, "right")
     elseif row.kind == "stat" then
-        self:paint_text(bb, row.text, REGULAR, 18, m, y, self.width - 2 * m - self:px(180), h, "left")
-        self:paint_text(bb, row.value, BOLD, 18, self.width - m - self:px(180), y, self:px(180), h, "right")
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
+        self:paint_text(bb, row.text, REGULAR, 17, cx, y, cw - self:px(180), h, "left")
+        self:paint_text(bb, row.value, BOLD, 17, cx + cw - self:px(180), y, self:px(180), h, "right")
     elseif row.kind == "toggle" then
-        self:paint_text(bb, row.text, REGULAR, 20, m, y, self.width - 2 * m - self:px(90), h, "left")
-        local w, bh = self:px(76), self:px(38)
-        local bx, by = self.width - m - w, y + math.floor((h - bh) / 2)
-        if row.on then
-            bb:paintRect(bx, by, w, bh, BLACK)
-        else
-            bb:paintBorder(bx, by, w, bh, self:px(2), BLACK)
-        end
-        self:paint_text(bb, row.on and row.on_text or row.off_text, BOLD, 16, bx, by, w, bh, "center", row.on and WHITE or BLACK)
-        bb:paintRect(m, y + h - 1, self.width - 2 * m, 1, LINE)
-        self:add_hit(0, y, self.width, h, row.callback, true)
+        local w, bh = self:px(76), self:px(36)
+        self:paint_text(bb, row.text, BOLD, 18, cx, y, cw - w - self:px(12), h, "left")
+        self:paint_switch(bb, row, cx + cw - w, y + math.floor((h - bh) / 2), w, bh)
+        self:add_hit(m, y, self.width - 2 * m, h, row.callback, true)
     elseif row.kind == "text" then
         local box = self:text_box(row)
         box:paintTo(bb, m + self:px(4), y + self:px(9))
         box:free()
     elseif row.kind == "hero" then
+        -- The piece in a white circle, the name and a line below it.
         local hero_y = y + math.floor((h - self:px(HEIGHTS.hero)) / 2)
-        self:paint_text(bb, row.icon, SYMBOLS, 92, 0, hero_y + self:px(8), self.width, self:px(108), "center")
-        self:paint_text(bb, row.text, BOLD, 28, m, hero_y + self:px(116), self.width - 2 * m, self:px(40), "center")
+        local radius = self:px(52)
+        bb:paintCircle(math.floor(self.width / 2), hero_y + radius + self:px(4), radius, WHITE)
+        bb:paintCircle(math.floor(self.width / 2), hero_y + radius + self:px(4), radius, BLACK, self:px(3))
+        self:paint_text(bb, row.icon, SYMBOLS, 66, 0, hero_y + self:px(4), self.width, 2 * radius, "center")
+        self:paint_text(bb, row.text, BOLD, 26, m, hero_y + self:px(116), self.width - 2 * m, self:px(40), "center")
         self:paint_text(bb, row.detail, REGULAR, 16, m, hero_y + self:px(156), self.width - 2 * m, self:px(28), "center", GRAY)
+    elseif row.kind == "state" then
+        -- What a page has instead of its rows: loading, nothing to show, no connection, an error. A piece in a
+        -- circle over what happened, in the middle of the room the row has.
+        local inner = self.width - 2 * m
+        local text_h = self:box_height(row.text, BOLD, 21, inner)
+        local detail_h = row.detail and self:box_height(row.detail, REGULAR, 16, inner) + self:px(6) or 0
+        local top = y + math.floor((h - self:px(150) - text_h - detail_h) / 2) + self:px(12)
+        local radius = self:px(52)
+        local cx = math.floor(self.width / 2)
+        bb:paintCircle(cx, top + radius, radius, WHITE)
+        bb:paintCircle(cx, top + radius, radius, BLACK, self:px(3))
+        local BoardScreen = require("ink_knight/ui/board_screen")
+        BoardScreen.paint_piece_fit(bb, BoardScreen.piece_set, row.piece or "N", cx, top + radius, math.floor(radius * 1.3))
+        local box = TextBoxWidget:new{ text = row.text, face = face(BOLD, 21 * self.scale), width = inner, alignment = "center", fgcolor = BLACK, bgcolor = Style.PAPER }
+        box:paintTo(bb, m, top + self:px(128))
+        box:free()
+        if row.detail then
+            local detail = TextBoxWidget:new{ text = row.detail, face = face(REGULAR, 16 * self.scale), width = inner, alignment = "center", fgcolor = GRAY, bgcolor = Style.PAPER }
+            detail:paintTo(bb, m, top + self:px(134) + text_h)
+            detail:free()
+        end
     elseif row.kind == "tile_line" then
-        local gap = self:px(8)
+        local gap = self:px(10)
         local w = math.floor((self.width - 2 * m - gap * (row.columns - 1)) / row.columns)
         for index, item in ipairs(row.items) do
-            self:paint_tile(bb, item, m + (index - 1) * (w + gap), y + math.floor(gap / 2), w, h - gap)
+            self:paint_tile(bb, item, m + (index - 1) * (w + gap), y + self:px(4), w, h - self:px(8))
         end
     else
         self:paint_nav(bb, row, y, h)
+    end
+    -- A whole row of a card answers a tap, not only its text.
+    if carded(row) and row.callback and row.kind ~= "toggle" then
+        self:add_hit(m, y, self.width - 2 * m, h, row.callback, row.keep_open)
+    end
+end
+
+-- The height of a text wrapped in width, as a text box draws it.
+function Page:box_height(text, name, size, width)
+    local box = TextBoxWidget:new{ text = text, face = face(name, size * self.scale), width = width }
+    local height = box:getSize().h
+    box:free()
+    return height
+end
+
+-- A question or a choice drawn over the screen, in a card: "center" in the middle, with an icon, the title, the
+-- text and the answers side by side; "bottom" rising from the foot, with the title on the left, the tiles and a
+-- hint. Returns its parts, each with its place from the top of the card, and the card.
+function Page:dialog_parts()
+    local bottom = self.dialog == "bottom"
+    local m = self:px(bottom and MARGIN or 36)
+    local w = self.width - 2 * m - self:px(Style.CARD_SHADOW)
+    local pad = self:px(20)
+    local inner = w - 2 * pad
+    local parts, y = {}, pad
+    local function add(part, h)
+        part.y, part.h = y, h
+        parts[#parts + 1] = part
+        y = y + h
+    end
+    if not bottom and self.icon then
+        add({ kind = "icon" }, self:px(68))
+    end
+    if self.title and self.title ~= "" then
+        if bottom then
+            add({ kind = "title" }, self:px(44))
+        else
+            add({ kind = "title" }, self:box_height(self.title, BOLD, 22, inner) + self:px(8))
+        end
+    end
+    local buttons = {}
+    for _, line in ipairs(self.lines) do
+        if line.kind == "primary" or line.kind == "secondary" then
+            buttons[#buttons + 1] = line
+        elseif line.kind == "text" then
+            add({ kind = "text", line = line }, self:box_height(line.text, REGULAR, 16, inner) + self:px(6))
+        elseif line.kind == "tile_line" then
+            add({ kind = "tiles", line = line }, self:base_height(line))
+        else
+            add({ kind = "row", line = line }, self:base_height(line))
+        end
+    end
+    if #buttons > 0 then
+        y = y + self:px(12)
+        -- The answer that does nothing first, the one that acts on the right, in black.
+        table.sort(buttons, function(a, b) return a.kind == "secondary" and b.kind == "primary" end)
+        add({ kind = "buttons", items = buttons }, self:px(Style.BUTTON))
+    end
+    if self.hint then
+        add({ kind = "hint" }, self:px(36))
+    end
+    local h = y + (self.hint and self:px(6) or pad)
+    local top = bottom and (self.height - StatusStrip.height() - h - self:px(12)) or math.floor((self.height - h) / 2)
+    return parts, { x = m, y = top, w = w, h = h, pad = pad, inner = inner }
+end
+
+function Page:paint_dialog(bb)
+    local parts, card = self:dialog_parts()
+    local shadow = self:px(Style.CARD_SHADOW)
+    self.card_rect = Geom:new{ x = card.x, y = card.y, w = card.w + shadow, h = card.h + shadow }
+    Draw.card(bb, card.x, card.y, card.w, card.h, self.scale)
+    local x = card.x + card.pad
+    for _, part in ipairs(parts) do
+        local y = card.y + part.y
+        if part.kind == "icon" then
+            local radius = self:px(28)
+            local cx = card.x + math.floor(card.w / 2)
+            bb:paintCircle(cx, y + radius, radius, BLACK)
+            Draw.icon(bb, self.icon, cx, y + radius, self:px(28), WHITE)
+        elseif part.kind == "title" then
+            if self.dialog == "bottom" then
+                self:paint_text(bb, self.title, BOLD, 20, x, y, card.inner, part.h, "left")
+            else
+                local box = TextBoxWidget:new{ text = self.title, face = face(BOLD, 22 * self.scale), width = card.inner, alignment = "center", fgcolor = BLACK, bgcolor = WHITE }
+                box:paintTo(bb, x, y)
+                box:free()
+            end
+        elseif part.kind == "text" then
+            local box = TextBoxWidget:new{ text = part.line.text, face = face(REGULAR, 16 * self.scale), width = card.inner, alignment = part.line.center == false and "left" or "center", fgcolor = GRAY, bgcolor = WHITE }
+            box:paintTo(bb, x, y)
+            box:free()
+        elseif part.kind == "tiles" then
+            local line = part.line
+            local gap = self:px(10)
+            local w = math.floor((card.inner - gap * (line.columns - 1)) / line.columns)
+            for index, item in ipairs(line.items) do
+                self:paint_tile(bb, item, x + (index - 1) * (w + gap), y + self:px(4), w, part.h - self:px(8))
+            end
+        elseif part.kind == "buttons" then
+            local gap = self:px(12)
+            local count = #part.items
+            local w = math.floor((card.inner - gap * (count - 1)) / count)
+            for index, item in ipairs(part.items) do
+                local bx = x + (index - 1) * (w + gap)
+                self:paint_pill_button(bb, bx, y, w, part.h, item.text, item.kind == "primary", item.disabled)
+                self:add_hit(bx, y, w, part.h, item.callback, item.keep_open)
+            end
+        elseif part.kind == "hint" then
+            self:paint_text(bb, self.hint, REGULAR, 14, x, y, card.inner, part.h, "center", GRAY)
+        else
+            self:paint_line(bb, part.line, y, part.h)
+        end
     end
 end
 
 function Page:paint_footer(bb)
     local height = self:px(FOOTER_H)
     local y = self.height - StatusStrip.height() - height
-    bb:paintRect(0, y, self.width, 1, LINE)
-    local arrow = math.floor(self.width / 3)
+    bb:paintRect(0, y, self.width, height, WHITE)
+    bb:paintRect(0, y, self.width, self:px(2), BLACK)
     local count = #self.sheets
-    self:paint_text(bb, string.format("%d / %d", self.sheet, count), REGULAR, 17, arrow, y, arrow, height, "center")
-    if self.sheet > 1 then
-        self:paint_text(bb, "\226\128\185", BOLD, 34, 0, y, arrow, height - self:px(6), "center")
-        self:add_hit(0, y, arrow, height, function() self:turn(-1) end, true)
-    end
-    if self.sheet < count then
-        self:paint_text(bb, "\226\128\186", BOLD, 34, 2 * arrow, y, arrow, height - self:px(6), "center")
-        self:add_hit(2 * arrow, y, arrow, height, function() self:turn(1) end, true)
+    local m = self:px(MARGIN)
+    local bw, bh = self:px(80), self:px(38)
+    local by = y + math.floor((height - bh) / 2) + self:px(1)
+    self:paint_text(bb, string.format("%d / %d", self.sheet, count), BOLD, 17, m + bw, y, self.width - 2 * (m + bw), height, "center")
+    for _, side in ipairs({ { -1, m, "previous" }, { 1, self.width - m - bw, "next" } }) do
+        local active = (side[1] < 0 and self.sheet > 1) or (side[1] > 0 and self.sheet < count)
+        if active then
+            Draw.pill(bb, side[2], by, bw, bh, self.scale, true)
+            Draw.icon(bb, side[3], side[2] + math.floor(bw / 2), by + math.floor(bh / 2), self:px(20), WHITE)
+            self:add_hit(side[2] - m, y, bw + 2 * m, height, function() self:turn(side[1]) end, true)
+        else
+            bb:paintBorder(side[2], by, bw, bh, self:px(2), LINE, math.floor(bh / 2))
+            Draw.icon(bb, side[3], side[2] + math.floor(bw / 2), by + math.floor(bh / 2), self:px(20), LINE)
+        end
     end
 end
 
+-- The rows of the sheet, each group of them in its card, drawn before the rows on it.
 function Page:paint_rows(bb)
+    local lines = self.sheets[self.sheet] or {}
     local cursor = self:content_top()
-    for _, line in ipairs(self.sheets[self.sheet] or {}) do
+    local card_x, card_w, inner_x, inner_w = self:card_box()
+    for index, line in ipairs(lines) do
         local height = self.heights_of[line]
-        self:paint_line(bb, line, cursor, height)
+        local top = cursor + (line.gap_before and self:px(GAP) or 0)
+        local inner_h = height - (line.gap_before and self:px(GAP) or 0) - (line.gap_after and self:px(GAP) or 0)
+        if carded(line) and not carded(lines[index - 1]) then
+            local card_h = inner_h
+            for next_index = index + 1, #lines do
+                local next_line = lines[next_index]
+                if not carded(next_line) then
+                    break
+                end
+                card_h = card_h + self.heights_of[next_line] - (next_line.gap_after and self:px(GAP) or 0)
+            end
+            Draw.card(bb, card_x, top, card_w, card_h, self.scale)
+        end
+        self:paint_line(bb, line, top, inner_h)
+        local after = lines[index + 1]
+        if carded(line) and carded(after) and line.kind ~= "phase" and after.kind ~= "phase" then
+            bb:paintRect(inner_x, top + inner_h - 1, inner_w, Style.LINE, LINE)
+        end
         cursor = cursor + height
     end
     if #self.sheets > 1 then
@@ -572,7 +846,17 @@ end
 function Page:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     self.hits = {}
-    bb:paintRect(0, 0, self.width, self.height, WHITE)
+    if self.dialog then
+        local ok, err = pcall(self.paint_dialog, self, bb)
+        if not ok then
+            logger.warn("Ink Knight: could not draw a question", err)
+        end
+        if self.pressed then
+            bb:invertRect(self.pressed.x, self.pressed.y, self.pressed.w, self.pressed.h)
+        end
+        return
+    end
+    bb:paintRect(0, 0, self.width, self.height, Style.PAPER)
     if self.header then
         self:paint_header(bb)
     end
@@ -582,7 +866,7 @@ function Page:paintTo(bb, x, y)
     if not ok then
         logger.warn("Ink Knight: could not draw a page", err)
         local top = self:content_top()
-        bb:paintRect(0, top, self.width, self.height - top, WHITE)
+        bb:paintRect(0, top, self.width, self.height - top, Style.PAPER)
         local hits = {}
         for _, hit in ipairs(self.hits) do
             if hit.y < top then
@@ -614,7 +898,7 @@ end
 function Page:press(hit)
     self.pressed = hit
     local region = Geom:new{ x = hit.x, y = hit.y, w = hit.w, h = hit.h }
-    UIManager:setDirty(self, function() return "fast", region end)
+    UIManager:setDirty(self, function() return Refresh.settle("fast"), region end)
     UIManager:forceRePaint()
     self.pressed = nil
     UIManager:setDirty(self, function() return "ui", region end)
@@ -633,6 +917,11 @@ function Page:onTap(_, ges)
             self:press(hit)
             return true
         end
+    end
+    -- A tap beside a question or a choice leaves it unanswered, as going back does.
+    local card = self.card_rect
+    if self.dialog and card and not (x >= card.x and x < card.x + card.w and y >= card.y and y < card.y + card.h) then
+        self:onBack()
     end
     return true
 end

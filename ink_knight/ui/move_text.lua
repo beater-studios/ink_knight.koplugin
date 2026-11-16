@@ -33,6 +33,19 @@ function MoveText.width(text, name, size)
     return width
 end
 
+-- The width a text takes as paint draws it, its pieces as symbols, with size scaled as for MoveText.width.
+function MoveText.drawn_width(text, name, size)
+    local total = 0
+    for _, part in ipairs(Figurine.parts(text)) do
+        if part.symbol then
+            total = total + MoveText.width(part.text, Figurine.FONT, size * Figurine.SCALE)
+        else
+            total = total + MoveText.width(part.text, name, size)
+        end
+    end
+    return total
+end
+
 -- screen: one with paint_text(bb, text, name, size, x, y, w, h, align, color) and scale, as the board and the pages.
 function MoveText.paint(screen, bb, text, name, size, x, y, w, h, align, color)
     Figurine.paint(text, name, size, x, w, align,

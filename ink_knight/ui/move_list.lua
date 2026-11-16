@@ -32,7 +32,7 @@ function MoveList.rows(sans, first_number, first_turn, opts)
         for _, index in ipairs({ white_index, black_index }) do
             local mark = opts.marks and opts.marks[index]
             if mark and sans[index] then
-                rows[#rows + 1] = { kind = "section", text = mark }
+                rows[#rows + 1] = { kind = "phase", text = mark }
             end
         end
         rows[#rows + 1] = row

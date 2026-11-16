@@ -85,7 +85,7 @@ home:offline_menu()
 local offline = home.pages[#home.pages]
 row_of(offline, s.two_players).callback()
 local choice = home.pages[#home.pages]
-check(row_of(choice, s.clock_none) and row_of(choice, s.clock_none).value == "✓", "with no choice yet, no clock is marked")
+check(row_of(choice, s.clock_none) and row_of(choice, s.clock_none).tag == s.last_used, "with no choice yet, no clock is marked")
 row_of(choice, "5+3").callback()
 local screen = board()
 check(screen and screen.state.bottom.clock == "5:00" and screen.state.top.clock == "5:00", "both clocks should show 5:00")

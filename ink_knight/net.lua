@@ -11,6 +11,8 @@ Net.__index = Net
 local REQUEST_BLOCK_TIMEOUT = 30
 local REQUEST_DEADLINE = 45
 local STREAM_BLOCK_TIMEOUT = 600
+-- Three keep-alive lines of Lichess missed.
+Net.SILENCE = 20
 -- What Lichess asks for after a 429.
 local RATE_LIMIT_PAUSE = 60
 
@@ -161,10 +163,11 @@ end
 
 -- on_line(text) gets each line of the answer. on_end(status) is called once when the connection ends by itself,
 -- with the HTTP code, or nil when there was no answer.
-function Net:stream(request, on_line, on_end)
+-- silence: for a stream that Lichess keeps alive with an empty line every 7 seconds (the events and a game), how many seconds with nothing at all mean the connection died without saying so, as when the Wi-Fi of an e-reader dozes or a router drops it; the stream then ends as if the network dropped, and its owner connects again. Without it, a dead connection waited STREAM_BLOCK_TIMEOUT, and the moves of a game stopped arriving until the reader left the game and came back.
+function Net:stream(request, on_line, on_end, silence)
     local prefix = self:next_prefix()
     local pid = self.spawn(self:build_spec(request, prefix, "application/x-ndjson", STREAM_BLOCK_TIMEOUT))
-    local stream = { prefix = prefix, pid = pid or nil, on_line = on_line, on_end = on_end, offset = 0, partial = "" }
+    local stream = { prefix = prefix, pid = pid or nil, on_line = on_line, on_end = on_end, offset = 0, partial = "", silence = silence, started = self.clock() }
     table.insert(self.streams, stream)
     return stream
 end
@@ -196,6 +199,7 @@ function Net:read_stream(stream)
         local data = file:read("*a")
         file:close()
         if data and #data > 0 then
+            stream.heard = self.clock()
             stream.offset = stream.offset + #data
             stream.partial = stream.partial .. data
             while true do
@@ -255,6 +259,13 @@ function Net:tick()
         local stream = self.streams[index]
         if stream then
             self:read_stream(stream)
+            -- Before its first byte, a stream may still be connecting (DNS, TLS, a Wi-Fi waking up), so it gets three times as long; a silent child is stopped once.
+            local quiet = stream.heard and self.clock() - stream.heard > (stream.silence or 0)
+                or not stream.heard and self.clock() - stream.started > 3 * (stream.silence or 0)
+            if self.streams[index] == stream and stream.silence and stream.pid and not stream.silent and quiet then
+                self.kill(stream.pid)
+                stream.silent = true
+            end
             if self.streams[index] == stream and self:has_ended(stream.pid) then
                 self:read_stream(stream)
                 -- The last line may have no line break after it.
@@ -271,7 +282,7 @@ function Net:tick()
                 self:collect(stream.pid)
                 self:cleanup(stream.prefix)
                 if stream.on_end then
-                    stream.on_end(code ~= 0 and code or nil)
+                    stream.on_end(not stream.silent and code ~= 0 and code or nil)
                 end
             end
         end

@@ -40,6 +40,7 @@ function ReviewScreen.open(app, game, opts)
         -- The review names squares, in the moves and the better ones, so they are always on its board.
         coordinates = true,
         panel = true,
+        read_marks = true,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function()

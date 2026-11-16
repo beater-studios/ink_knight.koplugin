@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- A game on Lichess no longer stops getting the opponent's moves when the connection dies without a word, as when the Wi-Fi of the e-reader dozes: Lichess keeps a game alive with an empty line every 7 seconds, and after 20 seconds of nothing the plugin connects again, showing Reconnecting. Before, the moves only came back after leaving the game and opening it again. The list of games and challenges does the same.
+- After a full refresh, the next update waits for it to end, so a tap right after a flash no longer leaves part of the screen white on a Kindle.
+- The chess clock marks the time control used last with "Last used" instead of a check mark.
+- The offline menu opens at once the first time: the check that Stockfish runs on the device starts in the background when the plugin opens.
+- In an offline game the bar of buttons stays the same while you play, so a move does not redraw it; a hint while the computer thinks, or undo with nothing to take back, does nothing.
 - The offline opponent is Stockfish, with 8 levels like the computer of Lichess, from a beginner to the full engine. Where it does not run, the small engine plays with its 4 levels as before, and if Stockfish stops in the middle of a game the small engine goes on at the closest level, saying so. A game in progress keeps the engine it started with.
 - Hints come from Stockfish too, in the offline game and in practice, much stronger than the small engine's.
 - Practice has its last 8 chapters, long endgames of rook or queen to hold the draw or equalize for 7 to 30 moves, judged move by move by Stockfish on the device as the Lichess app judges them. They show only where Stockfish runs.

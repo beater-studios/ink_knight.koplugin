@@ -12,6 +12,7 @@ local ffi = require("ffi")
 local logger = require("logger")
 
 local BoardDiff = require("ink_knight/board_diff")
+local Draw = require("ink_knight/ui/draw")
 local MoveText = require("ink_knight/ui/move_text")
 local Page = require("ink_knight/ui/page")
 local Portrait = require("ink_knight/portrait")
@@ -19,6 +20,7 @@ local Refresh = require("ink_knight/refresh")
 local Sleep = require("ink_knight/sleep")
 local State = require("ink_knight/state")
 local StatusStrip = require("ink_knight/ui/status_strip")
+local Style = require("ink_knight/ui/style")
 
 local Screen = Device.screen
 
@@ -79,14 +81,17 @@ local BoardScreen = InputContainer:extend{
     banner_lines = nil,
     -- Two lines under the board instead of one, for the panel of a move in the review.
     panel = false,
+    -- The line of text under the plates; a mode that says everything in its plates turns it off for a larger board.
+    status_line = true,
+    -- A board being read (a review, a study): the last move shows, with corners where it came from and a frame where
+    -- it went. In a game nothing marks it. state.reading does the same for one state.
+    read_marks = false,
 }
 
--- The hints of the lessons: the colors of the app become grays, and the arrows that warn are black.
-local SHAPE_INK = { red = BLACK, yellow = Blitbuffer.Color8(0x44) }
-local HINT_INK = Blitbuffer.Color8(0x66)
-local CARD_SHADOW = Blitbuffer.Color8(0x66)
-local PROGRESS_FILL = Blitbuffer.Color8(0xDD)
-local CARD_GRAY = Blitbuffer.Color8(0x55)
+-- The arrows and circles of the lessons in two inks: black for the ones that warn, dark gray for the others.
+local SHAPE_INK = { red = BLACK }
+local HINT_INK = Blitbuffer.Color8(0x55)
+local PROGRESS_FILL = Blitbuffer.Color8(0xBB)
 
 local function face(name, size)
     return Font:getFace(name, size * 1000 / Screen:scaleBySize(1000))
@@ -268,24 +273,58 @@ function BoardScreen.clear_art_cache()
     art_cache = {}
 end
 
--- For the list of styles: a light and a dark square side by side, framed like the board, at the size of the screen.
+-- For the list of styles and the row of the settings: a light and a dark square of the style, apart, each framed,
+-- two elements large enough to tell on e-ink.
 function BoardScreen.paint_style_sample(bb, name, x, y, size)
     local style = STYLES[name] or STYLES.plain
-    bb:paintRect(x, y, size, size, LIGHT_SQUARE)
+    local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
+    local gap = math.max(2, math.floor(size / 6))
+    local side = size - math.floor(gap / 2)
+    local border = math.max(1, math.floor(2 * scale + 0.5))
+    local top = y + math.floor((size - side) / 2)
+    local dark_x = x + side + gap
+    bb:paintRect(x, top, side, side, LIGHT_SQUARE)
     if style.ink then
-        local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
-        local tile = make_pattern(style, size, scale)
-        bb:blitFrom(tile, x + size, y, 0, 0, size, size)
+        local tile = make_pattern(style, side, scale)
+        bb:blitFrom(tile, dark_x, top, 0, 0, side, side)
         tile:free()
     else
-        bb:paintRect(x + size, y, size, size, style.dark or DARK_SQUARE)
+        bb:paintRect(dark_x, top, side, side, style.dark or DARK_SQUARE)
     end
-    bb:paintBorder(x, y, 2 * size, size, 1, BLACK)
+    bb:paintBorder(x, top, side, side, border, BLACK)
+    bb:paintBorder(dark_x, top, side, side, border, BLACK)
 end
 
--- For the list of piece sets: the white and the black king side by side.
+-- One piece of a set (piece as "N" or "n"), centered in a square of size at x, y: for the plates and pictures of the redesign.
+function BoardScreen.paint_piece(bb, set, piece, x, y, size)
+    local art = piece_art(set, piece, size)
+    if art then
+        blit_piece(bb, art, piece, x + math.floor((size - art.w) / 2), y + math.floor((size - art.h) / 2))
+    end
+end
+
+-- How much of its box the drawing of a piece fills, by set and piece, measured once, so a piece in a circle is drawn at the right size the first time.
+local fill_ratio = {}
+
+-- One piece whose drawing, not its box, takes size, centered on cx, cy: for a piece in a circle, the same in every set.
+function BoardScreen.paint_piece_fit(bb, set, piece, cx, cy, size)
+    local key = set .. ":" .. piece
+    if not fill_ratio[key] then
+        local probe = piece_art(set, piece, size)
+        if not probe then
+            return
+        end
+        fill_ratio[key] = math.max(probe.w, probe.h) / size
+    end
+    local art = piece_art(set, piece, math.max(1, math.floor(size / math.max(0.1, fill_ratio[key]))))
+    if art then
+        blit_piece(bb, art, piece, cx - math.floor(art.w / 2), cy - math.floor(art.h / 2))
+    end
+end
+
+-- For the list of piece sets and the row of the settings: the white and the black queen side by side.
 function BoardScreen.paint_piece_sample(bb, set, x, y, size)
-    for index, piece in ipairs({ "K", "k" }) do
+    for index, piece in ipairs({ "Q", "q" }) do
         local art = piece_art(set, piece, size)
         if art then
             local left = x + (index - 1) * size + math.floor((size - art.w) / 2)
@@ -339,20 +378,33 @@ function BoardScreen:px(value)
 end
 
 function BoardScreen:layout()
-    local bar_h, status_h, button_h = self:px(46), self:px(self.panel and 76 or 34), self:px(58)
-    local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(12) or bar_h
-    local room = self.height - StatusStrip.height() - top_h - bar_h - status_h - button_h
-    self.square = math.floor(math.min(self.width, room) / 8)
+    local margin, gap = self:px(6), self:px(6)
+    local plate_h, button_h = self:px(Style.PLATE), self:px(Style.BAR)
+    local status_h = self.panel and self:px(92) or (self.status_line and self:px(30) or 0)
+    -- The black frame holds the coordinates when they show; without them it is a thin edge.
+    self.frame = self.coordinates and self:px(18) or self:px(8)
+    local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(30) or plate_h
+    local room = self.height - StatusStrip.height() - margin - top_h - self:px(8) - 2 * self.frame - gap - plate_h - status_h - gap - button_h - margin
+    local side = self:px(14) + self.frame
+    self.square = math.floor(math.min(self.width - 2 * side, room) / 8)
     local board_size = self.square * 8
     self.board_x = math.floor((self.width - board_size) / 2)
-    self.top_bar = { x = 0, y = 0, w = self.width, h = top_h }
+    local plate_x, plate_w = self:px(14), self.width - 2 * self:px(14)
+    self.top_bar = { x = plate_x, y = margin, w = plate_w, h = top_h }
+    if self.banner_lines then
+        local shadow = self:px(Style.CARD_SHADOW)
+        self.top_bar = { x = self:px(10), y = margin, w = self.width - 2 * self:px(10) - shadow, h = top_h - shadow }
+    end
+    -- Where the text of the banner goes, inside its card.
+    self.banner_rect = { x = self.top_bar.x + self:px(4), y = self.top_bar.y + self:px(4), w = self.top_bar.w - self:px(8), h = self.top_bar.h - self:px(8) }
     -- The sizes that fit the banner depend on its width.
     self.banner_sizes = nil
-    self.board_y = top_h
+    self.board_y = margin + top_h + self:px(8) + self.frame
     self.board_rect = Geom:new{ x = self.board_x, y = self.board_y, w = board_size, h = board_size }
-    self.bottom_bar = { x = 0, y = self.board_y + board_size, w = self.width, h = bar_h }
-    self.status_rect = { x = 0, y = self.bottom_bar.y + bar_h, w = self.width, h = status_h }
-    self.buttons_rect = { x = 0, y = self.status_rect.y + status_h, w = self.width, h = button_h }
+    self.frame_rect = { x = self.board_x - self.frame, y = self.board_y - self.frame, w = board_size + 2 * self.frame, h = board_size + 2 * self.frame }
+    self.bottom_bar = { x = plate_x, y = self.frame_rect.y + self.frame_rect.h + gap, w = plate_w, h = plate_h }
+    self.status_rect = { x = 0, y = self.bottom_bar.y + plate_h, w = self.width, h = status_h }
+    self.buttons_rect = { x = 0, y = self.status_rect.y + status_h + gap, w = self.width, h = button_h }
 end
 
 function BoardScreen:square_position(square)
@@ -397,49 +449,74 @@ function BoardScreen:paint_text(bb, text, name, size, x, y, w, h, align, color)
     widget:free()
 end
 
--- Whether a name fits a bar beside its clock, so a screen can say something shorter when it does not.
-function BoardScreen:bar_name_fits(text)
-    local widget = TextWidget:new{ text = text, face = face(BOLD, 20 * self.scale) }
-    local w = widget:getSize().w
-    widget:free()
-    return w <= self.width - self:px(120) - 3 * self:px(10)
+-- The parts of a plate: the circle with the piece, where the name starts, and the room the clock takes.
+function BoardScreen:plate_parts(rect)
+    local radius = math.floor(rect.h / 2) - self:px(6)
+    local text_x = rect.x + self:px(8) + 2 * radius + self:px(10)
+    return radius, text_x, self:px(104)
 end
 
-function BoardScreen:paint_bar(bb, rect, info)
+-- Whether a name fits a plate beside its clock, so a screen can say something shorter when it does not.
+function BoardScreen:bar_name_fits(text)
+    local _, text_x, clock_w = self:plate_parts(self.bottom_bar)
+    local widget = TextWidget:new{ text = text, face = face(BOLD, 18 * self.scale) }
+    local w = widget:getSize().w
+    widget:free()
+    return w <= self.bottom_bar.x + self.bottom_bar.w - self:px(8) - clock_w - self:px(10) - text_x
+end
+
+-- A player's plate: the piece of the side in a light circle, the name, a line below it, a tag and the clock in a pill,
+-- black while it runs. info: name, detail, note ({ text, solid }, a pill in place of the detail), tag, clock, active, piece.
+function BoardScreen:paint_bar(bb, rect, info, piece)
     if not info then
         return
     end
-    local pad = self:px(10)
-    local clock_w = self:px(120)
-    local has_clock = info.clock and info.clock ~= ""
-    local tag_w = 0
+    Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false)
+    local radius, text_x, clock_w = self:plate_parts(rect)
+    local cx, cy = rect.x + self:px(8) + radius, rect.y + math.floor(rect.h / 2)
+    bb:paintCircle(cx, cy, radius, Style.PALE)
+    BoardScreen.paint_piece_fit(bb, self.piece_set, info.piece or piece, cx, cy, math.floor(radius * 1.45))
+    local right = rect.x + rect.w - self:px(8)
+    if info.clock and info.clock ~= "" then
+        local h = rect.h - self:px(14)
+        local x, y = right - clock_w, rect.y + self:px(7)
+        Draw.pill(bb, x, y, clock_w, h, self.scale, info.active)
+        self:paint_text(bb, info.clock, BOLD, 22, x, y, clock_w, h, "center", info.active and WHITE or BLACK)
+        right = x - self:px(10)
+    end
     -- A tag says where what the screen shows comes from, beside the clock or in its place.
     if info.tag then
-        tag_w = self:px(170)
-        local x = rect.x + rect.w - pad - tag_w - (has_clock and (clock_w + pad) or 0)
-        local y, h = rect.y + self:px(8), rect.h - self:px(16)
-        bb:paintBorder(x, y, tag_w, h, self:px(2), BLACK)
-        self:paint_text(bb, info.tag, BOLD, 14, x + self:px(4), y, tag_w - self:px(8), h, "center")
-        tag_w = tag_w + pad
+        local h = self:px(26)
+        local w = math.min(self:px(170), MoveText.width(info.tag, BOLD, 13 * self.scale) + self:px(20))
+        local x, y = right - w, rect.y + math.floor((rect.h - h) / 2)
+        Draw.pill(bb, x, y, w, h, self.scale * 0.6, false)
+        self:paint_text(bb, info.tag, BOLD, 13, x + self:px(6), y, w - self:px(12), h, "center")
+        right = x - self:px(10)
     end
-    self:paint_text(bb, info.name, BOLD, 20, rect.x + pad, rect.y, rect.w - (has_clock and clock_w or 0) - tag_w - 3 * pad, rect.h, "left")
-    if has_clock then
-        local x = rect.x + rect.w - clock_w - pad
-        local y, h = rect.y + self:px(5), rect.h - self:px(10)
-        -- Rounded, because buttons here have square corners and a clock cannot be tapped.
-        local radius = math.floor(h / 2)
-        if info.active then
-            bb:paintRoundedRect(x, y, clock_w, h, BLACK, radius)
-        else
-            bb:paintBorder(x, y, clock_w, h, self:px(2), BLACK, radius)
-        end
-        self:paint_text(bb, info.clock, BOLD, 24, x, y, clock_w, h, "center", info.active and WHITE or BLACK)
+    local text_w = right - text_x
+    if info.note then
+        -- A state that asks for attention, in a pill under the name: solid when it is urgent.
+        self:paint_text(bb, info.name, BOLD, 18, text_x, rect.y + self:px(4), text_w, self:px(24), "left")
+        local h = self:px(20)
+        local w = math.min(text_w, MoveText.drawn_width(info.note.text, BOLD, 12 * self.scale) + self:px(22))
+        local y = rect.y + self:px(27)
+        Draw.pill(bb, text_x, y, w, h, self.scale * 0.6, info.note.solid)
+        MoveText.paint(self, bb, info.note.text, BOLD, 12, text_x + self:px(10), y, w - self:px(20), h, "left", info.note.solid and WHITE or BLACK)
+    elseif info.detail and info.detail ~= "" then
+        self:paint_text(bb, info.name, BOLD, 18, text_x, rect.y + self:px(5), text_w, self:px(24), "left")
+        MoveText.paint(self, bb, info.detail, REGULAR, 13, text_x, rect.y + self:px(28), text_w, self:px(18), "left", Style.DARK)
+    else
+        self:paint_text(bb, info.name, BOLD, 18, text_x, rect.y, text_w, rect.h, "left")
     end
 end
 
-function BoardScreen:paint_marker(bb, square, thickness)
-    local x, y = self:square_position(square)
-    bb:paintBorder(x, y, self.square, self.square, thickness, BLACK)
+-- The piece of the side at the top or the bottom, as the board faces.
+function BoardScreen:side_piece(top)
+    local white_top = self.state.flipped == true
+    if top then
+        return white_top and "K" or "k"
+    end
+    return white_top and "k" or "K"
 end
 
 -- The pattern of a dark square, made once for the size of a square.
@@ -461,36 +538,63 @@ function BoardScreen:halo(art)
     return art.halo
 end
 
--- A coordinate in black on a white tag, made once per screen, since the whole board is painted again at each move.
-function BoardScreen:label(text)
-    if not self.labels[text] then
-        local pad = math.max(1, self:px(1))
-        local widget = TextWidget:new{ text = text, face = face(BOLD, math.max(9, math.floor(self.square * 0.17))), fgcolor = BLACK }
-        local measured = widget:getSize()
-        local tag = Blitbuffer.new(measured.w + 2 * pad, measured.h, Blitbuffer.TYPE_BB8)
-        tag:paintRect(0, 0, tag:getWidth(), tag:getHeight(), WHITE)
-        widget:paintTo(tag, pad, 0)
-        widget:free()
-        self.labels[text] = tag
+-- The corners of a square, in black with a white edge: where the last move came from, on a board being read.
+function BoardScreen:paint_corners(bb, square)
+    local x, y = self:square_position(square)
+    local s = self.square
+    local inset, len, t = self:px(5), math.floor(s * 0.28), math.max(2, self:px(5))
+    local edge = math.max(1, self:px(2))
+    local bars = {}
+    for _, corner in ipairs({ { 0, 0, 1, 1 }, { 1, 0, -1, 1 }, { 0, 1, 1, -1 }, { 1, 1, -1, -1 } }) do
+        local cx = x + inset + corner[1] * (s - 2 * inset)
+        local cy = y + inset + corner[2] * (s - 2 * inset)
+        local hx = corner[3] > 0 and cx or cx - len
+        local vy = corner[4] > 0 and cy or cy - len
+        local hy = corner[4] > 0 and cy or cy - t
+        local vx = corner[3] > 0 and cx or cx - t
+        bars[#bars + 1] = { hx, hy, len, t }
+        bars[#bars + 1] = { vx, vy, t, len }
     end
-    return self.labels[text]
+    -- The white edges first, so a corner never covers the edge of another.
+    for _, bar in ipairs(bars) do
+        bb:paintRect(bar[1] - edge, bar[2] - edge, bar[3] + 2 * edge, bar[4] + 2 * edge, WHITE)
+    end
+    for _, bar in ipairs(bars) do
+        bb:paintRect(bar[1], bar[2], bar[3], bar[4], BLACK)
+    end
 end
 
--- In the corners, as on Lichess: the rank on the left edge and the file along the bottom, whichever way the board faces.
+-- A frame in a square, black inside a white edge: where the last move went, on a board being read.
+function BoardScreen:paint_frame_mark(bb, square)
+    local x, y = self:square_position(square)
+    local inset = self:px(2)
+    bb:paintBorder(x + inset, y + inset, self.square - 2 * inset, self.square - 2 * inset, self:px(7), WHITE)
+    bb:paintBorder(x + inset + self:px(1), y + inset + self:px(1), self.square - 2 * inset - self:px(2), self.square - 2 * inset - self:px(2), self:px(4), BLACK)
+end
+
+-- A ring around a square, black with a white edge: the king in check, and the circles of a lesson.
+function BoardScreen:paint_ring(bb, square, color)
+    local cx, cy = self:square_center(square)
+    local r = math.floor(self.square * 0.44)
+    bb:paintCircle(cx, cy, r + self:px(2), WHITE, self:px(9))
+    bb:paintCircle(cx, cy, r, color or BLACK, self:px(5))
+end
+
+-- The coordinates in white on the black frame, centered on each file and rank, whichever way the board faces.
 function BoardScreen:paint_coordinates(bb)
-    local bottom_y = self.board_y + 7 * self.square
-    for square = 1, 64 do
-        local x, y = self:square_position(square)
-        if x == self.board_x then
-            local tag = self:label(tostring(math.floor((square - 1) / 8) + 1))
-            bb:blitFrom(tag, x + 1, y + 1, 0, 0, tag:getWidth(), tag:getHeight())
-        end
-        if y == bottom_y then
-            local tag = self:label(string.char(string.byte("a") + (square - 1) % 8))
-            local w, h = tag:getWidth(), tag:getHeight()
-            bb:blitFrom(tag, x + self.square - w - 1, y + self.square - h - 1, 0, 0, w, h)
-        end
+    local f = self.frame
+    local bottom = self.board_y + 8 * self.square
+    for index = 0, 7 do
+        local file = self.state.flipped and 7 - index or index
+        local rank = self.state.flipped and index + 1 or 8 - index
+        self:paint_text(bb, string.char(string.byte("a") + file), BOLD, 12, self.board_x + index * self.square, bottom, self.square, f, "center", WHITE)
+        self:paint_text(bb, tostring(rank), BOLD, 12, self.board_x - f, self.board_y + index * self.square, f, self.square, "center", WHITE)
     end
+end
+
+-- Whether the board is being read (a review, a study, a broadcast) rather than played: only then the last move shows.
+function BoardScreen:reading()
+    return self.read_marks == true or self.state.reading == true
 end
 
 function BoardScreen:paint_board(bb)
@@ -498,6 +602,8 @@ function BoardScreen:paint_board(bb)
     local position = state.position
     local style = STYLES[self.style] or STYLES.plain
     local pattern = style.ink and self:pattern_tile(self.style, style)
+    local frame = self.frame_rect
+    bb:paintRoundedRect(frame.x, frame.y, frame.w, frame.h, BLACK, self:px(14))
     for square = 1, 64 do
         local x, y = self:square_position(square)
         local file, rank = (square - 1) % 8, math.floor((square - 1) / 8)
@@ -508,7 +614,12 @@ function BoardScreen:paint_board(bb)
             bb:paintRect(x, y, self.square, self.square, dark and (style.dark or DARK_SQUARE) or LIGHT_SQUARE)
         end
     end
-    bb:paintBorder(self.board_x, self.board_y, self.square * 8, self.square * 8, 1, BLACK)
+    -- The piece picked stands on a white disc in a black square.
+    if state.selected then
+        local x, y = self:square_position(state.selected)
+        bb:paintRect(x, y, self.square, self.square, BLACK)
+        bb:paintCircle(x + math.floor(self.square / 2), y + math.floor(self.square / 2), math.floor(self.square * 0.44), WHITE)
+    end
     if position then
         for square, piece in pairs(position.board) do
             local art = self:piece(piece)
@@ -529,21 +640,16 @@ function BoardScreen:paint_board(bb)
     if self.coordinates then
         self:paint_coordinates(bb)
     end
-    -- After the pieces and the coordinates, so neither a white edge nor a tag covers the mark of the last move.
-    if state.last_move then
-        self:paint_marker(bb, state.last_move.from, self:px(3))
-        self:paint_marker(bb, state.last_move.to, self:px(3))
-    end
-    if state.selected then
-        self:paint_marker(bb, state.selected, self:px(6))
+    if state.last_move and self:reading() then
+        self:paint_corners(bb, state.last_move.from)
+        self:paint_frame_mark(bb, state.last_move.to)
     end
     if state.highlighted_rank then
         local _, y = self:square_position((state.highlighted_rank - 1) * 8 + 1)
         bb:paintBorder(self.board_x, y, self.square * 8, self.square, self:px(4), BLACK)
     end
     if state.check_square then
-        local x, y = self:square_position(state.check_square)
-        bb:paintBorder(x + self:px(4), y + self:px(4), self.square - self:px(8), self.square - self:px(8), self:px(3), BLACK)
+        self:paint_ring(bb, state.check_square)
     end
     for _, shape in ipairs(state.shapes or {}) do
         self:paint_shape(bb, shape)
@@ -552,15 +658,32 @@ function BoardScreen:paint_board(bb)
     for square in pairs(state.stars or {}) do
         self:paint_star(bb, square)
     end
+    -- The same dot on every square the piece can go to, empty or not.
     for square in pairs(state.targets or {}) do
-        local x, y = self:square_position(square)
-        local r = math.floor(self.square * 0.16)
-        local cx, cy = x + math.floor(self.square / 2), y + math.floor(self.square / 2)
+        local cx, cy = self:square_center(square)
+        local r = math.floor(self.square * 0.15)
         bb:paintCircle(cx, cy, r + self:px(3), WHITE)
         bb:paintCircle(cx, cy, r, BLACK)
     end
 end
 
+-- The icons of the buttons, by the id the modes give them. A button without one shows its name alone.
+local BUTTON_ICONS = {
+    back = "back", close = "back", next = "next", forward = "next", continue = "next", start = "next",
+    previous = "previous", first = "first", last = "last",
+    retry = "again", again = "again", restart = "again", rematch = "again",
+    undo = "undo", takeback = "undo",
+    moves = "moves", more = "more", hint = "hint", options = "options", comment = "comment",
+    stop = "stop", abort = "stop", analysis_cancel = "stop", cancel_move = "stop", draw_no = "stop", takeback_no = "stop",
+    review = "review", analyze = "review",
+    resign = "flag", draw = "draw", flip = "flip", turn = "turn",
+    pause = "pause", clock_pause = "pause", clock_resume = "turn", resume = "turn",
+    done = "done", save = "done", confirm_move = "done", draw_yes = "done", takeback_yes = "done", claim = "done", claim_draw = "done",
+    solution = "solution", show = "solution",
+}
+
+-- The buttons share the width. A bar that asks a question (confirm the move, a draw offered) has its answers as words in
+-- pills, button.pill, the one that acts solid (button.primary); its other buttons then keep the width of an icon.
 function BoardScreen:button_rects()
     local buttons = self.state.buttons or {}
     local count = #buttons
@@ -568,30 +691,64 @@ function BoardScreen:button_rects()
     if count == 0 then
         return rects
     end
-    local gap = self:px(6)
-    local pad = self:px(6)
-    local w = math.floor((self.width - 2 * pad - gap * (count - 1)) / count)
+    local gap = self:px(8)
+    local pad = self:px(10)
     local rect = self.buttons_rect
+    local pills = 0
+    for _, button in ipairs(buttons) do
+        if button.pill then
+            pills = pills + 1
+        end
+    end
+    local room = self.width - 2 * pad - gap * (count - 1)
+    local small = pills > 0 and pills < count and self:px(100) or nil
+    local w = math.floor(small and (room - small * (count - pills)) / pills or room / count)
+    local x = pad
     for index, button in ipairs(buttons) do
-        rects[index] = { id = button.id, label = button.label, x = pad + (index - 1) * (w + gap), y = rect.y + self:px(5), w = w, h = rect.h - self:px(10) }
+        local bw = (small and not button.pill) and small or w
+        rects[index] = { id = button.id, label = button.label, pill = button.pill, primary = button.primary, x = x, y = rect.y, w = bw, h = rect.h }
+        x = x + bw + gap
     end
     return rects
 end
 
+-- Each button an outlined box with its icon over its name; a name too long for one line goes alone, wrapped.
 function BoardScreen:paint_buttons(bb)
     for _, rect in ipairs(self:button_rects()) do
-        bb:paintBorder(rect.x, rect.y, rect.w, rect.h, self:px(2), BLACK)
-        local box = TextBoxWidget:new{
-            text = rect.label,
-            face = face(BOLD, 17 * self.scale),
-            width = rect.w - self:px(8),
-            alignment = "center",
-            fgcolor = BLACK,
-            bgcolor = WHITE,
-        }
-        local measured = box:getSize()
-        box:paintTo(bb, rect.x + self:px(4), rect.y + math.floor((rect.h - measured.h) / 2))
-        box:free()
+        if rect.pill then
+            Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, rect.primary)
+            -- The largest size, from 18 down to 14, at which the answer fits its pill.
+            local inner = rect.w - self:px(28)
+            local size = 18
+            while size > 14 and MoveText.drawn_width(rect.label, BOLD, size * self.scale) > inner do
+                size = size - 1
+            end
+            MoveText.paint(self, bb, rect.label, BOLD, size, rect.x + self:px(14), rect.y, inner, rect.h, "center", rect.primary and WHITE or BLACK)
+            goto continue
+        end
+        Draw.box(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false)
+        local icon = BUTTON_ICONS[rect.id]
+        local inner = rect.w - self:px(8)
+        -- A name that is only a sign, such as "<", says nothing the icon does not.
+        if icon and not rect.label:find("[%a\128-\255]") then
+            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + math.floor(rect.h / 2), self:px(28))
+        elseif icon and MoveText.width(rect.label, BOLD, 13 * self.scale) <= inner then
+            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + self:px(22), self:px(24))
+            self:paint_text(bb, rect.label, BOLD, 13, rect.x + self:px(4), rect.y + self:px(37), inner, self:px(20), "center")
+        else
+            local box = TextBoxWidget:new{
+                text = rect.label,
+                face = face(BOLD, 15 * self.scale),
+                width = inner,
+                alignment = "center",
+                fgcolor = BLACK,
+                bgcolor = WHITE,
+            }
+            local measured = box:getSize()
+            box:paintTo(bb, rect.x + self:px(4), rect.y + math.floor((rect.h - measured.h) / 2))
+            box:free()
+        end
+        ::continue::
     end
 end
 
@@ -621,20 +778,28 @@ function BoardScreen:banner_fits(text)
     if known then
         return known.fits
     end
-    local box, fits = self:banner_box(text, self.top_bar)
+    local box, fits = self:banner_box(text, self.banner_rect)
     box:free()
     return fits
 end
 
-function BoardScreen:paint_banner(bb, rect, text)
+-- The text of a lesson in a card on top of the board.
+function BoardScreen:paint_banner(bb, text)
+    local card = self.top_bar
+    Draw.card(bb, card.x, card.y, card.w, card.h, self.scale)
+    local rect = self.banner_rect
     local pad = self:px(12)
     local box, fits = self:banner_box(text, rect)
     -- For the layout check: even the smallest size did not fit.
     self.banner_overflow = not fits
+    -- Drawn in a buffer the size of the card, so a text that does not fit is cut at its edge, from its start.
     local h = box:getSize().h
-    box:paintTo(bb, rect.x + pad, rect.y + math.floor((rect.h - h) / 2))
+    local area = Blitbuffer.new(rect.w, rect.h, bb:getType())
+    area:paintRect(0, 0, rect.w, rect.h, WHITE)
+    box:paintTo(area, pad, fits and math.floor((rect.h - h) / 2) or 0)
     box:free()
-    bb:paintRect(0, rect.y + rect.h - 1, self.width, 1, Blitbuffer.Color8(0xCC))
+    bb:blitFrom(area, rect.x, rect.y, 0, 0, rect.w, rect.h)
+    area:free()
 end
 
 function BoardScreen:square_center(square)
@@ -673,15 +838,15 @@ local function paint_triangle(bb, points, color)
     end
 end
 
--- An arrow from the center of one square to the edge of the head on another, or a ring on a square.
+-- An arrow from the center of one square to the edge of the head on another, or a ring on a square, in black or dark
+-- gray with a white edge, so it shows over the pieces and the squares alike.
 function BoardScreen:paint_shape(bb, shape)
     local color = SHAPE_INK[shape.brush] or HINT_INK
-    local x0, y0 = self:square_center(shape.from)
     if not shape.to then
-        local r = math.floor(self.square * 0.42)
-        bb:paintCircle(x0, y0, r, color, self:px(4))
+        self:paint_ring(bb, shape.from, color)
         return
     end
+    local x0, y0 = self:square_center(shape.from)
     local x1, y1 = self:square_center(shape.to)
     local dx, dy = x1 - x0, y1 - y0
     local length = math.sqrt(dx * dx + dy * dy)
@@ -690,82 +855,126 @@ function BoardScreen:paint_shape(bb, shape)
     end
     local ux, uy = dx / length, dy / length
     local head, half_w = self.square * 0.38, self.square * 0.22
-    local bx, by = x1 - ux * head, y1 - uy * head
-    paint_line(bb, x0, y0, bx, by, math.max(3, self:px(7)), color)
-    paint_triangle(bb, { { x1, y1 }, { bx - uy * half_w, by + ux * half_w }, { bx + uy * half_w, by - ux * half_w } }, color)
+    local thickness = math.max(3, self:px(7))
+    local edge = math.max(2, self:px(2))
+    for pass = 1, 2 do
+        local grow = pass == 1 and edge or 0
+        local ink = pass == 1 and WHITE or color
+        local tip_x, tip_y = x1 + ux * grow, y1 + uy * grow
+        local bx, by = x1 - ux * (head + grow), y1 - uy * (head + grow)
+        local w = half_w + grow * 1.6
+        paint_line(bb, x0, y0, x1 - ux * head, y1 - uy * head, thickness + 2 * grow, ink)
+        paint_triangle(bb, { { tip_x, tip_y }, { bx - uy * w, by + ux * w }, { bx + uy * w, by - ux * w } }, ink)
+    end
 end
 
--- A star to collect: a white one over a larger black one, so it shows on any square.
+-- A star to collect, in black.
 function BoardScreen:paint_star(bb, square)
     local x, y = self:square_position(square)
-    local size = math.floor(self.square * 0.62)
-    self:paint_text(bb, "\226\152\133", PIECE_FONT, size * 1.3 / self.scale, x, y, self.square, self.square, "center", BLACK)
-    self:paint_text(bb, "\226\152\133", PIECE_FONT, size / self.scale, x, y, self.square, self.square, "center", WHITE)
+    local size = math.floor(self.square * 0.7)
+    self:paint_text(bb, "\226\152\133", PIECE_FONT, size / self.scale, x, y, self.square, self.square, "center", BLACK)
+end
+
+-- A bar in a pill filled as far as the work went, with the status written over it.
+function BoardScreen:paint_progress(bb, rect, progress)
+    local m = self:px(16)
+    local h = math.min(rect.h - self:px(4), self:px(28))
+    local x, y, w = m, rect.y + math.floor((rect.h - h) / 2), rect.w - 2 * m
+    local total = math.max(1, progress.total or 1)
+    local radius = math.floor(h / 2)
+    bb:paintRect(x, y, w, h, WHITE)
+    bb:paintRect(x, y, math.floor(w * math.min(total, progress.done or 0) / total), h, PROGRESS_FILL)
+    Draw.round_corners(bb, x, y, w, h, radius, Style.PAPER)
+    bb:paintBorder(x, y, w, h, self:px(2), BLACK, radius)
+    self:paint_text(bb, self.state.status, BOLD, 15, x + self:px(10), y, w - self:px(20), h, "center")
+end
+
+-- A work under way in place of the bottom plate, on a board without a line of text: what it is on the left, how far on
+-- the right (progress.detail), and the bar under them.
+function BoardScreen:paint_progress_card(bb, rect, progress)
+    local radius = self:px(14)
+    bb:paintRoundedRect(rect.x, rect.y, rect.w, rect.h, WHITE, radius)
+    bb:paintBorder(rect.x, rect.y, rect.w, rect.h, math.max(1, math.floor(Style.BUTTON_BORDER * self.scale + 0.5)), BLACK, radius)
+    local m = self:px(18)
+    local inner = rect.w - 2 * m
+    local detail_w = progress.detail and math.min(math.floor(inner / 2), MoveText.width(progress.detail, REGULAR, 13 * self.scale) + self:px(4)) or 0
+    self:paint_text(bb, self.state.status, BOLD, 15, rect.x + m, rect.y + self:px(4), inner - detail_w - self:px(8), self:px(24), "left")
+    if progress.detail then
+        self:paint_text(bb, progress.detail, REGULAR, 13, rect.x + m + inner - detail_w, rect.y + self:px(4), detail_w, self:px(24), "right", Style.DARK)
+    end
+    local h = self:px(14)
+    local x, y = rect.x + m, rect.y + rect.h - h - self:px(8)
+    local total = math.max(1, progress.total or 1)
+    bb:paintRect(x, y, inner, h, WHITE)
+    bb:paintRect(x, y, math.floor(inner * math.min(total, progress.done or 0) / total), h, BLACK)
+    Draw.round_corners(bb, x, y, inner, h, math.floor(h / 2), WHITE)
+    bb:paintBorder(x, y, inner, h, self:px(2), BLACK, math.floor(h / 2))
 end
 
 function BoardScreen:paint_game(bb)
     if self.banner_lines then
-        self:paint_banner(bb, self.top_bar, self.state.banner or "")
+        self:paint_banner(bb, self.state.banner or "")
     else
-        self:paint_bar(bb, self.top_bar, self.state.top)
+        self:paint_bar(bb, self.top_bar, self.state.top, self:side_piece(true))
     end
     self:paint_board(bb)
-    self:paint_bar(bb, self.bottom_bar, self.state.bottom)
-    local rect = self.status_rect
     local progress = self.state.progress
-    if progress then
-        -- A bar filled as far as the work went, with the status written over it.
-        local m = self:px(16)
-        local h = math.min(rect.h - self:px(6), self:px(28))
-        local x, y, w = m, rect.y + math.floor((rect.h - h) / 2), rect.w - 2 * m
-        local total = math.max(1, progress.total or 1)
-        bb:paintRect(x, y, math.floor(w * math.min(total, progress.done or 0) / total), h, PROGRESS_FILL)
-        bb:paintBorder(x, y, w, h, self:px(2), BLACK)
-        self:paint_text(bb, self.state.status, BOLD, 16, x + self:px(6), y, w - self:px(12), h, "center")
-    elseif self.state.panel then
-        self:paint_panel(bb, rect, self.state.panel)
-    elseif self.state.status then
-        MoveText.paint(self, bb, self.state.status, REGULAR, 18, self:px(10), rect.y, rect.w - self:px(20), rect.h, "center")
+    if progress and self.status_rect.h == 0 then
+        self:paint_progress_card(bb, self.bottom_bar, progress)
+    else
+        self:paint_bar(bb, self.bottom_bar, self.state.bottom, self:side_piece(false))
+    end
+    local rect = self.status_rect
+    if rect.h > 0 then
+        if progress then
+            self:paint_progress(bb, rect, progress)
+        elseif self.state.panel then
+            self:paint_panel(bb, rect, self.state.panel)
+        elseif self.state.status then
+            MoveText.paint(self, bb, self.state.status, REGULAR, 16, self:px(14), rect.y, rect.w - self:px(28), rect.h, "center", Style.DARK)
+        end
     end
     self:paint_card(bb)
 end
 
--- The panel of a move, in two lines: the move large with its sign, its judgment in a tag (solid for a mistake,
--- outlined for a phase that starts there); then the better move, with its arrow on the board, and the evaluation in
--- words. panel: move, tag, tag_solid, detail, evaluation, each of them optional.
+-- The panel of a move, in a card in two lines: the move large with its sign, its judgment in a tag (solid for a
+-- mistake, outlined for a phase that starts there); then the better move, with its arrow on the board, and the
+-- evaluation in words. panel: move, tag, tag_solid, detail, evaluation, each of them optional.
 function BoardScreen:paint_panel(bb, rect, panel)
-    local m = self:px(12)
-    bb:paintRect(m, rect.y + self:px(2), rect.w - 2 * m, 1, Blitbuffer.Color8(0xDD))
+    local shadow = self:px(Style.CARD_SHADOW)
+    local card_x, card_y = self:px(10), rect.y + self:px(6)
+    local card_w, card_h = self.width - 2 * self:px(10) - shadow, rect.h - self:px(6) - shadow
+    Draw.card(bb, card_x, card_y, card_w, card_h, self.scale)
+    local m = card_x + self:px(14)
+    local inner = card_w - 2 * self:px(14)
     local line_h = self:px(34)
-    local top = rect.y + self:px(5)
+    local top = card_y + math.floor((card_h - 2 * line_h) / 2)
     local tag_w = 0
     if panel.tag then
-        tag_w = math.min(self:px(190), MoveText.width(panel.tag, BOLD, 17 * self.scale) + self:px(24))
-        local x, y, h = rect.w - m - tag_w, top + self:px(4), line_h - self:px(8)
-        if panel.tag_solid then
-            bb:paintRect(x, y, tag_w, h, BLACK)
-        else
-            bb:paintBorder(x, y, tag_w, h, self:px(2), BLACK)
-        end
-        self:paint_text(bb, panel.tag, BOLD, 17, x, y, tag_w, h, "center", panel.tag_solid and WHITE or BLACK)
+        tag_w = math.min(self:px(190), MoveText.width(panel.tag, BOLD, 16 * self.scale) + self:px(28))
+        local h = line_h - self:px(6)
+        local x, y = m + inner - tag_w, top + self:px(3)
+        Draw.pill(bb, x, y, tag_w, h, self.scale, panel.tag_solid)
+        self:paint_text(bb, panel.tag, BOLD, 16, x + self:px(6), y, tag_w - self:px(12), h, "center", panel.tag_solid and WHITE or BLACK)
         tag_w = tag_w + self:px(10)
     end
     if panel.move then
-        MoveText.paint(self, bb, panel.move, BOLD, 23, m, top, rect.w - 2 * m - tag_w, line_h, "left")
+        MoveText.paint(self, bb, panel.move, BOLD, 23, m, top, inner - tag_w, line_h, "left")
     end
     local bottom = top + line_h
     local evaluation_w = 0
     if panel.evaluation then
-        evaluation_w = math.min(math.floor(rect.w / 2), MoveText.width(panel.evaluation, REGULAR, 16 * self.scale) + self:px(4))
-        self:paint_text(bb, panel.evaluation, REGULAR, 16, rect.w - m - evaluation_w, bottom, evaluation_w, line_h, "right", CARD_GRAY)
+        evaluation_w = math.min(math.floor(inner / 2), MoveText.width(panel.evaluation, BOLD, 15 * self.scale) + self:px(4))
+        self:paint_text(bb, panel.evaluation, BOLD, 15, m + inner - evaluation_w, bottom, evaluation_w, line_h, "right", Style.DARK)
         evaluation_w = evaluation_w + self:px(10)
     end
     if panel.detail then
-        MoveText.paint(self, bb, panel.detail, REGULAR, 17, m, bottom, rect.w - 2 * m - evaluation_w, line_h, "left")
+        MoveText.paint(self, bb, panel.detail, REGULAR, 16, m, bottom, inner - evaluation_w, line_h, "left")
     end
 end
 
 -- The card over the board, and the rectangles of its buttons, in the same place on every paint.
+-- card: title, text, detail, icon (an icon of ui/draw.lua) or piece, in a black circle on top, and buttons.
 function BoardScreen:card_layout()
     local card = self.state.card
     if not card then
@@ -773,9 +982,9 @@ function BoardScreen:card_layout()
     end
     local board = self.board_rect
     local m = self:px(20)
-    local w = math.min(board.w - 2 * math.floor(self.square / 2), self:px(500))
+    local w = math.min(board.w - math.floor(self.square / 2), self:px(470))
     local x = board.x + math.floor((board.w - w) / 2)
-    local button_h, gap = self:px(62), self:px(14)
+    local primary_h, secondary_h, gap = self:px(Style.BUTTON), self:px(46), self:px(12)
     local secondary = {}
     local primary
     for _, button in ipairs(card.buttons or {}) do
@@ -785,24 +994,26 @@ function BoardScreen:card_layout()
             secondary[#secondary + 1] = button
         end
     end
-    local h = self:px(160) + (primary and (button_h + gap) or 0) + (#secondary > 0 and (button_h + gap) or 0) + self:px(6)
+    local head = (card.icon or card.piece) and self:px(64) or 0
+    local body = self:px(150)
+    local h = self:px(14) + head + body + (primary and (primary_h + gap) or 0) + (#secondary > 0 and (secondary_h + gap) or 0) + self:px(8)
     -- Low on the board, so the top ranks, where a mated king often stands, stay in sight.
     local y = math.max(board.y + self:px(8), board.y + board.h - h - math.floor(self.square / 2))
     local rects = {}
-    local cursor = y + self:px(160)
+    local cursor = y + self:px(14) + head + body
     local inner = w - 2 * m
     if primary then
-        rects[#rects + 1] = { id = primary.id, label = primary.label, primary = true, x = x + m, y = cursor, w = inner, h = button_h }
-        cursor = cursor + button_h + gap
+        rects[#rects + 1] = { id = primary.id, label = primary.label, primary = true, x = x + m, y = cursor, w = inner, h = primary_h }
+        cursor = cursor + primary_h + gap
     end
     local count = #secondary
     if count > 0 then
         local each = math.floor((inner - (count - 1) * self:px(12)) / count)
         for index, button in ipairs(secondary) do
-            rects[#rects + 1] = { id = button.id, label = button.label, x = x + m + (index - 1) * (each + self:px(12)), y = cursor, w = each, h = button_h }
+            rects[#rects + 1] = { id = button.id, label = button.label, x = x + m + (index - 1) * (each + self:px(12)), y = cursor, w = each, h = secondary_h }
         end
     end
-    return { x = x, y = y, w = w, h = h, buttons = rects }
+    return { x = x, y = y, w = w, h = h, head = head, buttons = rects }
 end
 
 function BoardScreen:paint_card(bb)
@@ -811,34 +1022,39 @@ function BoardScreen:paint_card(bb)
         return
     end
     local card = self.state.card
-    local x, y, w, h = layout.x, layout.y, layout.w, layout.h
-    local shadow = self:px(8)
-    bb:paintRect(x + shadow, y + shadow, w, h, CARD_SHADOW)
-    bb:paintRect(x, y, w, h, WHITE)
-    bb:paintBorder(x, y, w, h, self:px(3), BLACK)
-    self:paint_text(bb, card.title, BOLD, 44, x, y + self:px(18), w, self:px(60), "center")
-    self:paint_text(bb, card.text, BOLD, 22, x + self:px(12), y + self:px(80), w - self:px(24), self:px(36), "center")
-    self:paint_text(bb, card.detail, REGULAR, 16, x + self:px(12), y + self:px(116), w - self:px(24), self:px(28), "center", CARD_GRAY)
-    for _, rect in ipairs(layout.buttons) do
-        if rect.primary then
-            bb:paintRect(rect.x, rect.y, rect.w, rect.h, BLACK)
+    local x, y, w = layout.x, layout.y, layout.w
+    Draw.card(bb, x, y, w, layout.h, self.scale)
+    local top = y + self:px(14)
+    if layout.head > 0 then
+        local radius = self:px(28)
+        local cx = x + math.floor(w / 2)
+        bb:paintCircle(cx, top + radius, radius, BLACK)
+        if card.icon then
+            Draw.icon(bb, card.icon, cx, top + radius, self:px(28), WHITE)
         else
-            bb:paintBorder(rect.x, rect.y, rect.w, rect.h, self:px(2), BLACK)
+            BoardScreen.paint_piece_fit(bb, self.piece_set, card.piece, cx, top + radius, math.floor(radius * 1.4))
         end
-        self:paint_text(bb, rect.label, BOLD, rect.primary and 21 or 19, rect.x + self:px(6), rect.y, rect.w - self:px(12), rect.h, "center", rect.primary and WHITE or BLACK)
+        top = top + layout.head
+    end
+    self:paint_text(bb, card.title, BOLD, 44, x, top, w, self:px(64), "center")
+    self:paint_text(bb, card.text, BOLD, 20, x + self:px(12), top + self:px(66), w - self:px(24), self:px(34), "center")
+    self:paint_text(bb, card.detail, REGULAR, 15, x + self:px(12), top + self:px(102), w - self:px(24), self:px(28), "center", Style.DARK)
+    for _, rect in ipairs(layout.buttons) do
+        Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, rect.primary)
+        self:paint_text(bb, rect.label, BOLD, rect.primary and 20 or 17, rect.x + self:px(10), rect.y, rect.w - self:px(20), rect.h, "center", rect.primary and WHITE or BLACK)
     end
 end
 
 function BoardScreen:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    bb:paintRect(0, 0, self.width, self.height, WHITE)
+    bb:paintRect(0, 0, self.width, self.height, Style.PAPER)
     -- The game comes from Lichess or from a save. If it cannot be drawn, a short message takes its place, and the
     -- buttons below, with the way back, still work.
     local ok, err = pcall(self.paint_game, self, bb)
     if not ok then
         logger.warn("Ink Knight: could not draw the board", err)
         local bottom = self.buttons_rect.y
-        bb:paintRect(0, 0, self.width, bottom, WHITE)
+        bb:paintRect(0, 0, self.width, bottom, Style.PAPER)
         self:paint_text(bb, self.broken_text or "", REGULAR, 18, self:px(10), 0, self.width - self:px(20), bottom, "center")
     end
     self:paint_buttons(bb)
@@ -852,7 +1068,7 @@ end
 -- Asleep, it waits for the device to wake up, and then the whole board is drawn again.
 function BoardScreen:dirty(mode, x, y, w, h)
     local region = Geom:new{ x = x, y = y, w = w, h = h }
-    Sleep.dirty(self, function() return mode, region end)
+    Sleep.dirty(self, function() return Refresh.settle(mode), region end)
 end
 
 function BoardScreen:dirty_rect(mode, rect)
@@ -881,6 +1097,7 @@ function BoardScreen:refresh(what)
         Sleep.dirty(self, function() return mode, self.dimen end)
         return
     end
+    -- Each square changed on its own, without a flash. A square that loses a dark mark can keep a light ghost of it until the flash of the count clears it: flashing those squares, the e-ink of the Kindle flashed the four squares around a short diagonal move, or the squares one after the other, or, sent together, the gray ground beside them too (tried on the Kindle, 2026-11-14), and the reader chose no flash.
     if #changes.squares > MAX_SEPARATE_SQUARES then
         self:dirty("ui", self.board_x, self.board_y, self.square * 8, self.square * 8)
     else
@@ -891,7 +1108,10 @@ function BoardScreen:refresh(what)
     end
     if changes.top then self:dirty_rect("ui", self.top_bar) end
     if changes.bottom then self:dirty_rect("ui", self.bottom_bar) end
-    if changes.status then self:dirty_rect("ui", self.status_rect) end
+    if changes.status then
+        -- Without a line of text, the status shows only in the card of a work under way, over the bottom plate.
+        self:dirty_rect("ui", self.status_rect.h > 0 and self.status_rect or self.bottom_bar)
+    end
     if changes.buttons then self:dirty_rect("ui", self.buttons_rect) end
 end
 

@@ -77,16 +77,22 @@ home = Home:new{ version = "0" }
 UIManager:show(home)
 home.settings:delSetting("offline_game")
 
--- White, chosen: nothing to take back at the start, then a move and the answer go back together.
+-- White, chosen: the bar stays the same through the game, and what cannot be done does nothing: nothing to take back at the start, no hint while the engine thinks; then a move and the answer go back together.
 do
     local game = OfflineGame.open(home, { level = 1, color_choice = "white" })
     check(game.my_color == "w", "choosing white should give white")
-    check(buttons(game) == "back hint resign", "at the start: " .. buttons(game))
+    check(buttons(game) == "back hint undo moves resign", "at the start: " .. buttons(game))
+    game:on_button("undo")
+    game:on_button("moves")
+    check(game.moves == "" and #home.pages == 0, "undo and the list should do nothing before the first move")
     play(game, "e2", "e4")
     check(game.thinking, "the engine should think after the move")
+    check(buttons(game) == "back hint undo moves resign", "while the engine thinks: " .. buttons(game))
+    game:on_button("hint")
+    check(not game.hinting, "a hint should do nothing while the engine thinks")
     run_scheduled()
     check(count(game.moves) == 2, "the engine should answer, moves: " .. game.moves)
-    check(buttons(game) == "back undo hint moves resign", "after a move: " .. buttons(game))
+    check(buttons(game) == "back hint undo moves resign", "after a move: " .. buttons(game))
     game:on_button("undo")
     check(game.moves == "", "undo should take back the move and the answer, moves: " .. game.moves)
     check(game.position.turn == "w", "it should be white's turn again")
@@ -127,7 +133,8 @@ do
     check(game.my_color == "b", "choosing black should give black")
     run_scheduled()
     check(count(game.moves) == 1, "the engine should open, moves: " .. game.moves)
-    check(not buttons(game):find("undo", 1, true), "nothing of black to take back yet: " .. buttons(game))
+    game:on_button("undo")
+    check(count(game.moves) == 1, "undo should do nothing with nothing of black to take back, moves: " .. game.moves)
     local legal = Chess.legal_moves(game.position)[1]
     play(game, Chess.square_name(legal.from), Chess.square_name(legal.to))
     run_scheduled()
@@ -167,7 +174,7 @@ do
     local game = OfflineGame.open(home, { two_players = true })
     run_scheduled()
     check(game.screen.state.status == s.local_turn_w, "white should start: " .. tostring(game.screen.state.status))
-    check(buttons(game) == "back flip resign", "two players at the start: " .. buttons(game))
+    check(buttons(game) == "back undo moves flip resign", "two players at the start: " .. buttons(game))
     check(game.screen.state.bottom.name == s.color_white and game.screen.state.top.name == s.color_black, "white below, black above")
     play(game, "e2", "e4")
     run_scheduled()
@@ -226,10 +233,8 @@ end
 do
     home.settings:delSetting("offline_game")
     local game = OfflineGame.open(home, { level = 1, color_choice = "white" })
-    check(not buttons(game):find("moves", 1, true), "no list before the first move: " .. buttons(game))
     play(game, "e2", "e4")
     run_scheduled()
-    check(buttons(game):find("moves", 1, true), "the list should be offered after a move: " .. buttons(game))
     game:on_button("moves")
     local page = home.pages[#home.pages]
     check(page and page.title == s.move_list_title, "the list should open")
@@ -335,7 +340,7 @@ do
     local list = home.pages[#home.pages]
     local heading_before
     for index, line in ipairs(list.lines) do
-        if line.kind == "section" and line.text == s.review_middlegame then
+        if line.kind == "phase" and line.text == s.review_middlegame then
             heading_before = list.lines[index + 1]
         end
     end

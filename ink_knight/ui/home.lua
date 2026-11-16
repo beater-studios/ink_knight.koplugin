@@ -23,6 +23,7 @@ local CorrespondenceScreen = require("ink_knight/ui/correspondence_screen")
 local Coordinates = require("ink_knight/coordinates")
 local CoordinatesScreen = require("ink_knight/ui/coordinates_screen")
 local CreateTokenScreen = require("ink_knight/ui/create_token_screen")
+local Draw = require("ink_knight/ui/draw")
 local EditorScreen = require("ink_knight/ui/editor_screen")
 local Game = require("ink_knight/game")
 local I18n = require("ink_knight/i18n")
@@ -138,6 +139,12 @@ function Home:setup()
     Page.refresh:reset()
     Page.setup(self)
     self:schedule_minute()
+    -- The check of Stockfish, after the first page is on screen, so the offline menu does not wait for it.
+    UIManager:scheduleIn(1, function()
+        if not self.is_closed then
+            EngineAnalysis.prepare(self)
+        end
+    end)
 end
 
 -- One clock for all the screens: only the one on top shows the new minute. Its timers, like every timer of the
@@ -301,7 +308,7 @@ function Home:open_events()
         if not self.is_closed and not self.suspended then
             Sleep.schedule(self, EVENT_RECONNECT, function() self:open_events() end)
         end
-    end)
+    end, Net.SILENCE)
 end
 
 function Home:on_event(event)
@@ -708,8 +715,10 @@ function Home:game_row(game)
     return {
         kind = "game",
         text = opponent,
-        detail = game.isMyTurn and s.your_turn or s.their_turn,
+        detail = s.perf_names[game.perf or game.speed] or (game.isMyTurn and s.your_turn or s.their_turn),
         value = Api.format_left(game.secondsLeft),
+        tag = game.isMyTurn and s.your_turn or nil,
+        piece = game.color == "black" and "k" or (game.color == "white" and "K" or nil),
         mine = game.isMyTurn == true,
         callback = function() self:open_game(game.gameId) end,
     }
@@ -904,8 +913,11 @@ end
 
 -- opts.close_on_tap: for a choice that goes back to where it came from. Otherwise the page stays underneath,
 -- and the way back goes one step at a time.
+-- opts.rise: the choice rises from the foot of the screen in a card, over what is behind it, which a tap beside
+-- the card goes back to; for a few tiles, such as the promotion.
 function Home:choose(title, rows, opts)
-    return self:open_page{ title = title, rows = rows, close_on_tap = opts and opts.close_on_tap }
+    opts = opts or {}
+    return self:open_page{ title = title, rows = rows, close_on_tap = opts.close_on_tap, dialog = opts.rise and "bottom" or nil, hint = opts.rise and self.strings.tap_outside_to_cancel or nil }
 end
 
 -- What ends a path through several pages, such as starting a game, closes them all.
@@ -915,7 +927,8 @@ function Home:close_pages()
     end
 end
 
--- args: title, text, ok_text, cancel_text, on_ok, on_cancel. Going back answers nothing.
+-- args: title, text, ok_text, cancel_text, on_ok, on_cancel, and icon, the name of an icon of ui/draw.lua over
+-- the title. A card over the screen, which stays visible around it. Going back, or a tap beside it, answers nothing.
 function Home:ask(args)
     local s = self.strings
     local rows = {}
@@ -924,7 +937,7 @@ function Home:ask(args)
     end
     rows[#rows + 1] = { kind = "primary", text = args.ok_text or s.yes, callback = args.on_ok }
     rows[#rows + 1] = { kind = "secondary", text = args.cancel_text or s.cancel, callback = args.on_cancel or function() end }
-    return self:open_page{ title = args.title, rows = rows, close_on_tap = true }
+    return self:open_page{ title = args.title, rows = rows, close_on_tap = true, dialog = "center", icon = args.icon }
 end
 
 -- The promotion of a game: a queen at once when the reader asked for it, otherwise the choice. Lessons, practice and
@@ -953,10 +966,12 @@ function Home:choose_promotion(moves, on_move)
             end
         end }
     end
-    self:choose(s.promote_to, { { kind = "tiles", columns = 2, fill = true, items = {
-        tile(s.queen, "q", ICON_QUEEN), tile(s.rook, "r", ICON_ROOK),
-        tile(s.bishop, "b", ICON_BISHOP), tile(s.knight, "n", ICON_KNIGHT),
-    } } }, { close_on_tap = true })
+    local queen = tile(s.queen, "q", ICON_QUEEN)
+    -- The queen, almost always the one, in black.
+    queen.solid = true
+    self:choose(s.promote_to, { { kind = "tiles", columns = 4, items = {
+        queen, tile(s.rook, "r", ICON_ROOK), tile(s.bishop, "b", ICON_BISHOP), tile(s.knight, "n", ICON_KNIGHT),
+    } } }, { close_on_tap = true, rise = true })
 end
 
 -- An option as saved, or its default when the save has a value that no longer exists.
@@ -1334,7 +1349,7 @@ function Home:sent_menu()
             }
         end
         if #rows == 0 then
-            rows[1] = { kind = "text", text = s.no_sent_challenges, center = true }
+            rows[1] = { kind = "state", piece = "P", fill = true, text = s.no_sent_challenges }
         end
         return rows
     end }
@@ -1459,7 +1474,9 @@ end
 -- opts: title, labels (by name), names, current and on_pick(name); note, a text above the choices; sample(bb, name,
 -- x, y, size), drawn before each name, two sizes wide, so the drawings line up.
 function Home:choice_row(page, opts)
-    return { text = opts.title, value = opts.labels[opts.current], wide_value = true, callback = function()
+    -- With a sample, the row shows the current choice before its name, and changes with it.
+    local preview = opts.sample and function(bb, x, y, size) opts.sample(bb, opts.current, x, y, size) end
+    return { text = opts.title, value = opts.labels[opts.current], wide_value = true, preview = preview, preview_columns = preview and 2 or nil, callback = function()
         local rows = {}
         if opts.note then
             rows[1] = { kind = "text", text = opts.note }
@@ -1705,7 +1722,7 @@ function Home:choose_clock(title, can_skip, on_pick)
     local last = self:option("clock_preset")
     local rows = {}
     if can_skip then
-        rows[1] = { text = s.clock_none, value = last == "none" and "✓" or nil, callback = function()
+        rows[1] = { text = s.clock_none, tag = last == "none" and s.last_used or nil, callback = function()
             self:save_setting("clock_preset", "none")
             on_pick(nil)
         end }
@@ -1715,7 +1732,7 @@ function Home:choose_clock(title, can_skip, on_pick)
         rows[#rows + 1] = {
             text = preset,
             detail = string.format(s.clock_detail, math.floor(seconds / 60), increment),
-            value = preset == last and "✓" or nil,
+            tag = preset == last and s.last_used or nil,
             callback = function()
                 self:save_setting("clock_preset", preset)
                 on_pick(preset)
@@ -2022,12 +2039,13 @@ function Home:correspondence_rows()
     for _, entry in ipairs(listed) do
         local game = entry.game
         newest = math.max(newest, game.at or 0)
-        local detail = game.pending and s.correspondence_move_saved or (entry.isMyTurn and s.your_turn or s.their_turn)
+        local detail = game.pending and s.correspondence_move_saved or (entry.isMyTurn and s.perf_names.correspondence or s.their_turn)
         rows[#rows + 1] = {
             kind = "game",
             text = game.opponent or s.anonymous,
             detail = detail,
             value = Api.format_left(entry.secondsLeft),
+            tag = entry.isMyTurn and not game.pending and s.your_turn or nil,
             mine = entry.isMyTurn,
             callback = function() CorrespondenceScreen.open(self, game.id) end,
         }
@@ -2441,11 +2459,11 @@ function Home:puzzle_history()
             }
         end
         if history.loading then
-            rows[#rows + 1] = { kind = "text", text = s.loading, center = true }
+            rows[#rows + 1] = { kind = "state", piece = "N", fill = true, text = s.loading }
         elseif history.problem then
-            rows[#rows + 1] = { kind = "text", text = history.problem, center = true }
+            rows[#rows + 1] = { kind = "state", piece = "r", fill = true, text = history.problem }
         elseif history.done and #history.entries == 0 then
-            rows[#rows + 1] = { kind = "text", text = s.puzzle_history_none, center = true }
+            rows[#rows + 1] = { kind = "state", piece = "P", fill = true, text = s.puzzle_history_none }
         end
         if not history.done and not history.loading and not history.problem then
             rows[#rows + 1] = { kind = "secondary", text = s.puzzle_history_more, callback = load_more }
@@ -2538,7 +2556,7 @@ function Home:show_puzzle_openings()
         end
         if not self.puzzle_openings then
             local waiting = self.fetching_openings or (self.net and not self.openings_problem)
-            rows[#rows + 1] = { kind = "text", text = waiting and s.loading or (self.openings_problem or s.no_network), center = true }
+            rows[#rows + 1] = { kind = "state", piece = waiting and "N" or "r", fill = true, text = waiting and s.loading or (self.openings_problem or s.no_network) }
             return rows
         end
         for _, family in ipairs(self.puzzle_openings) do
@@ -2745,6 +2763,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
                         kind = "game",
                         text = text,
                         detail = detail,
+                        piece = on_black and "k" or "K",
                         callback = function()
                             self:open_review_of(game, { flipped = on_black, bookmarked = bookmarked })
                         end,
@@ -2752,7 +2771,7 @@ function Home:show_game_list(request, player_id, title, empty_text, bookmarked)
                 end
             end
             if #rows == 0 then
-                self:info(empty_text)
+                self:open_list(title or s.past_games, { { kind = "state", piece = "P", fill = true, text = empty_text } })
             else
                 self:open_list(title or s.past_games, rows)
             end
@@ -3006,6 +3025,7 @@ function Home:onCloseWidget()
     end
     self:stop_network()
     BoardScreen.clear_art_cache()
+    Draw.clear_cache()
     PuzzlePack.release()
     Page.onCloseWidget(self)
 end

@@ -32,6 +32,8 @@ function PracticeScreen.open(app, study, index, opts)
     self.screen = BoardScreen:new{
         state = {},
         banner_lines = 4,
+        -- The lessons name squares, so the board always has its coordinates.
+        coordinates = true,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
@@ -271,6 +273,8 @@ function PracticeScreen:render(what)
         flipped = chapter.color == "b",
         position = position,
         last_move = last_move,
+        -- A commented game is read, so its last move shows; a chapter to play marks nothing.
+        reading = chapter.kind == "lesson",
         selected = self.selected,
         targets = self.targets,
         shapes = shapes,

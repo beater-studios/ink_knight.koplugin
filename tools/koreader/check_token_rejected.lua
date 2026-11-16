@@ -64,9 +64,17 @@ local function run_network(home)
     end
 end
 
+-- What answers a tap on the rows, without the buttons that turn the sheets.
 local function hits_of(page)
     page:paintTo(Screen.bb, 0, 0)
-    return page.hits
+    local footer = page.height - require("ink_knight/ui/status_strip").height() - page:px(58)
+    local hits = {}
+    for _, hit in ipairs(page.hits) do
+        if #page.sheets == 1 or hit.y < footer then
+            hits[#hits + 1] = hit
+        end
+    end
+    return hits
 end
 
 local function new_home()

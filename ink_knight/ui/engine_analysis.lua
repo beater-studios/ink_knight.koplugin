@@ -2,6 +2,7 @@
 -- of the screen, then each move judged as Lichess judges it (engine_review.lua). Only where the plugin has a Stockfish
 -- for the device (stockfish.lua) and it runs there; elsewhere the offline games keep the small engine.
 local lfs = require("libs/libkoreader-lfs")
+local UIManager = require("ui/uimanager")
 local logger = require("logger")
 local util = require("ffi/util")
 
@@ -50,27 +51,101 @@ function EngineAnalysis.check(binary, dir)
     return ready
 end
 
--- The answer of check for each binary in this session.
+-- The answer of check for each binary in this session, and the checks under way in the background.
 local checked = {}
+local probes = {}
 
--- Whether the plugin's Stockfish can be used here, asked by everything that would use it. The first time on a device the engine is started to see (0.6 s on the Kindle, at most CHECK_SECONDS where it hangs). Only a yes is kept in the settings, with the binary's path, size and date, so it is not asked again until an update brings another binary; a no lasts this session only, since it may come from a busy moment, and the next session asks again.
+local function key_of(binary)
+    return { binary = binary, size = Stockfish.size(binary), modified = lfs.attributes(binary, "modification") }
+end
+
+local function saved_yes(app, key)
+    local saved = app.settings:readSetting("engine_check")
+    return type(saved) == "table" and saved.binary == key.binary and saved.size == key.size and saved.modified == key.modified
+end
+
+local function keep(app, binary, key, ready)
+    checked[binary] = ready
+    if ready then
+        app:save_setting("engine_check", key)
+    else
+        logger.warn("Ink Knight: Stockfish did not answer on this device, the small engine stays for this session")
+    end
+end
+
+-- What a check under way has heard: true once the engine answered, false if it ended or is late, nil while waiting.
+local function heard(probe)
+    for _, line in ipairs(probe.engine:read_lines()) do
+        probe.ready = probe.ready or line == "readyok"
+        probe.ended = probe.ended or line == Stockfish.ENDED
+    end
+    if probe.ready then
+        return true
+    elseif probe.ended or now() >= probe.deadline then
+        return false
+    end
+    return nil
+end
+
+local function finish(app, binary, probe, ready)
+    probes[binary] = nil
+    probe.engine:stop()
+    keep(app, binary, probe.key, ready)
+end
+
+-- Starts the check of available without waiting for it, so the first page that needs Stockfish (the levels of the offline menu) opens at once: called when the plugin opens. The engine is looked at between the frames of the screen, and a page that asks before it answered waits only for the rest.
+function EngineAnalysis.prepare(app)
+    local binary = app.plugin_dir and Stockfish.find(app.plugin_dir)
+    if not binary or checked[binary] ~= nil or probes[binary] then
+        return
+    end
+    local key = key_of(binary)
+    if saved_yes(app, key) then
+        checked[binary] = true
+        return
+    end
+    local engine = Stockfish.start(binary, app:engine_dir())
+    if not engine then
+        keep(app, binary, key, false)
+        return
+    end
+    local probe = { engine = engine, key = key, deadline = now() + EngineAnalysis.CHECK_SECONDS }
+    probes[binary] = probe
+    -- Not the timers of a window: the check ends even if the plugin closes first, so the engine never stays running.
+    local function look()
+        if probes[binary] ~= probe then
+            return
+        end
+        local ready = heard(probe)
+        if ready == nil then
+            UIManager:scheduleIn(0.1, look)
+        else
+            finish(app, binary, probe, ready)
+        end
+    end
+    UIManager:scheduleIn(0.1, look)
+end
+
+-- Whether the plugin's Stockfish can be used here, asked by everything that would use it. The first time on a device the engine is started to see (0.6 s on the Kindle, at most CHECK_SECONDS where it hangs), usually already done in the background by prepare. Only a yes is kept in the settings, with the binary's path, size and date, so it is not asked again until an update brings another binary; a no lasts this session only, since it may come from a busy moment, and the next session asks again.
 function EngineAnalysis.available(app)
     local binary = app.plugin_dir and Stockfish.find(app.plugin_dir)
     if not binary then
         return false
     end
-    if checked[binary] == nil then
-        local key = { binary = binary, size = Stockfish.size(binary), modified = lfs.attributes(binary, "modification") }
-        local saved = app.settings:readSetting("engine_check")
-        if type(saved) == "table" and saved.binary == key.binary and saved.size == key.size and saved.modified == key.modified then
+    local probe = probes[binary]
+    if probe then
+        local ready = heard(probe)
+        while ready == nil do
+            util.usleep(CHECK_POLL_MICROSECONDS)
+            ready = heard(probe)
+        end
+        finish(app, binary, probe, ready)
+    elseif checked[binary] == nil then
+        local key = key_of(binary)
+        if saved_yes(app, key) then
             checked[binary] = true
         else
-            checked[binary] = EngineAnalysis.check(binary, app:engine_dir())
-            if checked[binary] then
-                app:save_setting("engine_check", key)
-            else
-                logger.warn("Ink Knight: Stockfish did not answer on this device, the small engine stays for this session")
-            end
+            keep(app, binary, key, EngineAnalysis.check(binary, app:engine_dir()))
         end
     end
     return checked[binary]

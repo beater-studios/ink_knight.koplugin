@@ -408,7 +408,7 @@ function Broadcasts.saved_menu(app)
             }
         end
         if #rows == 0 then
-            rows[1] = { kind = "text", text = s.broadcast_none_saved, center = true }
+            rows[1] = { kind = "state", piece = "P", fill = true, text = s.broadcast_none_saved }
         end
         return rows
     end }

@@ -96,7 +96,7 @@ function EditorScreen:choose_piece()
         self.tool = nil
         self:changed()
     end }
-    self.app:choose(s.editor_piece, { { kind = "tiles", columns = 3, items = items } }, { close_on_tap = true })
+    self.app:choose(s.editor_piece, { { kind = "tiles", columns = 3, items = items } }, { close_on_tap = true, rise = true })
 end
 
 function EditorScreen:options()

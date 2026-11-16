@@ -9,6 +9,7 @@ local Broadcast = require("ink_knight/broadcast")
 local Chess = require("ink_knight/chess")
 local Game = require("ink_knight/game")
 local MoveList = require("ink_knight/ui/move_list")
+local Net = require("ink_knight/net")
 local Players = require("ink_knight/ui/players")
 local Sleep = require("ink_knight/sleep")
 
@@ -21,6 +22,8 @@ function LiveGame.open(app, id)
     local self = setmetatable({ app = app, id = id, s = app.strings, game = Game.new(id, app.my_id), backoff = RECONNECT_MIN }, LiveGame)
     self.screen = BoardScreen:new{
         state = { status = self.s.loading, buttons = { { id = "back", label = self.s.back } } },
+        -- What happens is said in the plates, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_close_request = function() self:request_close() end,
@@ -44,7 +47,7 @@ function LiveGame:connect()
     end, function()
         self.stream = nil
         self:connection_ended()
-    end)
+    end, Net.SILENCE)
 end
 
 function LiveGame:on_line(line)
@@ -159,7 +162,11 @@ function LiveGame:card()
         buttons[#buttons + 1] = { id = "rematch", label = s.rematch }
     end
     buttons[#buttons + 1] = { id = "see_board", label = s.see_board }
+    -- The king of the side that won, or the sign of a draw.
+    local piece = game.winner == "white" and "K" or (game.winner == "black" and "k" or nil)
     return {
+        piece = piece,
+        icon = not piece and "draw" or nil,
         title = Broadcast.result_text(result),
         text = self:outcome_text(),
         detail = string.format(s.game_card_moves, math.ceil(game:move_count() / 2)),
@@ -179,9 +186,11 @@ end
 
 function LiveGame:buttons()
     local s, game = self.s, self.game
-    local list = { { id = "back", label = s.back } }
+    local back = { id = "back", label = s.back }
+    local list = { back }
     if self.pending then
-        return { { id = "cancel_move", label = s.cancel }, { id = "confirm_move", label = s.confirm } }
+        local san = Chess.to_san(game.position, self.pending)
+        return { { id = "cancel_move", label = s.undo, pill = true }, { id = "confirm_move", label = s.confirm .. " " .. san, pill = true, primary = true } }
     end
     if not game.loaded then
         return list
@@ -212,29 +221,39 @@ function LiveGame:buttons()
         end
         return list
     end
+    -- A question from the other side, or a win to claim, takes the bar, with its answers as words.
     if game:opponent_offers_draw() then
-        list[#list + 1] = { id = "draw_yes", label = s.accept_draw }
-        list[#list + 1] = { id = "draw_no", label = s.decline_draw }
-        return list
+        return { back, { id = "draw_no", label = s.decline_draw, pill = true }, { id = "draw_yes", label = s.accept_draw, pill = true, primary = true } }
     end
     if game:opponent_offers_takeback() then
-        list[#list + 1] = { id = "takeback_yes", label = s.accept_takeback }
-        list[#list + 1] = { id = "takeback_no", label = s.decline_takeback }
-        return list
+        return { back, { id = "takeback_no", label = s.decline_takeback, pill = true }, { id = "takeback_yes", label = s.accept_takeback, pill = true, primary = true } }
     end
-    local actions = self:actions()
-    -- Only what fits goes on the bar: the rest waits behind one button.
+    -- Otherwise the bar stays the same through the game, so a move does not redraw it: the draw (or abort, before the second move) and resign, and the rest behind More. A win to claim puts its two answers in their place, and they go behind More.
+    local claim = game.opponent_gone and game.claim_in_seconds == 0
     self.more_actions = nil
-    if #actions <= 3 then
-        for _, action in ipairs(actions) do
+    local rest = {}
+    for _, action in ipairs(self:actions()) do
+        if action.id == "claim" or action.id == "claim_draw" then
+            if claim then
+                list[#list + 1] = { id = action.id, label = action.label, pill = true, primary = action.id == "claim" }
+            end
+        elseif not claim and (action.id == "abort" or action.id == "draw" or action.id == "resign") then
             list[#list + 1] = action
+        else
+            rest[#rest + 1] = action
         end
-        return list
     end
-    list[#list + 1] = actions[1]
-    list[#list + 1] = actions[2]
-    list[#list + 1] = { id = "more", label = s.more }
-    self.more_actions = { unpack(actions, 3) }
+    if claim then
+        -- The claim of the draw first, the win on the right, in black.
+        table.sort(list, function(a, b)
+            local order = { back = 1, claim_draw = 2, claim = 3 }
+            return order[a.id] < order[b.id]
+        end)
+    end
+    if #rest > 0 then
+        list[#list + 1] = { id = "more", label = s.more }
+        self.more_actions = rest
+    end
     return list
 end
 
@@ -276,31 +295,87 @@ function LiveGame:player_info(color, now)
     else
         name = game.black_name
     end
+    if color == game.my_color then
+        name = self.s.you
+    end
     local rating = game:rating_text(color)
     return {
-        name = (name or self.s.anonymous) .. (rating and (" (" .. rating .. ")") or ""),
+        name = (name or self.s.anonymous) .. (rating and (" · " .. rating) or ""),
         clock = game:clock_text(color, now),
         active = game:is_active() and game.position.turn == color,
     }
 end
 
+-- The last move of the game in the usual notation, worked out once for each list of moves.
+function LiveGame:last_san()
+    local game = self.game
+    if not game.moves or game.moves == "" then
+        return nil
+    end
+    if self.san_of ~= game.moves then
+        self.san_cache = self.san_cache or {}
+        local sans = Chess.san_list(game.initial_fen, game.moves, self.san_cache)
+        self.san_of, self.san_text = game.moves, sans and sans[#sans]
+    end
+    return self.san_text
+end
+
+-- What each plate says: the other side's last move, or what asks for attention from it (a draw offered, gone,
+-- reconnecting); the reader's turn, check, the move to confirm or how the game ended.
+function LiveGame:plates(now)
+    local s, game = self.s, self.game
+    local me = game.my_color or "w"
+    local other = me == "w" and "b" or "w"
+    local top, bottom = self:player_info(other, now), self:player_info(me, now)
+    if not game.loaded or not game:is_supported() then
+        bottom.detail = self:status_text()
+        return top, bottom
+    end
+    local active = game:is_active()
+    if self.connected == false then
+        top.note = { text = s.reconnecting }
+    elseif active and game:opponent_offers_draw() then
+        top.note = { text = s.offers_draw_note, solid = true }
+    elseif active and game:opponent_offers_takeback() then
+        top.note = { text = s.offers_takeback_note, solid = true }
+    elseif active and game.opponent_gone then
+        top.note = { text = s.left_game_note }
+    elseif game.position.turn == me and self:last_san() then
+        top.detail = string.format(s.played_move, self:last_san())
+    end
+    if not active then
+        bottom.detail = self:outcome_text()
+    elseif self.pending then
+        bottom.detail = string.format(s.confirm_move_note, Chess.to_san(game.position, self.pending))
+    elseif game.opponent_gone then
+        bottom.detail = string.format(s.status_opponent_gone, self:opponent_name())
+    elseif game:is_my_turn() and Chess.in_check(game.position) then
+        bottom.note = { text = s.status_check, solid = true }
+    elseif game:is_my_turn() then
+        bottom.detail = s.status_your_turn
+    elseif game.position.turn ~= me and self:last_san() then
+        bottom.detail = string.format(s.played_move, self:last_san())
+    end
+    return top, bottom
+end
+
 function LiveGame:render(what)
     local game = self.game
     local me = game.my_color or "w"
-    local other = me == "w" and "b" or "w"
     local now = os.time()
     if game.white and not game.opponent_id then
         local opponent = me == "w" and game.black or game.white
         game.opponent_id = opponent and opponent.id
     end
+    local top, bottom = self:plates(now)
     self.screen:show({
         position = self.optimistic or game.position,
         last_move = self.optimistic_move or game.last_move,
         flipped = me == "b",
         selected = self.selected,
         targets = self.targets,
-        top = self:player_info(other, now),
-        bottom = self:player_info(me, now),
+        top = top,
+        bottom = bottom,
         status = self:status_text(),
         buttons = self:buttons(),
         card = self.card_open and self:card() or nil,
@@ -402,9 +477,10 @@ function LiveGame:simple_action(request)
     end)
 end
 
-function LiveGame:confirm_action(question, request, ok_text)
+function LiveGame:confirm_action(question, request, ok_text, icon)
     self.app:ask{
         title = question,
+        icon = icon,
         ok_text = ok_text,
         on_ok = function() self:simple_action(request) end,
     }
@@ -470,9 +546,9 @@ function LiveGame:on_button(button)
     elseif button == "takeback_no" then
         self:simple_action(Api.takeback(self.id, false))
     elseif button == "resign" then
-        self:confirm_action(s.resign_question, Api.resign(self.id), s.resign)
+        self:confirm_action(s.resign_question, Api.resign(self.id), s.resign, "flag")
     elseif button == "abort" then
-        self:confirm_action(s.abort_question, Api.abort(self.id), s.abort)
+        self:confirm_action(s.abort_question, Api.abort(self.id), s.abort, "stop")
     elseif button == "claim" then
         self:simple_action(Api.claim_victory(self.id))
     end

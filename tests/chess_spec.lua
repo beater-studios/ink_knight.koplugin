@@ -613,6 +613,48 @@ test("a new request tells the screen right away", function()
     eq(calls, 1)
 end)
 
+test("a stream kept alive by Lichess that goes silent ends as if the network dropped, so it connects again", function()
+    local now = 1000
+    local net, record = fake_net{ clock = function() return now end }
+    local ended, code_seen = 0, "unset"
+    local stream = net:stream(Api.stream_game("abcd1234"), function() end, function(code) ended = ended + 1; code_seen = code end, Net.SILENCE)
+    write(stream.prefix .. ".out", "\n")
+    now = now + 15
+    net:tick()
+    eq(ended, 0, "a keep-alive line keeps it open")
+    now = now + 15
+    net:tick()
+    eq(ended, 0, "15 seconds after the last line is not yet silence")
+    now = now + Net.SILENCE
+    net:tick()
+    eq(record.killed[1], stream.pid, "the silent child is stopped")
+    eq(ended, 1); eq(code_seen, nil, "it ends without a code, as a dropped network")
+    eq(#net.streams, 0)
+    local other = net:stream(Api.stream_events(), function() end, function() ended = ended + 1 end)
+    now = now + 600
+    net:tick()
+    eq(ended, 1, "a stream with no silence set waits as before")
+    net:close_stream(other)
+    -- Still connecting, with no byte yet, it gets three times as long, and a silent child is stopped once.
+    local connecting = net:stream(Api.stream_game("abcd1234"), function() end, function() ended = ended + 1 end, Net.SILENCE)
+    now = now + 2 * Net.SILENCE
+    net:tick()
+    eq(ended, 1, "a stream still connecting is not cut after the silence of an open one")
+    -- A child that takes a while to end after it is stopped.
+    local kill = net.kill
+    net.kill = function(pid) record.killed[#record.killed + 1] = pid end
+    local kills = #record.killed
+    now = now + 2 * Net.SILENCE
+    net:tick()
+    net:tick()
+    eq(#record.killed, kills + 1, "the silent child is stopped once, even while it takes time to end")
+    eq(ended, 1)
+    net.kill = kill
+    record.dead[connecting.pid] = true
+    net:tick()
+    eq(ended, 2)
+end)
+
 test("a stream whose child died ends, with what it had written", function()
     local net, record = fake_net()
     local lines, ended = {}, 0

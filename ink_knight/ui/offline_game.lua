@@ -65,6 +65,8 @@ function OfflineGame.open(app, opts)
     self.wake_callback = function() self:start_clock() end
     self.screen = BoardScreen:new{
         state = { flipped = self.flipped },
+        -- What happens is said in the plates, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_suspend = function() self:stop_clock() end,
@@ -261,42 +263,104 @@ function OfflineGame:render(what)
         self:show_state(buttons, what)
         return
     end
-    if self:can_undo() then
-        buttons[#buttons + 1] = { id = "undo", label = s.undo }
-    end
-    if self:can_hint() then
-        buttons[#buttons + 1] = { id = "hint", label = s.hint }
-    end
-    if self.moves ~= "" then
-        buttons[#buttons + 1] = { id = "moves", label = s.moves }
-    end
-    if self.two_players then
-        buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
-    end
-    if self.clock and self.clock.active and not self:is_over() then
-        buttons[#buttons + 1] = self.clock_paused and { id = "clock_resume", label = s.clock_resume } or { id = "clock_pause", label = s.clock_pause }
-    end
     if self:is_over() then
+        if self:can_undo() then
+            buttons[#buttons + 1] = { id = "undo", label = s.undo }
+        end
+        if self.moves ~= "" then
+            buttons[#buttons + 1] = { id = "moves", label = s.moves }
+        end
+        if self.two_players then
+            buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
+        end
         if self.moves ~= "" then
             buttons[#buttons + 1] = { id = "analyze", label = s.analyze_game }
         end
         buttons[#buttons + 1] = { id = "again", label = s.new_game_again }
-    else
-        buttons[#buttons + 1] = { id = "resign", label = s.resign }
+        self:show_state(buttons, what)
+        return
     end
+    -- During a game the bar stays the same, so a move does not redraw it on e-ink: what cannot be done at that moment does nothing, such as a hint while the computer thinks or undo with no move to take back.
+    if not self.two_players then
+        buttons[#buttons + 1] = { id = "hint", label = s.hint }
+    end
+    buttons[#buttons + 1] = { id = "undo", label = s.undo }
+    buttons[#buttons + 1] = { id = "moves", label = s.moves }
+    if self.two_players then
+        buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
+    end
+    if self.clock and self.clock.active then
+        buttons[#buttons + 1] = self.clock_paused and { id = "clock_resume", label = s.clock_resume } or { id = "clock_pause", label = s.clock_pause }
+    end
+    buttons[#buttons + 1] = { id = "resign", label = s.resign }
     self:show_state(buttons, what)
 end
 
-function OfflineGame:show_state(buttons, what)
+-- The last move of the game in the usual notation.
+function OfflineGame:last_san()
+    if self.moves == "" then
+        return nil
+    end
+    self.san_cache = self.san_cache or {}
+    local sans = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
+    return sans[#sans]
+end
+
+-- The plates of a game against the computer: its name, level and last move on top; below, the reader's color, with a hint, check or how the game ended. Whose turn it is and that the computer thinks go unsaid: the plates would change at every move, redrawn for nothing on e-ink.
+function OfflineGame:engine_plates(status)
     local s = self.s
-    local top, bottom = { name = self:level_name() }, { name = s.you }
+    local over = self:is_over()
+    local detail = self:level_name()
+    local engine_color = self.my_color == "w" and "b" or "w"
+    if not over and self.position.turn ~= engine_color and self:last_san() then
+        detail = detail .. " · " .. string.format(s.played_move, self:last_san())
+    end
+    local top = { name = self.engine_kind == "stockfish" and "Stockfish" or s.computer_short, detail = detail }
+    local bottom = { name = s.you }
+    local color = self.my_color == "w" and s.color_white or s.color_black
+    if self.hinting then
+        bottom.note = { text = s.hint_thinking }
+    elseif self.hint_text then
+        bottom.note = { text = self.hint_text, solid = true }
+    elseif over or self.clock_paused then
+        bottom.detail = status
+    elseif not self.thinking and Chess.in_check(self.position) then
+        bottom.note = { text = string.format("%s · %s", color, s.status_check), solid = true }
+    else
+        bottom.detail = self:chess960_label() and self.moves == "" and string.format("%s · %s", color, self:chess960_label()) or color
+    end
+    return top, bottom
+end
+
+function OfflineGame:show_state(buttons, what)
+    local status = self:start_label(self:status_text())
+    local top, bottom
     if self.two_players then
+        local s = self.s
         local running = self.clock and ChessClock.running(self.clock)
         top = { name = s.color_black, clock = self:clock_info("b"), active = running and self.position.turn == "b" }
         bottom = { name = s.color_white, clock = self:clock_info("w"), active = running and self.position.turn == "w" }
+        -- What happens goes in the plate of the side to move, or below when the game is over.
+        local mover = self.position.turn == "b" and top or bottom
+        if self:is_over() then
+            mover = bottom
+        end
+        if not self:is_over() and Chess.in_check(self.position) then
+            mover.note = { text = status, solid = true }
+        else
+            mover.detail = status
+        end
         if self.flipped then
             top, bottom = bottom, top
         end
+    else
+        top, bottom = self:engine_plates(status)
+    end
+    local progress
+    if self.analysis and self.analysis.stockfish then
+        progress = { done = self.analysis.done or 0, total = self.analysis.total or 1 }
+    elseif self.analysis then
+        progress = { done = math.max(0, self.analysis.index - 1), total = #self.analysis.list }
     end
     self.screen:show({
         flipped = self.flipped,
@@ -306,7 +370,8 @@ function OfflineGame:show_state(buttons, what)
         targets = self.targets,
         top = top,
         bottom = bottom,
-        status = self:start_label(self:status_text()),
+        status = status,
+        progress = progress,
         buttons = buttons,
     }, what)
 end
@@ -761,6 +826,7 @@ function OfflineGame:on_button(button)
         local turn = self.position.turn
         self.app:ask{
             title = self.two_players and self.s["local_resign_question_" .. turn] or self.s.resign_question,
+            icon = "flag",
             ok_text = self.s.resign,
             on_ok = function()
                 self.resigned = true
@@ -795,7 +861,7 @@ function OfflineGame:on_button(button)
         self.selected, self.targets = nil, nil
         self:save()
         self:render()
-    elseif button == "moves" then
+    elseif button == "moves" and self.moves ~= "" then
         self.san_cache = self.san_cache or {}
         local sans, first_number, first_turn = Chess.san_list(self.initial_fen, self.moves, self.san_cache)
         MoveList.show(self.app, sans, first_number, first_turn, { initial_fen = self.initial_fen, moves = self.moves, opening = self:chess960_label() })

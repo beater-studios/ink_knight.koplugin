@@ -141,7 +141,7 @@ asked = {}
 home:offline_menu()
 local menu = home.pages[#home.pages]
 local row = row_of(menu, "Helena")
-check(row and row.detail == s.your_turn, "the offline menu should list the game on the reader's turn")
+check(row and row.tag == s.your_turn, "the offline menu should list the game on the reader's turn")
 local screen = CorrespondenceScreen.open(home, "corr0001")
 screen:on_square(Chess.square_from_name("e7"))
 screen:on_square(Chess.square_from_name("e5"))

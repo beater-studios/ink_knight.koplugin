@@ -14,6 +14,8 @@ function CorrespondenceScreen.open(app, id)
     local self = setmetatable({ app = app, s = app.strings, id = id }, CorrespondenceScreen)
     self.screen = BoardScreen:new{
         state = {},
+        -- What happens is said in the plates, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
@@ -53,7 +55,7 @@ function CorrespondenceScreen:render(what)
     self.data = self.app:correspondence()
     local s, game = self.s, self:game()
     if not game then
-        self.screen:show({ status = s.unexpected_error, buttons = { { id = "back", label = s.back } } }, what)
+        self.screen:show({ status = s.unexpected_error, bottom = { name = s.unexpected_error }, buttons = { { id = "back", label = s.back } } }, what)
         return
     end
     local position, last_move = Correspondence.position(game)
@@ -73,6 +75,9 @@ function CorrespondenceScreen:render(what)
             name = self.data.name or s.you,
             clock = left and Api.format_left(left) or nil,
             active = Correspondence.is_my_turn(game) and not game.pending,
+            -- The move waiting for the network, in a pill; otherwise whose turn it is.
+            note = game.pending and { text = self:status_text(game), solid = true } or nil,
+            detail = not game.pending and self:status_text(game) or nil,
         },
         status = self:status_text(game),
         buttons = buttons,

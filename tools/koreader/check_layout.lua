@@ -784,6 +784,31 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         state = { moves = "e2e4 e7e5 g1f3", wtime = 3599000, btime = 3599000, status = "started" } }, os.time())
     live:render()
     check_board(live.screen, language .. " live game")
+    -- A question of the other side, a win to claim or a move to confirm takes the bar as words in pills, and the plates say what asks for attention.
+    local playing = { type = "gameState", moves = "e2e4 e7e5 g1f3", wtime = 3599000, btime = 3599000, status = "started" }
+    for _, case in ipairs({ { "draw offer", "bdraw" }, { "takeback offer", "btakeback" } }) do
+        local event = {}
+        for key, value in pairs(playing) do
+            event[key] = value
+        end
+        event[case[2]] = true
+        live.game:on_event(event, os.time())
+        live:render()
+        check_board(live.screen, language .. " live game, " .. case[1])
+    end
+    live.game:on_event(playing, os.time())
+    live.connected = false
+    live:render()
+    check_board(live.screen, language .. " live game, reconnecting")
+    live.connected = nil
+    live.game.opponent_gone, live.game.claim_in_seconds = true, 0
+    live:render()
+    check_board(live.screen, language .. " live game, opponent gone")
+    live.game.opponent_gone, live.game.claim_in_seconds = nil, nil
+    live.pending = Chess.parse_uci(live.game.position, "b8c6")
+    live:render()
+    check_board(live.screen, language .. " live game, move to confirm")
+    live.pending = nil
     -- The name of the opening only after the game, as Lichess does for its players.
     live:on_button("moves")
     if top_page().lines[1].kind == "text" then

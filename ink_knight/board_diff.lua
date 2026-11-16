@@ -5,13 +5,14 @@ local function bar_text(info)
     if not info then
         return ""
     end
-    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active), tostring(info.tag) }, "|")
+    local note = info.note and (tostring(info.note.text) .. (info.note.solid and "*" or "")) or ""
+    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active), tostring(info.tag), tostring(info.detail), note, tostring(info.piece) }, "|")
 end
 
 local function buttons_text(buttons)
     local parts = {}
     for index, button in ipairs(buttons or {}) do
-        parts[index] = tostring(button.id) .. "=" .. tostring(button.label)
+        parts[index] = tostring(button.id) .. "=" .. tostring(button.label) .. (button.pill and "|pill" or "") .. (button.primary and "|primary" or "")
     end
     return table.concat(parts, "|")
 end
