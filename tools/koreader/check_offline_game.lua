@@ -224,7 +224,24 @@ do
         end
     end
     check(game.screen.state.status == s.local_resigned_b, "black resigned: " .. tostring(game.screen.state.status))
+    check(game:score() == "1-0", "the score gives the game to white: " .. tostring(game:score()))
     check(not buttons(game):find("undo", 1, true), "no undo after resigning: " .. buttons(game))
+    UIManager:close(game.screen)
+    home.settings:delSetting("offline_game")
+
+    -- Against the computer the reader resigns, even while it thinks with its own side to move.
+    game = OfflineGame.open(home, { level = 1, color_choice = "white" })
+    play(game, "e2", "e4")
+    check(game.thinking and game.position.turn == "b", "the engine should be thinking")
+    game:on_button("resign")
+    question = home.pages[#home.pages]
+    for _, line in ipairs(question.lines) do
+        if line.kind == "primary" then
+            UIManager:close(question)
+            line.callback()
+        end
+    end
+    check(game:score() == "0-1", "the reader resigned with white, so black wins: " .. tostring(game:score()))
     UIManager:close(game.screen)
     home.settings:delSetting("offline_game")
 end

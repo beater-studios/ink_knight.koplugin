@@ -358,7 +358,8 @@ function OfflineGame:show_state(buttons, what)
     end
     local progress
     if self.analysis and self.analysis.stockfish then
-        progress = { done = self.analysis.done or 0, total = self.analysis.total or 1 }
+        local done, total = self.analysis.done or 0, self.analysis.total or 1
+        progress = { title = self.s.engine_analyzing, done = done, total = total, detail = string.format(self.s.engine_progress_detail, math.max(1, done), total) }
     elseif self.analysis then
         progress = { done = math.max(0, self.analysis.index - 1), total = #self.analysis.list }
     end
@@ -508,6 +509,28 @@ function OfflineGame:finish_stockfish_analysis(result, ucis)
     self:set_review_game(moves, notice, summary)
 end
 
+-- The result as a score, "1-0", "0-1" or "½-½", for the band of the review; nil while the game goes on.
+function OfflineGame:score()
+    local winner
+    if self.resigned then
+        -- Against the computer the reader is the one who resigns, even while it thinks; between two people, the side to move.
+        local loser = self.two_players and self.resigned_color or self.my_color
+        winner = loser == "w" and "b" or "w"
+    elseif self.ending == "time" then
+        if self.time_draw then
+            return "½-½"
+        end
+        winner = self.flagged == "w" and "b" or "w"
+    elseif self.ending == "mate" then
+        winner = self.position.turn == "w" and "b" or "w"
+    elseif self.ending then
+        return "½-½"
+    else
+        return nil
+    end
+    return winner == "w" and "1-0" or "0-1"
+end
+
 -- The review of the analyzed game: its moves, the notice of what was found (also its start, against the engine) and,
 -- when the analysis made one, the summary with figures.
 function OfflineGame:set_review_game(moves, notice, summary)
@@ -515,7 +538,7 @@ function OfflineGame:set_review_game(moves, notice, summary)
     local you, engine = s.you, self:level_name()
     self.review_game = {
         moves = moves, intro = not self.two_players and notice or nil, notice = notice, summary = summary,
-        initial_fen = self.initial_fen, result_text = self:status_text(),
+        initial_fen = self.initial_fen, result_text = self:status_text(), score = self:score(),
         white = self.two_players and s.color_white or (self.my_color == "w" and you or engine),
         black = self.two_players and s.color_black or (self.my_color == "b" and you or engine),
     }

@@ -340,9 +340,10 @@ do
                 shot("broadcast_round")
                 if games[1] and opens(games[1].callback, "broadcast game") then
                     local board = top_widget()
-                    print(string.format("broadcast game: %s against %s, clocks %s / %s, %s", tostring(board.state.bottom and board.state.bottom.name),
-                        tostring(board.state.top and board.state.top.name), tostring(board.state.bottom and board.state.bottom.clock),
-                        tostring(board.state.top and board.state.top.clock), tostring(board.state.status)))
+                    local band = board.state.band or {}
+                    local clocks = board.state.panel and board.state.panel.clocks or {}
+                    print(string.format("broadcast game: %s against %s, clocks %s / %s, %s", tostring(band.white), tostring(band.black),
+                        tostring(clocks[1] and clocks[1].clock), tostring(clocks[2] and clocks[2].clock), tostring(board.state.status)))
                     shot("broadcast_game")
                     close_top()
                 elseif not games[1] then

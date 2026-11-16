@@ -2658,6 +2658,21 @@ local function game_result_text(s, game)
     return s.outcome_draw
 end
 
+-- The statuses of Lichess for a game that ended in a draw when it has no winner.
+local DRAW_STATUSES = { draw = true, stalemate = true, timeout = true, outoftime = true, variantEnd = true }
+
+-- The result as a score for the band of the review, or nil for a game that did not count or is not over.
+local function game_score(game)
+    if game.winner == "white" then
+        return "1-0"
+    elseif game.winner == "black" then
+        return "0-1"
+    elseif DRAW_STATUSES[game.status] then
+        return "½-½"
+    end
+    return nil
+end
+
 function Home:past_games_menu()
     local s = self.strings
     self:open_list(s.past_games, {
@@ -2729,6 +2744,7 @@ function Home:open_review_of(game, opts)
         intro = game.opening and game.opening.name,
         opening = game.opening and game.opening.name,
         result_text = game_result_text(s, game),
+        score = game_score(game),
         summary = Game.analysis_summary(game),
     }, opts)
 end

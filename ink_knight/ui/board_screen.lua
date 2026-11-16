@@ -79,13 +79,13 @@ local BoardScreen = InputContainer:extend{
     broken_text = nil,
     -- Lines of text in place of the top bar, for a goal that does not fit one line, as in the lessons.
     banner_lines = nil,
-    -- Two lines under the board instead of one, for the panel of a move in the review.
-    panel = false,
     -- The line of text under the plates; a mode that says everything in its plates turns it off for a larger board.
     status_line = true,
     -- A board being read (a review, a study): the last move shows, with corners where it came from and a frame where
     -- it went. In a game nothing marks it. state.reading does the same for one state.
     read_marks = false,
+    -- The layout of a review: the players in a black band on top (state.band), a bar of the evaluation beside the board (state.eval), and the panel of the move below it in place of the plates.
+    band = false,
 }
 
 -- The arrows and circles of the lessons in two inks: black for the ones that warn, dark gray for the others.
@@ -377,10 +377,40 @@ function BoardScreen:px(value)
     return math.floor(value * self.scale + 0.5)
 end
 
+-- The review: the band of the players, the board with the bar of the evaluation on its left, the card of the move and the buttons.
+function BoardScreen:band_layout()
+    local gap, margin = self:px(6), self:px(6)
+    local band_h, panel_h, button_h = self:px(50), self:px(106), self:px(Style.BAR)
+    self.frame = self.coordinates and self:px(18) or self:px(8)
+    local bar_x, bar_w = self:px(8), self:px(24)
+    local left = bar_x + bar_w + self:px(6)
+    local room = self.height - StatusStrip.height() - band_h - self:px(8) - 2 * self.frame - self:px(8) - panel_h - gap - button_h - margin
+    self.square = math.floor(math.min(self.width - left - self:px(14) - 2 * self.frame, room) / 8)
+    local board_size = self.square * 8
+    self.board_x = left + self.frame + math.floor((self.width - left - self:px(14) - 2 * self.frame - board_size) / 2)
+    self.band_rect = { x = 0, y = 0, w = self.width, h = band_h }
+    self.top_bar = self.band_rect
+    self.banner_rect = self.band_rect
+    self.banner_sizes = nil
+    self.board_y = band_h + self:px(8) + self.frame
+    self.board_rect = Geom:new{ x = self.board_x, y = self.board_y, w = board_size, h = board_size }
+    self.frame_rect = { x = self.board_x - self.frame, y = self.board_y - self.frame, w = board_size + 2 * self.frame, h = board_size + 2 * self.frame }
+    self.eval_rect = { x = bar_x, y = self.frame_rect.y, w = bar_w, h = self.frame_rect.h }
+    local bottom = self.frame_rect.y + self.frame_rect.h + self:px(8)
+    -- No plate below: the card of the move is the "status" of a review.
+    self.bottom_bar = { x = 0, y = bottom, w = self.width, h = 0 }
+    self.status_rect = { x = 0, y = bottom, w = self.width, h = panel_h }
+    self.buttons_rect = { x = 0, y = bottom + panel_h + gap, w = self.width, h = button_h }
+end
+
 function BoardScreen:layout()
+    if self.band then
+        self:band_layout()
+        return
+    end
     local margin, gap = self:px(6), self:px(6)
     local plate_h, button_h = self:px(Style.PLATE), self:px(Style.BAR)
-    local status_h = self.panel and self:px(92) or (self.status_line and self:px(30) or 0)
+    local status_h = self.status_line and self:px(30) or 0
     -- The black frame holds the coordinates when they show; without them it is a thin edge.
     self.frame = self.coordinates and self:px(18) or self:px(8)
     local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(30) or plate_h
@@ -717,7 +747,6 @@ function BoardScreen:paint_buttons(bb)
     for _, rect in ipairs(self:button_rects()) do
         if rect.pill then
             Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, rect.primary)
-            -- The largest size, from 18 down to 14, at which the answer fits its pill.
             local inner = rect.w - self:px(28)
             local size = 18
             while size > 14 and MoveText.drawn_width(rect.label, BOLD, size * self.scale) > inner do
@@ -889,8 +918,7 @@ function BoardScreen:paint_progress(bb, rect, progress)
     self:paint_text(bb, self.state.status, BOLD, 15, x + self:px(10), y, w - self:px(20), h, "center")
 end
 
--- A work under way in place of the bottom plate, on a board without a line of text: what it is on the left, how far on
--- the right (progress.detail), and the bar under them.
+-- A work under way in a card, in place of the bottom plate or of the card of a move: what it is on the left (progress.title, or the status), how far on the right (progress.detail), and the bar under them.
 function BoardScreen:paint_progress_card(bb, rect, progress)
     local radius = self:px(14)
     bb:paintRoundedRect(rect.x, rect.y, rect.w, rect.h, WHITE, radius)
@@ -898,7 +926,7 @@ function BoardScreen:paint_progress_card(bb, rect, progress)
     local m = self:px(18)
     local inner = rect.w - 2 * m
     local detail_w = progress.detail and math.min(math.floor(inner / 2), MoveText.width(progress.detail, REGULAR, 13 * self.scale) + self:px(4)) or 0
-    self:paint_text(bb, self.state.status, BOLD, 15, rect.x + m, rect.y + self:px(4), inner - detail_w - self:px(8), self:px(24), "left")
+    self:paint_text(bb, progress.title or self.state.status, BOLD, 15, rect.x + m, rect.y + self:px(4), inner - detail_w - self:px(8), self:px(24), "left")
     if progress.detail then
         self:paint_text(bb, progress.detail, REGULAR, 13, rect.x + m + inner - detail_w, rect.y + self:px(4), detail_w, self:px(24), "right", Style.DARK)
     end
@@ -912,6 +940,10 @@ function BoardScreen:paint_progress_card(bb, rect, progress)
 end
 
 function BoardScreen:paint_game(bb)
+    if self.band then
+        self:paint_review(bb)
+        return
+    end
     if self.banner_lines then
         self:paint_banner(bb, self.state.banner or "")
     else
@@ -928,8 +960,6 @@ function BoardScreen:paint_game(bb)
     if rect.h > 0 then
         if progress then
             self:paint_progress(bb, rect, progress)
-        elseif self.state.panel then
-            self:paint_panel(bb, rect, self.state.panel)
         elseif self.state.status then
             MoveText.paint(self, bb, self.state.status, REGULAR, 16, self:px(14), rect.y, rect.w - self:px(28), rect.h, "center", Style.DARK)
         end
@@ -937,39 +967,131 @@ function BoardScreen:paint_game(bb)
     self:paint_card(bb)
 end
 
--- The panel of a move, in a card in two lines: the move large with its sign, its judgment in a tag (solid for a
--- mistake, outlined for a phase that starts there); then the better move, with its arrow on the board, and the
--- evaluation in words. panel: move, tag, tag_solid, detail, evaluation, each of them optional.
-function BoardScreen:paint_panel(bb, rect, panel)
+-- The players in the black band of a review: white on the left, black on the right, each with the king in a white circle, and the result or "live" between them. band: white, black, result, live.
+function BoardScreen:paint_band(bb, band)
+    local rect = self.band_rect
+    bb:paintRect(rect.x, rect.y, rect.w, rect.h, BLACK)
+    if not band then
+        return
+    end
+    local radius = self:px(16)
+    local m = self:px(8)
+    local center_w = self:px(110)
+    local side_w = math.floor((rect.w - center_w) / 2) - m - 2 * radius - self:px(8)
+    local cy = rect.y + math.floor(rect.h / 2)
+    for _, side in ipairs({ { band.white, "K", m + radius, m + 2 * radius + self:px(8), "left" }, { band.black, "k", rect.w - m - radius, rect.w - m - 2 * radius - self:px(8) - side_w, "right" } }) do
+        bb:paintCircle(side[3], cy, radius, WHITE)
+        BoardScreen.paint_piece_fit(bb, self.piece_set, side[2], side[3], cy, math.floor(radius * 1.45))
+        local size = 17
+        while size > 12 and MoveText.width(side[1], BOLD, size * self.scale) > side_w do
+            size = size - 1
+        end
+        self:paint_text(bb, side[1], BOLD, size, side[4], rect.y, side_w, rect.h, side[5], WHITE)
+    end
+    local cx = math.floor((rect.w - center_w) / 2)
+    if band.live then
+        local w, h = math.min(center_w, MoveText.width(band.live, BOLD, 14 * self.scale) + self:px(24)), self:px(28)
+        local x = cx + math.floor((center_w - w) / 2)
+        bb:paintRoundedRect(x, cy - math.floor(h / 2), w, h, WHITE, math.floor(h / 2))
+        self:paint_text(bb, band.live, BOLD, 14, x + self:px(8), cy - math.floor(h / 2), w - self:px(16), h, "center")
+    elseif band.result then
+        self:paint_text(bb, band.result, BOLD, 24, cx, rect.y, center_w, rect.h, "center", WHITE)
+    end
+end
+
+-- The bar of the evaluation beside the board, white rising from white's side: eval.white is white's share, from 0 to 1, and eval.text the number at its foot.
+function BoardScreen:paint_eval(bb, eval)
+    if not eval then
+        return
+    end
+    local r = self.eval_rect
+    local radius = math.floor(r.w / 2)
+    bb:paintRoundedRect(r.x, r.y, r.w, r.h, BLACK, radius)
+    local inset = math.max(2, self:px(3))
+    local x, y, w, h = r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset
+    local white_h = math.floor(h * math.max(0, math.min(1, eval.white)) + 0.5)
+    local white_at_bottom = not self.state.flipped
+    if white_h > 0 then
+        bb:paintRect(x, white_at_bottom and y + h - white_h or y, w, white_h, WHITE)
+    end
+    Draw.round_corners(bb, x, y, w, h, math.floor(w / 2), BLACK)
+    bb:paintRect(x, y + math.floor(h / 2), w, math.max(1, self:px(1)), Style.MID)
+    if eval.text then
+        local text_h = self:px(22)
+        local foot_white = white_at_bottom and white_h > text_h or (not white_at_bottom and white_h > h - text_h)
+        local size = 11
+        while size > 7 and MoveText.width(eval.text, BOLD, size * self.scale) > r.w - self:px(2) do
+            size = size - 1
+        end
+        self:paint_text(bb, eval.text, BOLD, size, r.x, r.y + r.h - text_h - self:px(4), r.w, text_h, "center", foot_white and BLACK or WHITE)
+    end
+end
+
+function BoardScreen:paint_review(bb)
+    self:paint_band(bb, self.state.band)
+    self:paint_board(bb)
+    self:paint_eval(bb, self.state.eval)
+    local rect = self.status_rect
     local shadow = self:px(Style.CARD_SHADOW)
-    local card_x, card_y = self:px(10), rect.y + self:px(6)
-    local card_w, card_h = self.width - 2 * self:px(10) - shadow, rect.h - self:px(6) - shadow
-    Draw.card(bb, card_x, card_y, card_w, card_h, self.scale)
-    local m = card_x + self:px(14)
-    local inner = card_w - 2 * self:px(14)
-    local line_h = self:px(34)
-    local top = card_y + math.floor((card_h - 2 * line_h) / 2)
+    local card = { x = self:px(10), y = rect.y, w = self.width - 2 * self:px(10) - shadow, h = rect.h - shadow }
+    if self.state.progress then
+        self:paint_progress_card(bb, card, self.state.progress)
+    elseif self.state.panel then
+        self:paint_panel(bb, card, self.state.panel)
+    end
+    self:paint_card(bb)
+end
+
+-- The card of a move in a review, in three lines: what move it is, with a tag of who analyzed it; the move large, with its judgment in a tag (solid for a mistake, outlined for a phase that starts there); then the better move, with its arrow on the board, and the evaluation in words. A broadcast puts the clocks on the right instead. panel: title, source, move, tag, tag_solid, detail, evaluation, clocks ({ { label, clock, active }, ... }), each of them optional.
+function BoardScreen:paint_panel(bb, card, panel)
+    Draw.card(bb, card.x, card.y, card.w, card.h, self.scale)
+    local m = card.x + self:px(16)
+    local inner = card.w - 2 * self:px(16)
+    local top = card.y + self:px(8)
+    local right_w = 0
+    if panel.clocks then
+        right_w = self:px(160)
+        local h = self:px(32)
+        for index, clock in ipairs(panel.clocks) do
+            local x, y = m + inner - right_w, card.y + self:px(12) + (index - 1) * (h + self:px(10))
+            Draw.pill(bb, x, y, right_w, h, self.scale * 0.8, clock.active)
+            local color = clock.active and WHITE or BLACK
+            self:paint_text(bb, clock.label, REGULAR, 13, x + self:px(12), y, self:px(60), h, "left", color)
+            self:paint_text(bb, clock.clock, BOLD, 18, x + self:px(70), y, right_w - self:px(82), h, "right", color)
+        end
+        right_w = right_w + self:px(10)
+    end
+    local source_w = 0
+    if panel.source and not panel.clocks then
+        local h = self:px(20)
+        source_w = math.min(math.floor(inner / 2), MoveText.width(panel.source, BOLD, 12 * self.scale) + self:px(20))
+        Draw.pill(bb, m + inner - source_w, top + self:px(1), source_w, h, self.scale * 0.6, false)
+        self:paint_text(bb, panel.source, BOLD, 12, m + inner - source_w + self:px(10), top + self:px(1), source_w - self:px(20), h, "center")
+        source_w = source_w + self:px(10)
+    end
+    self:paint_text(bb, panel.title, REGULAR, 13, m, top, inner - source_w - right_w, self:px(22), "left", Style.DARK)
+    local line = top + self:px(24)
     local tag_w = 0
-    if panel.tag then
+    if panel.tag and not panel.clocks then
+        local h = self:px(32)
         tag_w = math.min(self:px(190), MoveText.width(panel.tag, BOLD, 16 * self.scale) + self:px(28))
-        local h = line_h - self:px(6)
-        local x, y = m + inner - tag_w, top + self:px(3)
-        Draw.pill(bb, x, y, tag_w, h, self.scale, panel.tag_solid)
-        self:paint_text(bb, panel.tag, BOLD, 16, x + self:px(6), y, tag_w - self:px(12), h, "center", panel.tag_solid and WHITE or BLACK)
+        local x = m + inner - tag_w
+        Draw.pill(bb, x, line + self:px(3), tag_w, h, self.scale, panel.tag_solid)
+        self:paint_text(bb, panel.tag, BOLD, 16, x + self:px(6), line + self:px(3), tag_w - self:px(12), h, "center", panel.tag_solid and WHITE or BLACK)
         tag_w = tag_w + self:px(10)
     end
     if panel.move then
-        MoveText.paint(self, bb, panel.move, BOLD, 23, m, top, inner - tag_w, line_h, "left")
+        MoveText.paint(self, bb, panel.move, BOLD, 24, m, line, inner - tag_w - right_w, self:px(38), "left")
     end
-    local bottom = top + line_h
+    local bottom = line + self:px(40)
     local evaluation_w = 0
-    if panel.evaluation then
+    if panel.evaluation and not panel.clocks then
         evaluation_w = math.min(math.floor(inner / 2), MoveText.width(panel.evaluation, BOLD, 15 * self.scale) + self:px(4))
-        self:paint_text(bb, panel.evaluation, BOLD, 15, m + inner - evaluation_w, bottom, evaluation_w, line_h, "right", Style.DARK)
+        self:paint_text(bb, panel.evaluation, BOLD, 15, m + inner - evaluation_w, bottom, evaluation_w, self:px(26), "right", Style.DARK)
         evaluation_w = evaluation_w + self:px(10)
     end
     if panel.detail then
-        MoveText.paint(self, bb, panel.detail, REGULAR, 16, m, bottom, inner - evaluation_w, line_h, "left")
+        MoveText.paint(self, bb, panel.detail, REGULAR, 15, m, bottom, inner - evaluation_w - right_w, self:px(26), "left")
     end
 end
 
@@ -1107,6 +1229,7 @@ function BoardScreen:refresh(what)
         end
     end
     if changes.top then self:dirty_rect("ui", self.top_bar) end
+    if changes.eval and self.eval_rect then self:dirty_rect("ui", self.eval_rect) end
     if changes.bottom then self:dirty_rect("ui", self.bottom_bar) end
     if changes.status then
         -- Without a line of text, the status shows only in the card of a work under way, over the bottom plate.

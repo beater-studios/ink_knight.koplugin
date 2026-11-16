@@ -115,9 +115,9 @@ for _ = 1, 6 do
 end
 check(review.state.status:find(s.judgments.Blunder, 1, true) and review.state.status:find(knight.best, 1, true),
     "the review should mark the blunder and name the better move: " .. tostring(review.state.status))
--- The panel: the move with its sign, the judgment in a solid tag, the better move with its arrow, the score in words.
+-- The panel: which move it is, the move without a sign, since the judgment is in its solid tag, the better move with its arrow, the score in words.
 local panel = review.state.panel
-check(panel and panel.move == "3... Nf6??" and panel.tag == s.judgments.Blunder and panel.tag_solid, "the panel shows the move with its sign and judgment: " .. tostring(panel and panel.move))
+check(panel and panel.title == string.format(s.review_move_title, 3, s.color_black:lower()) and panel.move == "Nf6" and panel.tag == s.judgments.Blunder and panel.tag_solid, "the panel shows the move and its judgment: " .. tostring(panel and panel.title) .. " " .. tostring(panel and panel.move))
 check(panel and panel.detail == string.format(s.review_better_arrow, knight.best), "the panel names the better move on its arrow: " .. tostring(panel and panel.detail))
 check(panel and panel.evaluation == string.format(s.eval_white_mate, 1), "the panel says the score in words: " .. tostring(panel and panel.evaluation))
 local arrow = review.state.shapes and review.state.shapes[1]
@@ -260,7 +260,7 @@ if lichess_summary then
         lichess_summary:onTap(nil, { pos = { x = chart_hit.x + math.floor(chart_hit.w * 6 / 7 + chart_hit.w / 21), y = chart_hit.y + 10 } })
     end
     check(review.state.status:find("Nf6", 1, true), "the chart goes to the move tapped: " .. tostring(review.state.status))
-    check(review.state.top.tag == nil, "Lichess's analysis needs no tag")
+    check(review.state.panel.source == s.lichess_tag, "every move says the analysis is Lichess's: " .. tostring(review.state.panel.source))
     check(review.coordinates == true, "the review always shows the coordinates")
     UIManager:close(review)
 end
@@ -482,7 +482,7 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     plugin_summary:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/end_summary_plugin.png")
     UIManager:close(plugin_summary)
-    check(end_review.state.top.tag == s.engine_tag, "every move of the plugin's analysis carries the tag")
+    check(end_review.state.panel.source == s.engine_tag, "every move of the plugin's analysis carries the tag")
     end_review:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/end_review_tag.png")
     -- The option goes on from More, and then the next review analyzes at once.

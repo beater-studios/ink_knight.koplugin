@@ -357,6 +357,7 @@ local function review_of(text)
         intro = opening,
         opening = opening,
         result_text = result,
+        score = result,
     }, result == nil
 end
 

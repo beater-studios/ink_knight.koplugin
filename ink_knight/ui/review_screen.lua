@@ -39,7 +39,7 @@ function ReviewScreen.open(app, game, opts)
         state = { flipped = self.flipped },
         -- The review names squares, in the moves and the better ones, so they are always on its board.
         coordinates = true,
-        panel = true,
+        band = true,
         read_marks = true,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
@@ -134,10 +134,16 @@ function ReviewScreen:clocks()
     end
     return white or nil, black or nil
 end
--- "18." or "18...": the move number of a half move, from the move number of the FEN and who moved first.
-function ReviewScreen:move_label(index)
+-- The move number of a half move, from the move number of the FEN and who moved first, and whether white played it.
+function ReviewScreen:move_number(index)
     local ply = index + (self.positions[0].turn == "b" and 1 or 0)
-    return string.format("%d%s", self.first_number - 1 + math.ceil(ply / 2), ply % 2 == 1 and "." or "...")
+    return self.first_number - 1 + math.ceil(ply / 2), ply % 2 == 1
+end
+
+-- "18." or "18...".
+function ReviewScreen:move_label(index)
+    local number, white = self:move_number(index)
+    return string.format("%d%s", number, white and "." or "...")
 end
 
 -- The phase a half move starts, as the analysis of the site divides the game, when it is one the review has.
@@ -151,8 +157,6 @@ function ReviewScreen:phase_at(index)
         return self.s.review_endgame
     end
 end
-
-local SIGNS = { Blunder = "??", Mistake = "?", Inaccuracy = "?!" }
 
 -- The evaluation after a move in words, for white or black, or nil without one.
 function ReviewScreen:evaluation_words(move)
@@ -178,14 +182,48 @@ function ReviewScreen:better_move(index)
     return Chess.parse_uci(self.positions[index - 1], move.best_uci)
 end
 
--- The panel under the board: the move, its sign and judgment, the better move with its arrow, the evaluation in words.
+-- Who analyzed the game, on every move, so no evaluation of the plugin's engine passes for one of Lichess.
+function ReviewScreen:source_tag()
+    local summary = self.game.summary
+    if not summary then
+        return nil
+    end
+    return summary.source == "plugin" and self.s.engine_tag or self.s.lichess_tag
+end
+
+-- "Move 5 · black": the number of a half move and who played it.
+function ReviewScreen:move_title(index)
+    local s = self.s
+    local number = self:move_number(index)
+    local color = self.positions[index - 1].turn == "w" and s.color_white or s.color_black
+    return string.format(s.review_move_title, number, color:lower())
+end
+
+-- The clocks of a game with them, a broadcast, for the card of the move: each side with the time it had then. An analyzed game shows the analysis there instead, so its judgments and who made them are never hidden.
+function ReviewScreen:panel_clocks()
+    if self.game.summary then
+        return nil
+    end
+    local white_clock, black_clock = self:clocks()
+    if not white_clock and not black_clock then
+        return nil
+    end
+    local s = self.s
+    local turn = self.positions[self.index].turn
+    return {
+        { label = s.color_white:lower(), clock = white_clock and Broadcast.clock_text(white_clock) or "-", active = white_clock ~= nil and turn == "w" },
+        { label = s.color_black:lower(), clock = black_clock and Broadcast.clock_text(black_clock) or "-", active = black_clock ~= nil and turn == "b" },
+    }
+end
+
+-- The card under the board: what move it is, the move and its judgment, the better move with its arrow, the evaluation in words. The judgment is in its tag, so the move has no sign of its own.
 function ReviewScreen:panel()
     local s, game = self.s, self.game
     if self.index == 0 then
-        return { detail = game.intro or s.start_pos }
+        return { title = s.review_before_first, source = self:source_tag(), move = s.start_pos, detail = game.intro, clocks = self:panel_clocks() }
     end
     local move = game.moves[self.index]
-    local panel = { move = self:move_label(self.index) .. " " .. (move.san or move.uci) .. (SIGNS[move.judgment] or "") }
+    local panel = { title = self:move_title(self.index), source = self:source_tag(), move = move.san or move.uci, clocks = self:panel_clocks() }
     local phase = self:phase_at(self.index)
     if move.judgment then
         panel.tag, panel.tag_solid = s.judgments[move.judgment] or move.judgment, true
@@ -208,12 +246,27 @@ function ReviewScreen:panel()
     return panel
 end
 
+-- The bar of the evaluation after the move shown, as Lichess draws its own: white's share from its chances to win, and the number of pawns, or the mate, at its foot. Nothing without an evaluation.
+function ReviewScreen:evaluation_bar()
+    local move = self.index > 0 and self.game.moves[self.index] or nil
+    if not move then
+        return nil
+    end
+    if move.white_mate then
+        return { white = move.white_mate > 0 and 1 or 0, text = "#" .. math.abs(move.white_mate) }
+    elseif move.white_score then
+        local chances = 2 / (1 + math.exp(-0.00368208 * move.white_score)) - 1
+        local text = string.format("%.1f", math.abs(move.white_score) / 100):gsub("%.", self.s.decimal_separator)
+        return { white = 0.5 + 0.5 * chances, text = text }
+    end
+end
+
 -- The panel in one line, for what reads the status of a board; the review draws the panel itself.
-function ReviewScreen:status_text()
+function ReviewScreen:status_text(panel)
     if self.analysis then
         return string.format(self.s.engine_progress, self.progress_done or 1, self.progress_total or 1)
     end
-    local panel = self:panel()
+    panel = panel or self:panel()
     local parts = {}
     for _, key in ipairs({ "move", "tag", "detail", "evaluation" }) do
         parts[#parts + 1] = panel[key]
@@ -222,35 +275,25 @@ function ReviewScreen:status_text()
 end
 
 function ReviewScreen:render(what)
-    local s = self.s
-    local white_clock, black_clock = self:clocks()
-    local turn = self.positions[self.index].turn
-    local white = { name = self.game.white or "?", clock = white_clock and Broadcast.clock_text(white_clock), active = white_clock and turn == "w" }
-    local black = { name = self.game.black or "?", clock = black_clock and Broadcast.clock_text(black_clock), active = black_clock and turn == "b" }
-    local top, bottom = black, white
-    if self.flipped then
-        top, bottom = bottom, top
-    end
-    -- On every move, so no evaluation of the plugin's engine passes for one of Lichess.
-    if self.game.summary and self.game.summary.source == "plugin" then
-        top.tag = s.engine_tag
-    end
+    local s, game = self.s, self.game
+    local live = self.opts.refresh ~= nil and not game.result_text
+    local panel = self:panel()
     self.screen:show({
         flipped = self.flipped,
         position = self.positions[self.index],
         last_move = self.last_moves[self.index],
-        top = top,
-        bottom = bottom,
-        status = self:status_text(),
-        panel = self:panel(),
+        band = { white = game.white or "?", black = game.black or "?", result = game.score, live = live and s.broadcast_live or nil },
+        eval = self:evaluation_bar(),
+        status = self:status_text(panel),
+        panel = panel,
         shapes = self:better_shapes(),
-        progress = self.analysis and { done = self.progress_done or 1, total = self.progress_total or 1 } or nil,
+        progress = self.analysis and { title = s.engine_analyzing, done = self.progress_done or 1, total = self.progress_total or 1, detail = string.format(s.engine_progress_detail, self.progress_done or 1, self.progress_total or 1) } or nil,
         buttons = {
             { id = "back", label = s.back },
-            { id = "first", label = "|<" },
-            { id = "previous", label = "<" },
-            { id = "next", label = ">" },
-            { id = "last", label = ">|" },
+            { id = "first", label = s.first },
+            { id = "previous", label = s.previous },
+            { id = "next", label = s.next },
+            { id = "last", label = s.last },
             self.analysis and { id = "stop", label = s.stop } or { id = "more", label = s.more },
         },
     }, what)

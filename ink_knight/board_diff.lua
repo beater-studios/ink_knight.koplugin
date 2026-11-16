@@ -17,6 +17,14 @@ local function buttons_text(buttons)
     return table.concat(parts, "|")
 end
 
+local function clocks_text(clocks)
+    local parts = {}
+    for index, clock in ipairs(clocks or {}) do
+        parts[index] = tostring(clock.label) .. "=" .. tostring(clock.clock) .. (clock.active and "*" or "")
+    end
+    return table.concat(parts, "|")
+end
+
 -- A square is what is on it and every mark over it.
 local function square_text(state, square)
     local board = state.position and state.position.board
@@ -49,11 +57,12 @@ function BoardDiff.snapshot(state)
         squares = squares,
         flipped = state.flipped == true,
         has_position = state.position ~= nil,
-        top = bar_text(state.top) .. "|" .. tostring(state.banner),
+        top = bar_text(state.top) .. "|" .. tostring(state.banner) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
+        eval = state.eval and (string.format("%.3f", state.eval.white or 0) .. "|" .. tostring(state.eval.text)) or "",
         overlay = overlay_text(state),
         bottom = bar_text(state.bottom),
         status = tostring(state.status) .. "|" .. (state.progress and (tostring(state.progress.done) .. "/" .. tostring(state.progress.total)) or "")
-            .. "|" .. (state.panel and table.concat({ tostring(state.panel.move), tostring(state.panel.tag), tostring(state.panel.detail), tostring(state.panel.evaluation) }, "|") or ""),
+            .. "|" .. (state.panel and table.concat({ tostring(state.panel.move), tostring(state.panel.tag), tostring(state.panel.detail), tostring(state.panel.evaluation), tostring(state.panel.title), tostring(state.panel.source), clocks_text(state.panel.clocks) }, "|") or ""),
         buttons = buttons_text(state.buttons),
         -- A card over the board changes much of it at once.
         card = state.card and table.concat({ tostring(state.card.title), tostring(state.card.text), tostring(state.card.detail), buttons_text(state.card.buttons) }, "|") or "",
@@ -76,6 +85,7 @@ function BoardDiff.changes(old, new)
     return {
         squares = squares,
         top = old.top ~= new.top,
+        eval = old.eval ~= new.eval,
         bottom = old.bottom ~= new.bottom,
         status = old.status ~= new.status,
         buttons = old.buttons ~= new.buttons,

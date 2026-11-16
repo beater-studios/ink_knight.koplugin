@@ -555,8 +555,9 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     Broadcasts.game(home, "BcastRnd10", { id = "Game2" })
     settle()
     local review = top_page()
-    if not (review.state and review.state.bottom and review.state.bottom.clock == "1:28:54" and review.state.top.clock == "9:59:58") then
-        problem(language .. " broadcast game: the clocks of each side should show on the bars")
+    local clocks = review.state and review.state.panel and review.state.panel.clocks
+    if not (clocks and clocks[1].clock == "1:28:54" and clocks[2].clock == "9:59:58") then
+        problem(language .. " broadcast game: the clocks of each side should show on the card of the move")
     end
     check_board(review, language .. " broadcast game")
     UIManager:close(review)
@@ -695,7 +696,8 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         problem(language .. " live review: should open on the last move, at " .. live.index)
     end
     live:update({ moves = { live_game.moves[1], live_game.moves[2], { uci = "g1f3", san = "Nf3", clock = 580 } }, white = "A", black = "B" })
-    if live.index ~= 3 or live.screen.state.bottom.clock ~= "9:40" or live.screen.state.top.clock ~= "9:50" then
+    local live_clocks = live.screen.state.panel and live.screen.state.panel.clocks
+    if live.index ~= 3 or not live_clocks or live_clocks[1].clock ~= "9:40" or live_clocks[2].clock ~= "9:50" then
         problem(language .. " live review: a new move should be followed, with the clocks")
     end
     live:go(1)
