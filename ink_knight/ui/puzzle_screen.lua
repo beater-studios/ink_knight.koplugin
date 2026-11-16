@@ -18,6 +18,8 @@ function PuzzleScreen.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings, daily = opts.daily, single = opts.single, angle = opts.angle, review = opts.review, pack = opts.pack, on_closed = opts.on_closed }, PuzzleScreen)
     self.screen = BoardScreen:new{
         state = {},
+        -- What happens is said in the plates, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() self:closed() end,
@@ -37,7 +39,7 @@ end
 
 function PuzzleScreen:start(puzzle)
     self.session = puzzle and Puzzles.new_session(puzzle) or nil
-    self.selected, self.targets, self.message = nil, nil, nil
+    self.selected, self.targets, self.message, self.card_closed = nil, nil, nil, nil
     if self.session then
         self.message = self.s.puzzle_find
     end
@@ -47,16 +49,34 @@ end
 function PuzzleScreen:render(what)
     local s, session = self.s, self.session
     if not session then
-        self.screen:show({ status = self.review and s.puzzle_review_done or s.puzzle_empty, buttons = { { id = "back", label = s.back } } }, what)
+        local text = self.review and s.puzzle_review_done or s.puzzle_empty
+        self.screen:show({ status = text, bottom = { name = s.puzzles, detail = text }, buttons = { { id = "back", label = s.back } } }, what)
         return
     end
+    local has_next = not self.daily and not self.single
     local buttons = { { id = "back", label = s.back } }
     if session.solved then
-        if not self.daily and not self.single then
+        if has_next then
             buttons[#buttons + 1] = { id = "next", label = s.puzzle_next_button }
         end
     else
         buttons[#buttons + 1] = { id = "show", label = s.puzzle_show }
+    end
+    local bottom = { name = session.my_color == "w" and s.plays_white or s.plays_black }
+    if self.message == s.puzzle_wrong then
+        bottom.note = { text = self.message }
+    else
+        bottom.detail = self.message
+    end
+    -- A puzzle solved shows a card with the next one, which a tap on Board takes away.
+    local card
+    if session.solved and has_next and not self.card_closed then
+        card = {
+            icon = "done",
+            title = s.puzzle_solved,
+            text = self.message ~= s.puzzle_solved and self.message or nil,
+            buttons = { { id = "next", label = s.puzzle_next, primary = true }, { id = "see_board", label = s.see_board } },
+        }
     end
     self.screen:show({
         position = session.position,
@@ -64,9 +84,10 @@ function PuzzleScreen:render(what)
         flipped = session.my_color == "b",
         selected = self.selected,
         targets = self.targets,
-        top = { name = string.format(s.puzzle_rating, session.puzzle.rating or 0) },
-        bottom = { name = session.my_color == "w" and s.plays_white or s.plays_black },
+        top = { icon = "hint", name = string.format(s.puzzle_rating, session.puzzle.rating or 0) },
+        bottom = bottom,
         status = self.message,
+        card = card,
         buttons = buttons,
     }, what)
 end
@@ -159,6 +180,9 @@ function PuzzleScreen:on_button(button)
     elseif button == "next" then
         self.recorded = false
         self:start(self:next())
+    elseif button == "see_board" then
+        self.card_closed = true
+        self:render()
     end
 end
 

@@ -154,6 +154,7 @@ return {
         local app = fake_app()
         app.language = "en"
         function app:practice_texts() return require("ink_knight/data/practice_texts_en") end
+        function app:learn_texts() return require("ink_knight/data/learn_texts").en end
         function app:practice_record() end
         function app:reload_pages() end
         local study = require("ink_knight/data/practice")[1].studies[1]
@@ -168,6 +169,7 @@ return {
         local app = fake_app()
         app.language = "en"
         function app:practice_texts() return require("ink_knight/data/practice_texts_en") end
+        function app:learn_texts() return require("ink_knight/data/learn_texts").en end
         function app:practice_record() end
         function app:reload_pages() end
         -- This chapter starts with black's move, after a pause.

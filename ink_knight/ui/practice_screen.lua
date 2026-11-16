@@ -31,7 +31,12 @@ function PracticeScreen.open(app, study, index, opts)
     self.later_callback = function() self:later() end
     self.screen = BoardScreen:new{
         state = {},
-        banner_lines = 4,
+        banner_lines = 3,
+        -- The study and the chapter over the text, and a tap on the text reads it whole.
+        banner_heading = true,
+        banner_tap = "read",
+        -- What happens is said in the plate, so the board takes the room of the line of text.
+        status_line = false,
         -- The lessons name squares, so the board always has its coordinates.
         coordinates = true,
         on_square = function(square) self:on_square(square) end,
@@ -55,7 +60,7 @@ end
 -- again: a retry, which does not show the introduction of a guided chapter again.
 function PracticeScreen:start(index, what, again)
     Sleep.unschedule(self.screen, self.later_callback)
-    self.search, self.thinking, self.hinting, self.pending = nil, false, false, nil
+    self.search, self.thinking, self.hinting, self.pending, self.card_closed = nil, false, false, nil, nil
     if self.engine_player then
         self.engine_player:cancel()
     end
@@ -211,21 +216,20 @@ function PracticeScreen:status_text()
     return feedback == "play" and s.practice_your_turn or ""
 end
 
-function PracticeScreen:buttons(banner)
+function PracticeScreen:buttons()
     local s, chapter, state = self.s, self.chapter, self.state
     local buttons = { { id = "back", label = s.back } }
-    if not self.screen:banner_fits(banner) or (chapter.kind == "guided" and self:text("d")) then
-        buttons[#buttons + 1] = { id = "read", label = s.practice_read }
-    end
     if chapter.kind == "goal" then
         if state.status == "playing" then
             buttons[#buttons + 1] = { id = "hint", label = s.hint }
         end
         buttons[#buttons + 1] = { id = "retry", label = s.practice_retry }
     elseif chapter.kind == "lesson" then
-        buttons[#buttons + 1] = { id = "previous", label = "<" }
-        buttons[#buttons + 1] = { id = "forward", label = ">" }
-        buttons[#buttons + 1] = { id = "comment", label = ">>" }
+        buttons[#buttons + 1] = { id = "previous", label = s.previous }
+        buttons[#buttons + 1] = { id = "forward", label = s.next }
+        buttons[#buttons + 1] = { id = "comment", label = s.comment_button }
+        buttons[#buttons + 1] = { id = "next", label = s.chapter_button, icon = "last" }
+        return buttons
     else
         local feedback = Practice.feedback(state, chapter)
         if feedback == "play" then
@@ -241,6 +245,67 @@ function PracticeScreen:buttons(banner)
     end
     buttons[#buttons + 1] = { id = "next", label = s.practice_next }
     return buttons
+end
+
+-- Where the text on top comes from: the study, the chapter and its name, as much of it as fits.
+function PracticeScreen:banner_title()
+    local chapter_of = string.format(self.s.practice_chapter_of, self.index, #self.study.chapters)
+    local study, name = self:study_name(), self:text("n")
+    study = study ~= "" and study or nil
+    name = name ~= "" and name or nil
+    local candidates = {}
+    if study and name then
+        candidates[#candidates + 1] = table.concat({ study, chapter_of, name }, " · ")
+    end
+    if study then
+        candidates[#candidates + 1] = study .. " · " .. chapter_of
+    elseif name then
+        candidates[#candidates + 1] = chapter_of .. " · " .. name
+    end
+    for _, title in ipairs(candidates) do
+        if self.screen:banner_title_fits(title) then
+            return title
+        end
+    end
+    return chapter_of
+end
+
+-- The plate below the board: the reader's color and how the chapter goes, or, in a commented game, the move shown.
+function PracticeScreen:bottom_plate(status)
+    local s, chapter, state = self.s, self.chapter, self.state
+    if chapter.kind == "lesson" then
+        return { name = status, detail = s.lesson_kind }
+    end
+    local color = chapter.color == "b" and s.color_black or s.color_white
+    local plate = { name = string.format("%s · %s", s.you, color:lower()) }
+    local wrong = (chapter.kind == "goal" and state.status == "failed") or (chapter.kind ~= "goal" and Practice.feedback(state, chapter) == "bad")
+    if wrong then
+        plate.note = { text = status }
+    elseif self.hint_move then
+        plate.note = { text = status, solid = true }
+    else
+        plate.detail = status
+    end
+    return plate
+end
+
+-- A chapter done shows a card with the next one, which a tap on Board takes away.
+function PracticeScreen:solved_card(status)
+    local s, chapter, state = self.s, self.chapter, self.state
+    local done = (chapter.kind == "goal" and state.status == "solved") or (chapter.kind == "guided" and Practice.feedback(state, chapter) == "end")
+    if not done or self.card_closed then
+        return nil
+    end
+    local buttons = {}
+    if self.index < #self.study.chapters then
+        buttons[1] = { id = "next", label = s.next_chapter, primary = true }
+    end
+    buttons[#buttons + 1] = { id = "see_board", label = s.see_board }
+    -- A guided lesson is followed rather than solved, and its status already says it is complete.
+    if chapter.kind == "guided" then
+        return { icon = "done", title = s.practice_complete, buttons = buttons }
+    end
+    return { icon = "done", title = s.chapter_solved, text = status, buttons = buttons }
 end
 
 function PracticeScreen:render(what)
@@ -268,6 +333,7 @@ function PracticeScreen:render(what)
         check_square = Chess.king_square(position, position.turn)
     end
     local banner = self:banner_text()
+    local status = self:status_text()
     self.screen:show({
         banner = banner,
         flipped = chapter.color == "b",
@@ -279,9 +345,12 @@ function PracticeScreen:render(what)
         targets = self.targets,
         shapes = shapes,
         check_square = check_square,
-        bottom = { name = self:bar_name(), clock = string.format("%d/%d", self.index, #self.study.chapters) },
-        status = self:status_text(),
-        buttons = self:buttons(banner),
+        banner_title = self:banner_title(),
+        banner_more = chapter.kind == "guided" and self:text("d") ~= nil,
+        bottom = self:bottom_plate(status),
+        card = self:solved_card(status),
+        status = status,
+        buttons = self:buttons(),
     }, what)
 end
 
@@ -314,23 +383,6 @@ end
 -- A study of Lichess may have a name too long for a title, so its pages are titled Studies.
 function PracticeScreen:page_title()
     return self.opts.load and self.s.studies or self:study_name()
-end
-
--- The name of the chapter below the board, or of the study when the chapter's is too long for it (Chapter N when
--- neither fits, for a study of Lichess), measured once for each chapter.
-function PracticeScreen:bar_name()
-    local name = self:text("n") or ""
-    if self.bar_name_of ~= self.chapter then
-        self.bar_name_of = self.chapter
-        if self.screen:bar_name_fits(name) then
-            self.bar_name_text = name
-        elseif self.screen:bar_name_fits(self:study_name()) then
-            self.bar_name_text = self:study_name()
-        else
-            self.bar_name_text = string.format(self.s.chapter_number, self.index)
-        end
-    end
-    return self.bar_name_text
 end
 
 -- The engine, in slices, so the screen never freezes; a search for a chapter left behind is dropped.
@@ -730,6 +782,9 @@ function PracticeScreen:on_button(button)
     local chapter = self.chapter
     if button == "back" then
         UIManager:close(self.screen)
+    elseif button == "see_board" then
+        self.card_closed = true
+        self:render()
     elseif button == "read" then
         self.app:open_page{ title = self:page_title(), rows = { { kind = "text", text = self:with_name(self:read_text()) } }, close_on_tap = true }
     elseif button == "hint" then

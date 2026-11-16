@@ -6,13 +6,13 @@ local function bar_text(info)
         return ""
     end
     local note = info.note and (tostring(info.note.text) .. (info.note.solid and "*" or "")) or ""
-    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active), tostring(info.tag), tostring(info.detail), note, tostring(info.piece) }, "|")
+    return table.concat({ tostring(info.name), tostring(info.clock), tostring(info.active), tostring(info.tag), tostring(info.tag_solid), tostring(info.detail), note, tostring(info.piece), tostring(info.icon) }, "|")
 end
 
 local function buttons_text(buttons)
     local parts = {}
     for index, button in ipairs(buttons or {}) do
-        parts[index] = tostring(button.id) .. "=" .. tostring(button.label) .. (button.pill and "|pill" or "") .. (button.primary and "|primary" or "")
+        parts[index] = tostring(button.id) .. "=" .. tostring(button.label) .. (button.pill and "|pill" or "") .. (button.primary and "|primary" or "") .. "|" .. tostring(button.icon)
     end
     return table.concat(parts, "|")
 end
@@ -57,7 +57,7 @@ function BoardDiff.snapshot(state)
         squares = squares,
         flipped = state.flipped == true,
         has_position = state.position ~= nil,
-        top = bar_text(state.top) .. "|" .. tostring(state.banner) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
+        top = bar_text(state.top) .. "|" .. tostring(state.banner) .. "|" .. tostring(state.banner_title) .. "|" .. tostring(state.banner_more) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
         eval = state.eval and (string.format("%.3f", state.eval.white or 0) .. "|" .. tostring(state.eval.text)) or "",
         overlay = overlay_text(state),
         bottom = bar_text(state.bottom),

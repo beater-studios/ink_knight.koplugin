@@ -86,6 +86,9 @@ local BoardScreen = InputContainer:extend{
     read_marks = false,
     -- The layout of a review: the players in a black band on top (state.band), a bar of the evaluation beside the board (state.eval), and the panel of the move below it in place of the plates.
     band = false,
+    -- A line over the text of the banner, for where it comes from (state.banner_title), and the button a tap on the banner presses, such as reading it whole.
+    banner_heading = false,
+    banner_tap = nil,
 }
 
 -- The arrows and circles of the lessons in two inks: black for the ones that warn, dark gray for the others.
@@ -413,7 +416,7 @@ function BoardScreen:layout()
     local status_h = self.status_line and self:px(30) or 0
     -- The black frame holds the coordinates when they show; without them it is a thin edge.
     self.frame = self.coordinates and self:px(18) or self:px(8)
-    local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(30) or plate_h
+    local top_h = self.banner_lines and self:px(24) * self.banner_lines + self:px(30) + (self.banner_heading and self:px(22) or 0) or plate_h
     local room = self.height - StatusStrip.height() - margin - top_h - self:px(8) - 2 * self.frame - gap - plate_h - status_h - gap - button_h - margin
     local side = self:px(14) + self.frame
     self.square = math.floor(math.min(self.width - 2 * side, room) / 8)
@@ -425,8 +428,9 @@ function BoardScreen:layout()
         local shadow = self:px(Style.CARD_SHADOW)
         self.top_bar = { x = self:px(10), y = margin, w = self.width - 2 * self:px(10) - shadow, h = top_h - shadow }
     end
-    -- Where the text of the banner goes, inside its card.
-    self.banner_rect = { x = self.top_bar.x + self:px(4), y = self.top_bar.y + self:px(4), w = self.top_bar.w - self:px(8), h = self.top_bar.h - self:px(8) }
+    -- Where the text of the banner goes, inside its card, under its heading.
+    local heading = self.banner_heading and self:px(22) or 0
+    self.banner_rect = { x = self.top_bar.x + self:px(4), y = self.top_bar.y + self:px(4) + heading, w = self.top_bar.w - self:px(8), h = self.top_bar.h - self:px(8) - heading }
     -- The sizes that fit the banner depend on its width.
     self.banner_sizes = nil
     self.board_y = margin + top_h + self:px(8) + self.frame
@@ -486,17 +490,8 @@ function BoardScreen:plate_parts(rect)
     return radius, text_x, self:px(104)
 end
 
--- Whether a name fits a plate beside its clock, so a screen can say something shorter when it does not.
-function BoardScreen:bar_name_fits(text)
-    local _, text_x, clock_w = self:plate_parts(self.bottom_bar)
-    local widget = TextWidget:new{ text = text, face = face(BOLD, 18 * self.scale) }
-    local w = widget:getSize().w
-    widget:free()
-    return w <= self.bottom_bar.x + self.bottom_bar.w - self:px(8) - clock_w - self:px(10) - text_x
-end
-
 -- A player's plate: the piece of the side in a light circle, the name, a line below it, a tag and the clock in a pill,
--- black while it runs. info: name, detail, note ({ text, solid }, a pill in place of the detail), tag, clock, active, piece.
+-- black while it runs. info: name, detail, note ({ text, solid }, a pill in place of the detail), tag (tag_solid for a black one), clock, active, piece, or icon (of ui/draw.lua) in its place.
 function BoardScreen:paint_bar(bb, rect, info, piece)
     if not info then
         return
@@ -505,7 +500,11 @@ function BoardScreen:paint_bar(bb, rect, info, piece)
     local radius, text_x, clock_w = self:plate_parts(rect)
     local cx, cy = rect.x + self:px(8) + radius, rect.y + math.floor(rect.h / 2)
     bb:paintCircle(cx, cy, radius, Style.PALE)
-    BoardScreen.paint_piece_fit(bb, self.piece_set, info.piece or piece, cx, cy, math.floor(radius * 1.45))
+    if info.icon then
+        Draw.icon(bb, info.icon, cx, cy, math.floor(radius * 1.2))
+    else
+        BoardScreen.paint_piece_fit(bb, self.piece_set, info.piece or piece, cx, cy, math.floor(radius * 1.45))
+    end
     local right = rect.x + rect.w - self:px(8)
     if info.clock and info.clock ~= "" then
         local h = rect.h - self:px(14)
@@ -519,8 +518,8 @@ function BoardScreen:paint_bar(bb, rect, info, piece)
         local h = self:px(26)
         local w = math.min(self:px(170), MoveText.width(info.tag, BOLD, 13 * self.scale) + self:px(20))
         local x, y = right - w, rect.y + math.floor((rect.h - h) / 2)
-        Draw.pill(bb, x, y, w, h, self.scale * 0.6, false)
-        self:paint_text(bb, info.tag, BOLD, 13, x + self:px(6), y, w - self:px(12), h, "center")
+        Draw.pill(bb, x, y, w, h, self.scale * 0.6, info.tag_solid)
+        self:paint_text(bb, info.tag, BOLD, 13, x + self:px(6), y, w - self:px(12), h, "center", info.tag_solid and WHITE or BLACK)
         right = x - self:px(10)
     end
     local text_w = right - text_x
@@ -736,7 +735,7 @@ function BoardScreen:button_rects()
     local x = pad
     for index, button in ipairs(buttons) do
         local bw = (small and not button.pill) and small or w
-        rects[index] = { id = button.id, label = button.label, pill = button.pill, primary = button.primary, x = x, y = rect.y, w = bw, h = rect.h }
+        rects[index] = { id = button.id, label = button.label, icon = button.icon, pill = button.pill, primary = button.primary, x = x, y = rect.y, w = bw, h = rect.h }
         x = x + bw + gap
     end
     return rects
@@ -756,7 +755,7 @@ function BoardScreen:paint_buttons(bb)
             goto continue
         end
         Draw.box(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false)
-        local icon = BUTTON_ICONS[rect.id]
+        local icon = rect.icon or BUTTON_ICONS[rect.id]
         local inner = rect.w - self:px(8)
         -- A name that is only a sign, such as "<", says nothing the icon does not.
         if icon and not rect.label:find("[%a\128-\255]") then
@@ -812,10 +811,18 @@ function BoardScreen:banner_fits(text)
     return fits
 end
 
--- The text of a lesson in a card on top of the board.
+-- Whether a heading fits the line over the banner, in capitals as it is drawn, so a screen can shorten it.
+function BoardScreen:banner_title_fits(text)
+    return MoveText.width(Draw.upper(text), BOLD, 12 * self.scale) <= self.banner_rect.w - self:px(24)
+end
+
+-- The text of a lesson in a card on top of the board. A text cut at the edge, or with more to read (state.banner_more), has three dots in its corner, for the tap that reads it whole.
 function BoardScreen:paint_banner(bb, text)
     local card = self.top_bar
     Draw.card(bb, card.x, card.y, card.w, card.h, self.scale)
+    if self.banner_heading and self.state.banner_title then
+        self:paint_text(bb, Draw.upper(self.state.banner_title), BOLD, 12, card.x + self:px(16), card.y + self:px(8), card.w - self:px(32), self:px(20), "left", Style.DARK)
+    end
     local rect = self.banner_rect
     local pad = self:px(12)
     local box, fits = self:banner_box(text, rect)
@@ -829,6 +836,12 @@ function BoardScreen:paint_banner(bb, text)
     box:free()
     bb:blitFrom(area, rect.x, rect.y, 0, 0, rect.w, rect.h)
     area:free()
+    if self.banner_tap and (not fits or self.state.banner_more) then
+        local w, h = self:px(34), self:px(18)
+        local x, y = card.x + card.w - w - self:px(8), card.y + card.h - h - self:px(4)
+        bb:paintRoundedRect(x, y, w, h, WHITE, math.floor(h / 2))
+        Draw.icon(bb, "more", x + math.floor(w / 2), y + math.floor(h / 2), self:px(22))
+    end
 end
 
 function BoardScreen:square_center(square)
@@ -1117,7 +1130,7 @@ function BoardScreen:card_layout()
         end
     end
     local head = (card.icon or card.piece) and self:px(64) or 0
-    local body = self:px(150)
+    local body = self:px(70) + (card.text and self:px(36) or 0) + (card.detail and self:px(30) or 0) + self:px(10)
     local h = self:px(14) + head + body + (primary and (primary_h + gap) or 0) + (#secondary > 0 and (secondary_h + gap) or 0) + self:px(8)
     -- Low on the board, so the top ranks, where a mated king often stands, stay in sight.
     local y = math.max(board.y + self:px(8), board.y + board.h - h - math.floor(self.square / 2))
@@ -1158,9 +1171,17 @@ function BoardScreen:paint_card(bb)
         end
         top = top + layout.head
     end
-    self:paint_text(bb, card.title, BOLD, 44, x, top, w, self:px(64), "center")
-    self:paint_text(bb, card.text, BOLD, 20, x + self:px(12), top + self:px(66), w - self:px(24), self:px(34), "center")
-    self:paint_text(bb, card.detail, REGULAR, 15, x + self:px(12), top + self:px(102), w - self:px(24), self:px(28), "center", Style.DARK)
+    local title_size = 44
+    while title_size > 26 and MoveText.width(card.title or "", BOLD, title_size * self.scale) > w - self:px(24) do
+        title_size = title_size - 2
+    end
+    self:paint_text(bb, card.title, BOLD, title_size, x + self:px(12), top, w - self:px(24), self:px(64), "center")
+    local line = top + self:px(66)
+    if card.text then
+        self:paint_text(bb, card.text, BOLD, 20, x + self:px(12), line, w - self:px(24), self:px(34), "center")
+        line = line + self:px(36)
+    end
+    self:paint_text(bb, card.detail, REGULAR, 15, x + self:px(12), line, w - self:px(24), self:px(28), "center", Style.DARK)
     for _, rect in ipairs(layout.buttons) do
         Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, rect.primary)
         self:paint_text(bb, rect.label, BOLD, rect.primary and 20 or 17, rect.x + self:px(10), rect.y, rect.w - self:px(20), rect.h, "center", rect.primary and WHITE or BLACK)
@@ -1253,6 +1274,11 @@ function BoardScreen:onTap(_, ges)
             end
             return true
         end
+    end
+    local banner = self.top_bar
+    if self.banner_lines and self.banner_tap and self.on_button and x >= banner.x and x < banner.x + banner.w and y >= banner.y and y < banner.y + banner.h then
+        self.on_button(self.banner_tap)
+        return true
     end
     local card = self:card_layout()
     if card then

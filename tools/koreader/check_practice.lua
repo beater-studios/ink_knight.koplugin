@@ -203,9 +203,11 @@ for _, section in ipairs(sections) do
 end
 practice = PracticeScreen.open(home, long_study, long_index)
 check(not practice.screen:banner_fits(practice.screen.state.banner), "the longest description should not fit the banner: " .. long_length .. " bytes, screen " .. Screen:getWidth() .. "x" .. Screen:getHeight())
-check(ids(practice.screen):find("read", 1, true), "a long text offers to read it: " .. ids(practice.screen))
+-- A tap on the text on top reads it whole, in place of a button.
+check(practice.screen.banner_tap == "read", "a tap on the banner should read it")
 local pages = #home.pages
-practice.screen.on_button("read")
+local banner = practice.screen.top_bar
+practice.screen:onTap(nil, { pos = { x = banner.x + 10, y = banner.y + 10 } })
 check(#home.pages == pages + 1 and home.pages[#home.pages].lines[1].text:find(practice.screen.state.banner, 1, true), "read should show the whole comment")
 UIManager:close(home.pages[#home.pages])
 UIManager:close(practice.screen)
@@ -217,7 +219,9 @@ pages = #home.pages
 practice = PracticeScreen.open(home, intro_study, intro_index)
 check(#home.pages == pages + 1 and home.pages[#home.pages].lines[1].text:find(texts["D23EYigW.d"], 1, true), "the description should open first")
 UIManager:close(home.pages[#home.pages])
-check(ids(practice.screen):find("read", 1, true), "the description can be read again: " .. ids(practice.screen))
+practice.screen:onTap(nil, { pos = { x = practice.screen.top_bar.x + 10, y = practice.screen.top_bar.y + 10 } })
+check(#home.pages == pages + 1 and home.pages[#home.pages].lines[1].text:find(texts["D23EYigW.d"], 1, true), "a tap on the banner shows the description again")
+UIManager:close(home.pages[#home.pages])
 practice.screen.on_button("retry")
 check(#home.pages == pages, "trying again does not show it again")
 UIManager:close(practice.screen)
