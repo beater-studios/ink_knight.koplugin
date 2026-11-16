@@ -75,7 +75,7 @@ end
 local function items_of(widget)
     local items = {}
     for _, line in ipairs(widget.lines or {}) do
-        if line.kind == "tile_line" then
+        if line.kind == "tile_line" or line.kind == "buttons" then
             for _, item in ipairs(line.items) do items[#items + 1] = item end
         else
             items[#items + 1] = line
@@ -251,11 +251,11 @@ do
     if opened("own profile") then
         local profile = top_widget()
         for _, item in ipairs(items_of(profile)) do
-            if item.text == s.profile_activity or (item.text or ""):find(s.perf_names.storm, 1, true) then
+            if item.text == s.profile_activity or item.label == s.perf_names.storm then
                 local before = #UIManager._window_stack
                 item.callback()
                 if pump(function() return #UIManager._window_stack > before end, 30, item.text) then
-                    print(item.text .. ": " .. #items_of(top_widget()) .. " rows")
+                    print((item.label or item.text) .. ": " .. #items_of(top_widget()) .. " rows")
                     shot(item.text == s.profile_activity and "profile_activity" or "profile_storm")
                     close_top()
                 end

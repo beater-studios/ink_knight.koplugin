@@ -139,6 +139,7 @@ function Home:setup()
     Page.refresh:reset()
     Page.setup(self)
     self:schedule_minute()
+    require("ink_knight/ui/sleep_cover").app = self
     -- The check of Stockfish, after the first page is on screen, so the offline menu does not wait for it.
     UIManager:scheduleIn(1, function()
         if not self.is_closed then
@@ -736,8 +737,8 @@ end
 
 function Home:build_rows()
     local s = self.strings
-    return {
-        { kind = "hero", fill = true, icon = ICON_KNIGHT, text = s.games_title, detail = s.tagline },
+    local rows = {
+        { kind = "hero", band = true, fill = true, icon = ICON_KNIGHT, text = s.games_title, detail = s.tagline },
         {
             kind = "primary",
             text = self.token and s.play_online or s.connect,
@@ -750,11 +751,15 @@ function Home:build_rows()
             end,
         },
         { kind = "tiles", columns = 2, fill = true, items = {
-            { icon = ICON_KING, text = s.offline_game, callback = function() self:offline_menu() end },
-            { icon = ICON_PAWN, text = s.about, callback = function() self:show_about() end },
+            { icon = ICON_KING, text = s.offline_game, detail = s.offline_tile_detail, callback = function() self:offline_menu() end },
+            { icon = ICON_PAWN, text = s.about, detail = s.about_tile_detail, callback = function() self:show_about() end },
         } },
         { kind = "secondary", text = s.quit, callback = function() UIManager:close(self) end },
     }
+    if not self.token then
+        table.insert(rows, 3, { kind = "text", text = s.offline_works_note, center = true })
+    end
+    return rows
 end
 
 -- Asks for the Wi-Fi the way KOReader does, and goes on once it is connected.
@@ -1171,7 +1176,7 @@ function Home:start_seek(minutes, increment)
         title = s.find_opponent,
         close_on_tap = true,
         rows = {
-            { kind = "hero", icon = ICON_KNIGHT, text = Api.clock_label(minutes, increment), detail = string.format(s.searching, Api.clock_label(minutes, increment)) },
+            { kind = "hero", card = true, icon = ICON_KNIGHT, text = Api.clock_label(minutes, increment), detail = string.format(s.searching, Api.clock_label(minutes, increment)), note = s.seek_note },
             { kind = "secondary", text = s.cancel, callback = function() end },
         },
         -- Leaving this page, by any way, gives up the search.
@@ -1482,13 +1487,15 @@ function Home:choice_row(page, opts)
             rows[1] = { kind = "text", text = opts.note }
         end
         for _, name in ipairs(opts.names) do
-            local row = { text = opts.labels[name], value = name == opts.current and "✓" or nil, callback = function()
+            local row = { text = opts.labels[name], tag = name == opts.current and self.strings.in_use or nil, callback = function()
                 opts.on_pick(name)
                 page:reload()
             end }
             if opts.sample then
-                row.preview = function(bb, x, y, size) opts.sample(bb, name, x, y, size) end
+                -- Larger than in the row of the settings, with pieces on the squares, to choose by how they look.
+                row.preview = function(bb, x, y, size) opts.sample(bb, name, x, y, size, true) end
                 row.preview_columns = 2
+                row.preview_size = 56
             end
             rows[#rows + 1] = row
         end
@@ -1833,12 +1840,16 @@ function Home:learn_stage_done(stage)
         end
     end
     local rows = {
-        { kind = "text", text = t[stage.complete] .. (rank and ("\n\n" .. LearnScreen.stars_text(rank)) or ""), center = true },
+        { kind = "hero", card = true, piece = stage.piece, icon = not stage.piece and ICON_KNIGHT or nil, text = t[stage.title], stars = rank and { 4 - rank, 3 } or nil },
+        { kind = "text", text = t[stage.complete], center = true },
     }
     if following then
         rows[#rows + 1] = { kind = "primary", text = string.format(t.learnNextX, t[following.title]), callback = function() self:learn_open(following) end }
     end
-    rows[#rows + 1] = { kind = "secondary", text = t.learnBackToMenu, callback = function() end }
+    rows[#rows + 1] = { kind = "buttons", items = {
+        { text = t.learnRetry, callback = function() self:learn_open(stage) end },
+        { text = t.learnBackToMenu, callback = function() end },
+    } }
     self:open_page{ title = t[stage.title], rows = rows, close_on_tap = true }
 end
 
@@ -3042,6 +3053,10 @@ function Home:onCloseWidget()
     self:stop_network()
     BoardScreen.clear_art_cache()
     Draw.clear_cache()
+    local SleepCover = require("ink_knight/ui/sleep_cover")
+    if SleepCover.app == self then
+        SleepCover.app = nil
+    end
     PuzzlePack.release()
     Page.onCloseWidget(self)
 end

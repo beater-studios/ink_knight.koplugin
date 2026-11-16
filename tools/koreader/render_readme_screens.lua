@@ -39,23 +39,23 @@ for _, language in ipairs({ "en", "pt" }) do
     local position, last = Chess.from_moves(nil, "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7")
     -- The game in progress shows one of the board styles, the others keep the plain board.
     BoardScreen.style, BoardScreen.piece_set, BoardScreen.coordinates = "newspaper", "merida", true
-    local game = BoardScreen:new{ state = {
+    local game = BoardScreen:new{ status_line = false, state = {
         position = position, last_move = last,
         selected = Chess.square_from_name("f1"),
         targets = Chess.targets_from(position, Chess.square_from_name("f1")),
-        top = { name = "Helena Vargas (1612)", clock = "8:42" },
-        bottom = { name = "Otávio Brandão (1584)", clock = "9:15", active = true },
+        top = { name = "Helena Vargas · 1612", detail = string.format(s.played_move, "Be7"), clock = "8:42" },
+        bottom = { name = s.you .. " · 1584", detail = s.status_your_turn, clock = "9:15", active = true },
         status = s.status_your_turn,
-        buttons = { { id = "back", label = s.back }, { id = "draw", label = s.offer_draw }, { id = "resign", label = s.resign } },
+        buttons = { { id = "back", label = s.back }, { id = "draw", label = s.offer_draw }, { id = "resign", label = s.resign }, { id = "more", label = s.more } },
     } }
     save(game, folder .. "/game.png")
     UIManager:close(game)
     BoardScreen.style, BoardScreen.piece_set, BoardScreen.coordinates = "plain", "classic", false
     local puzzle_position, puzzle_last = Chess.from_moves(nil, "e2e4 e7e5 f1c4 b8c6 d1h5 g8f6")
-    local puzzle = BoardScreen:new{ state = {
+    local puzzle = BoardScreen:new{ status_line = false, state = {
         position = puzzle_position, last_move = puzzle_last,
-        top = { name = string.format(s.puzzle_rating, 1240) },
-        bottom = { name = s.plays_white },
+        top = { icon = "hint", name = string.format(s.puzzle_rating, 1240) },
+        bottom = { name = s.plays_white, detail = s.puzzle_find },
         status = s.puzzle_find,
         buttons = { { id = "back", label = s.back }, { id = "show", label = s.puzzle_show } },
     } }
@@ -92,23 +92,23 @@ for _, language in ipairs({ "en", "pt" }) do
     -- A hint against the offline engine: the piece and its square, and the move named below the board.
     local hint_position = Chess.from_moves(nil, "e2e4 e7e5 g1f3 b8c6")
     local bishop = Chess.square_from_name("f1")
-    local hint = BoardScreen:new{ state = {
+    local hint = BoardScreen:new{ status_line = false, state = {
         position = hint_position, last_move = select(2, Chess.from_moves(nil, "e2e4 e7e5 g1f3 b8c6")),
         selected = bishop,
         targets = { [Chess.square_from_name("b5")] = Chess.targets_from(hint_position, bishop)[Chess.square_from_name("b5")] },
-        top = { name = string.format(s.offline_level, 2, 4) },
-        bottom = { name = s.you },
+        top = { name = "Stockfish", detail = string.format(s.offline_level, 5, 8) .. " · " .. string.format(s.played_move, "Nc6") },
+        bottom = { name = s.you, note = { text = string.format(s.hint_status, "Bb5"), solid = true } },
         status = string.format(s.hint_status, "Bb5"),
-        buttons = { { id = "back", label = s.back }, { id = "undo", label = s.undo }, { id = "hint", label = s.hint }, { id = "moves", label = s.moves }, { id = "resign", label = s.resign } },
+        buttons = { { id = "back", label = s.back }, { id = "hint", label = s.hint }, { id = "undo", label = s.undo }, { id = "moves", label = s.moves }, { id = "resign", label = s.resign } },
     } }
     save(hint, folder .. "/hint.png")
     UIManager:close(hint)
 
     -- Two people on the same device.
     local two_position, two_last = Chess.from_moves(nil, "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6 c1g5 f8e7")
-    local two = BoardScreen:new{ state = {
+    local two = BoardScreen:new{ status_line = false, state = {
         position = two_position, last_move = two_last,
-        top = { name = s.color_black }, bottom = { name = s.color_white },
+        top = { name = s.color_black, clock = "4:12" }, bottom = { name = s.color_white, detail = s.local_turn_w, clock = "5:03", active = true },
         status = s.local_turn_w,
         buttons = { { id = "back", label = s.back }, { id = "undo", label = s.undo }, { id = "moves", label = s.moves }, { id = "flip", label = s.flip_board }, { id = "resign", label = s.resign } },
     } }

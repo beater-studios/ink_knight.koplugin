@@ -39,7 +39,7 @@ end
 
 function PuzzleScreen:start(puzzle)
     self.session = puzzle and Puzzles.new_session(puzzle) or nil
-    self.selected, self.targets, self.message, self.card_closed = nil, nil, nil, nil
+    self.selected, self.targets, self.message, self.card_closed, self.counted = nil, nil, nil, nil, nil
     if self.session then
         self.message = self.s.puzzle_find
     end
@@ -75,6 +75,7 @@ function PuzzleScreen:render(what)
             icon = "done",
             title = s.puzzle_solved,
             text = self.message ~= s.puzzle_solved and self.message or nil,
+            detail = (self.streak or 0) >= 2 and string.format(s.puzzle_streak, self.streak) or nil,
             buttons = { { id = "next", label = s.puzzle_next, primary = true }, { id = "see_board", label = s.see_board } },
         }
     end
@@ -94,7 +95,15 @@ end
 
 function PuzzleScreen:finish()
     local session, s = self.session, self.s
-    self.message = (session.mistakes == 0 and not session.revealed) and s.puzzle_solved or s.puzzle_solved_after
+    local first_try = session.mistakes == 0 and not session.revealed
+    self.message = first_try and s.puzzle_solved or s.puzzle_solved_after
+    -- Puzzles solved at the first try one after the other, counted on the device; a mistake or a move shown starts it again. Only new puzzles count: the daily one, one of the history and the missed ones reviewed can be solved again.
+    if not self.counted and not self.daily and not self.single and not self.review then
+        self.counted = true
+        local streak = first_try and (tonumber(self.app.settings:readSetting("puzzle_streak")) or 0) + 1 or 0
+        self.app:save_setting("puzzle_streak", streak)
+        self.streak = streak
+    end
     if self.pack then
         if not self.recorded then
             self.recorded = true

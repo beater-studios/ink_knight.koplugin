@@ -1,6 +1,4 @@
--- A chess clock for a game on a physical board: the screen in two halves, the top one turned round for the player
--- across, with the buttons between them. Each player taps their own half after moving. The half of the side to
--- move is inverted, so who is thinking shows from afar; each second only its time is redrawn.
+-- A chess clock for a game on a physical board: the screen in two cards, the top one turned round for the player across, with the buttons between them. Each player taps their own card after moving. The card of the side to move is black, so who is thinking shows from afar; each second only its time is redrawn.
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -14,19 +12,20 @@ local socket = require("socket")
 
 local Awake = require("ink_knight/awake")
 local ChessClock = require("ink_knight/chess_clock")
+local Draw = require("ink_knight/ui/draw")
 local Page = require("ink_knight/ui/page")
 local Portrait = require("ink_knight/portrait")
 local Refresh = require("ink_knight/refresh")
 local Sleep = require("ink_knight/sleep")
 local StatusStrip = require("ink_knight/ui/status_strip")
+local Style = require("ink_knight/ui/style")
 
 local Screen = Device.screen
 
-local BOLD = "noto/NotoSans-Bold.ttf"
-local REGULAR = "noto/NotoSans-Regular.ttf"
-local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
+local BOLD, REGULAR = Style.BOLD, Style.REGULAR
+local BLACK, WHITE = Style.BLACK, Style.WHITE
 
--- The top half belongs to black and the bottom to white, only to tell them apart: the screen never names them.
+-- The top half belongs to black and the bottom to white.
 local TOP, BOTTOM = "b", "w"
 
 local ClockScreen = InputContainer:extend{
@@ -67,7 +66,7 @@ function ClockScreen:setup()
     self.scale = math.min(self.width / 600, self.height / 800)
     local px = function(value) return math.floor(value * self.scale + 0.5) end
     self.px = px
-    local bar_h = px(72)
+    local bar_h = px(84)
     local half_h = math.floor((self.height - StatusStrip.height() - bar_h) / 2)
     self.halves = {
         [TOP] = { x = 0, y = 0, w = self.width, h = half_h },
@@ -119,27 +118,36 @@ end
 
 function ClockScreen:half_label(side)
     local s, clock = self.s, self.clock
+    local color = side == "w" and s.color_white or s.color_black
     if clock.flagged == side then
-        return s.clock_flagged
+        return string.format("%s · %s", color, s.clock_flagged)
     elseif not clock.active then
         return s.clock_tap_start
     elseif self.paused then
         return s.clock_paused
     end
-    return string.format(s.clock_moves, clock.moves[side])
+    return string.format("%s · %s", color, string.format(s.clock_moves, clock.moves[side]))
 end
 
--- One half, drawn upright at 0, 0 of bb, as big as rect.
+-- One half, drawn upright at 0, 0 of bb, as big as rect: a card on the gray ground, black for the side to move.
 function ClockScreen:paint_half(bb, side, rect)
     local px, clock = self.px, self.clock
     local inverted = (clock.active == side and not self.paused and not clock.flagged) or clock.flagged == side
     local ink = inverted and WHITE or BLACK
-    bb:paintRect(0, 0, rect.w, rect.h, inverted and BLACK or WHITE)
+    bb:paintRect(0, 0, rect.w, rect.h, Style.PAPER)
+    local m = px(16)
+    -- The margin goes on the side away from the buttons; turned round, the top card keeps it at the top of the screen.
+    local w, h = rect.w - 2 * m, rect.h - m
+    local y0 = 0
+    bb:paintRoundedRect(m, y0, w, h, inverted and BLACK or WHITE, px(26))
+    if not inverted then
+        bb:paintBorder(m, y0, w, h, math.max(1, px(Style.CARD_BORDER)), BLACK, px(26))
+    end
     local text = ChessClock.text(ChessClock.left(clock, side, socket.gettime()))
-    local size = self:fitting(text, BOLD, math.floor(rect.h * 0.42), rect.w - px(40), true)
-    local time_h = math.floor(rect.h * 0.62)
-    self:paint_text(bb, text, BOLD, size, 0, 0, rect.w, time_h, ink)
-    self:paint_text(bb, self:half_label(side), REGULAR, 22 * self.scale, px(16), time_h, rect.w - px(32), rect.h - time_h - px(16), ink)
+    local size = self:fitting(text, BOLD, math.floor(h * 0.42), w - px(40), true)
+    local time_h = math.floor(h * 0.66)
+    self:paint_text(bb, text, BOLD, size, m, y0, w, time_h, ink)
+    self:paint_text(bb, self:half_label(side), BOLD, 20 * self.scale, m + px(16), y0 + time_h, w - px(32), h - time_h - px(20), inverted and WHITE or Style.DARK)
 end
 
 -- The top half is drawn on its own and turned round, so the player across reads it the right way up.
@@ -176,28 +184,37 @@ end
 function ClockScreen:button_rects()
     local px, bar = self.px, self.bar
     local buttons = self:buttons()
-    local gap = px(8)
-    local w = math.floor((bar.w - px(16) - gap * (#buttons - 1)) / #buttons)
+    local gap = px(12)
+    local w = math.floor((bar.w - px(32) - gap * (#buttons - 1)) / #buttons)
     local rects = {}
     for index, button in ipairs(buttons) do
-        rects[index] = { id = button.id, label = button.label, x = px(8) + (index - 1) * (w + gap), y = bar.y + px(8), w = w, h = bar.h - px(16) }
+        rects[index] = { id = button.id, label = button.label, x = px(16) + (index - 1) * (w + gap), y = bar.y + px(12), w = w, h = bar.h - px(24) }
     end
     return rects
 end
 
+local BUTTON_ICONS = { back = "back", pause = "pause", resume = "turn", restart = "again" }
+
+-- The buttons between the cards, each a pill with its icon before its name.
 function ClockScreen:paint_bar(bb)
     local px = self.px
-    bb:paintRect(self.bar.x, self.bar.y, self.bar.w, self.bar.h, WHITE)
+    bb:paintRect(self.bar.x, self.bar.y, self.bar.w, self.bar.h, Style.PAPER)
     for _, rect in ipairs(self:button_rects()) do
-        bb:paintBorder(rect.x, rect.y, rect.w, rect.h, px(2), BLACK)
-        local size = self:fitting(rect.label, BOLD, 20 * self.scale, rect.w - px(12))
-        self:paint_text(bb, rect.label, BOLD, size, rect.x, rect.y, rect.w, rect.h, BLACK)
+        Draw.pill(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false)
+        local icon_w = px(34)
+        local size = self:fitting(rect.label, BOLD, 18 * self.scale, rect.w - icon_w - px(28))
+        local label = TextWidget:new{ text = rect.label, face = face(BOLD, size), fgcolor = BLACK, max_width = rect.w - icon_w - px(28) }
+        local label_w = label:getSize().w
+        local start = rect.x + math.floor((rect.w - icon_w - label_w) / 2)
+        Draw.icon(bb, BUTTON_ICONS[rect.id], start + math.floor(icon_w / 2) - px(4), rect.y + math.floor(rect.h / 2), px(22))
+        label:paintTo(bb, start + icon_w, rect.y + math.floor((rect.h - label:getSize().h) / 2))
+        label:free()
     end
 end
 
 function ClockScreen:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    bb:paintRect(0, 0, self.width, self.height, WHITE)
+    bb:paintRect(0, 0, self.width, self.height, Style.PAPER)
     local ok, err = pcall(function()
         self:paint_side(bb, TOP)
         self:paint_side(bb, BOTTOM)
@@ -205,7 +222,7 @@ function ClockScreen:paintTo(bb, x, y)
     end)
     if not ok then
         logger.warn("Ink Knight: could not draw the clock", err)
-        bb:paintRect(0, 0, self.width, self.bar.y, WHITE)
+        bb:paintRect(0, 0, self.width, self.bar.y, Style.PAPER)
         self:paint_text(bb, self.s.unexpected_error, REGULAR, 18 * self.scale, 0, 0, self.width, self.bar.y, BLACK)
     end
     StatusStrip.paint(bb, self.width, self.height)
@@ -220,11 +237,10 @@ end
 function ClockScreen:redraw(what)
     if what == "time" and self.clock.active then
         local rect = self.halves[self.clock.active]
-        Sleep.dirty(self, function() return "fast", Geom:new(rect) end)
+        Sleep.dirty(self, function() return Refresh.settle("fast"), Geom:new(rect) end)
         return
     end
-    local mode = self.refresh_count:mode("clock")
-    Sleep.dirty(self, function() return mode, self.dimen end)
+    Sleep.dirty(self, function() return self.refresh_count:mode("clock"), self.dimen end)
 end
 
 function ClockScreen:running()

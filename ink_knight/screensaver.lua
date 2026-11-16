@@ -18,25 +18,40 @@ local function plugin_on_top(prefix)
 end
 
 -- KOReader chooses the book cover first; the plugin only swaps it while it is the screen being
--- shown, so closing the plugin restores the default behavior. Nothing is saved.
-local function apply(saver, event, image_file, prefix)
+-- shown, so closing the plugin restores the default behavior. Nothing is saved. draw, when the plugin
+-- gives one, makes a cover of what is open at that moment (a Blitbuffer the size of the screen, which
+-- KOReader frees after showing it); when it gives nothing, the fixed image is the cover.
+local function apply(saver, event, image_file, prefix, draw)
     if event ~= nil or not saver.ui or G_reader_settings:readSetting("screensaver_type") ~= "cover" then
         return
     end
-    if not plugin_on_top(prefix) or lfs.attributes(image_file, "mode") ~= "file" then
+    if not plugin_on_top(prefix) then
+        return
+    end
+    local drawn
+    if draw then
+        local ok, result = pcall(draw)
+        if ok then
+            drawn = result
+        else
+            logger.warn("screensaver: the cover could not be drawn, the fixed image stays", result)
+        end
+    end
+    if not drawn and lfs.attributes(image_file, "mode") ~= "file" then
         return
     end
     if saver.image then
         saver.image:free()
     end
-    saver.image = nil
-    saver.image_file = image_file
+    saver.image = drawn or nil
+    saver.image_file = not drawn and image_file or nil
     saver.screensaver_type = "cover"
 end
 
 -- plugin_dir: the plugin folder (with assets/screensaver.png). id: the plugin identifier, which
--- prefixes the names of its full-screen windows. Call it when main.lua loads.
-function PluginScreensaver.install(plugin_dir, id)
+-- prefixes the names of its full-screen windows. draw: optional, a function that returns a cover of
+-- what is open, or nil for the fixed image. Call it when main.lua loads.
+function PluginScreensaver.install(plugin_dir, id, draw)
     assert(type(id) == "string" and id ~= "", "screensaver: the plugin id is required")
     local image_file = plugin_dir .. "/assets/screensaver.png"
     local prefix = id .. "_"
@@ -48,7 +63,7 @@ function PluginScreensaver.install(plugin_dir, id)
     Screensaver[key] = original_setup
     Screensaver.setup = function(saver, event, ...)
         original_setup(saver, event, ...)
-        local ok, err = pcall(apply, saver, event, image_file, prefix)
+        local ok, err = pcall(apply, saver, event, image_file, prefix, draw)
         if not ok then
             logger.warn(id .. ": screensaver cover failed", err)
         end

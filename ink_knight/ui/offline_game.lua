@@ -75,6 +75,8 @@ function OfflineGame.open(app, opts)
         broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
+    -- The cover of the sleep screen shows this game while it is open.
+    self.screen.cover_source = self
     self:check_end()
     self:start_clock()
     self:render("full")
@@ -896,6 +898,12 @@ function OfflineGame:on_button(button)
             OfflineGame.open(self.app, { level = self.level, engine = self.engine_kind, color_choice = self.color_choice, initial_fen = self.initial_fen })
         end
     end
+end
+
+function OfflineGame:cover_info()
+    local s = self.s
+    local title = self.two_players and s.two_players or string.format("%s · %s", self.engine_kind == "stockfish" and "Stockfish" or s.computer_short, self:level_name())
+    return { position = self.position, flipped = self.flipped, title = title, detail = self:start_label(self:status_text()) }
 end
 
 function OfflineGame:closed()

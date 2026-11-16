@@ -89,6 +89,8 @@ local BoardScreen = InputContainer:extend{
     -- A line over the text of the banner, for where it comes from (state.banner_title), and the button a tap on the banner presses, such as reading it whole.
     banner_heading = false,
     banner_tap = nil,
+    -- The layout of the editor: the title in a black band (state.header: title, subtitle), and the pieces to put under the board (state.palette: selected, a piece letter or "erase"), whose taps press "tool:<letter>" and "tool:erase".
+    palette = false,
 }
 
 -- The arrows and circles of the lessons in two inks: black for the ones that warn, dark gray for the others.
@@ -208,6 +210,14 @@ local function make_halo(mask, art, radius)
     return halo
 end
 
+-- The white edge of a piece, made once for its art: the radius is the same everywhere on one screen (2 px of a screen 600 wide), so the board, the cover and the samples share it.
+local function cached_halo(art, radius)
+    if not art.halo then
+        art.halo = make_halo(art.mask, art, radius)
+    end
+    return art.halo
+end
+
 -- The pattern of a dark square at a size, white with the lines or dots of the style in black.
 local function make_pattern(style, size, scale)
     local spacing = math.max(3, math.floor(style.spacing * scale + 0.5))
@@ -278,7 +288,7 @@ end
 
 -- For the list of styles and the row of the settings: a light and a dark square of the style, apart, each framed,
 -- two elements large enough to tell on e-ink.
-function BoardScreen.paint_style_sample(bb, name, x, y, size)
+function BoardScreen.paint_style_sample(bb, name, x, y, size, with_pieces)
     local style = STYLES[name] or STYLES.plain
     local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
     local gap = math.max(2, math.floor(size / 6))
@@ -296,6 +306,21 @@ function BoardScreen.paint_style_sample(bb, name, x, y, size)
     end
     bb:paintBorder(x, top, side, side, border, BLACK)
     bb:paintBorder(dark_x, top, side, side, border, BLACK)
+    if with_pieces then
+        -- A knight of each color, the black one on the dark square, where a style is hardest to read.
+        for _, sample in ipairs({ { "N", x }, { "n", dark_x } }) do
+            local art = piece_art(BoardScreen.piece_set, sample[1], side)
+            if art then
+                local px, py = sample[2] + math.floor((side - art.w) / 2), top + math.floor((side - art.h) / 2)
+                if style.halo then
+                    local radius = math.max(1, math.floor(2 * scale + 0.5))
+                    local halo = cached_halo(art, radius)
+                    bb:colorblitFrom(halo, px - radius, py - radius, 0, 0, halo:getWidth(), halo:getHeight(), WHITE)
+                end
+                blit_piece(bb, art, sample[1], px, py)
+            end
+        end
+    end
 end
 
 -- One piece of a set (piece as "N" or "n"), centered in a square of size at x, y: for the plates and pictures of the redesign.
@@ -303,6 +328,60 @@ function BoardScreen.paint_piece(bb, set, piece, x, y, size)
     local art = piece_art(set, piece, size)
     if art then
         blit_piece(bb, art, piece, x + math.floor((size - art.w) / 2), y + math.floor((size - art.h) / 2))
+    end
+end
+
+-- A still board anywhere, in the style and pieces chosen, in its black frame with the coordinates: for the cover of the sleep screen. position as Chess.parse_fen gives it; flipped with black at the bottom.
+function BoardScreen.paint_board_at(bb, position, x, y, size, flipped)
+    local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
+    local style = STYLES[BoardScreen.style] or STYLES.plain
+    local square = math.floor(size / 8)
+    size = square * 8
+    local frame = math.floor(18 * scale + 0.5)
+    bb:paintRoundedRect(x - frame, y - frame, size + 2 * frame, size + 2 * frame, BLACK, math.floor(14 * scale + 0.5))
+    local pattern = style.ink and make_pattern(style, square, scale)
+    local function place(sq)
+        local file, rank = (sq - 1) % 8, math.floor((sq - 1) / 8)
+        if flipped then
+            return x + (7 - file) * square, y + rank * square
+        end
+        return x + file * square, y + (7 - rank) * square
+    end
+    for sq = 1, 64 do
+        local sx, sy = place(sq)
+        local file, rank = (sq - 1) % 8, math.floor((sq - 1) / 8)
+        if (file + rank) % 2 == 0 and pattern then
+            bb:blitFrom(pattern, sx, sy, 0, 0, square, square)
+        else
+            bb:paintRect(sx, sy, square, square, (file + rank) % 2 == 0 and (style.dark or DARK_SQUARE) or LIGHT_SQUARE)
+        end
+    end
+    if pattern then
+        pattern:free()
+    end
+    local radius = math.max(1, math.floor(2 * scale + 0.5))
+    for sq, piece in pairs(position and position.board or {}) do
+        local art = piece_art(BoardScreen.piece_set, piece, square)
+        if art then
+            local sx, sy = place(sq)
+            local px, py = sx + math.floor((square - art.w) / 2), sy + math.floor((square - art.h) / 2)
+            if style.halo then
+                local halo = cached_halo(art, radius)
+                bb:colorblitFrom(halo, px - radius, py - radius, 0, 0, halo:getWidth(), halo:getHeight(), WHITE)
+            end
+            blit_piece(bb, art, piece, px, py)
+        end
+    end
+    local label = Font:getFace(BOLD, 12 * scale * 1000 / Screen:scaleBySize(1000))
+    for index = 0, 7 do
+        local file = flipped and 7 - index or index
+        local rank = flipped and index + 1 or 8 - index
+        for _, mark in ipairs({ { string.char(string.byte("a") + file), x + index * square, y + size, square, frame }, { tostring(rank), x - frame, y + index * square, frame, square } }) do
+            local widget = TextWidget:new{ text = mark[1], face = label, fgcolor = WHITE }
+            local measured = widget:getSize()
+            widget:paintTo(bb, mark[2] + math.floor((mark[4] - measured.w) / 2), mark[3] + math.floor((mark[5] - measured.h) / 2))
+            widget:free()
+        end
     end
 end
 
@@ -406,9 +485,49 @@ function BoardScreen:band_layout()
     self.buttons_rect = { x = 0, y = bottom + panel_h + gap, w = self.width, h = button_h }
 end
 
+-- The pieces of the palette, white on the first row and black on the second, as Editor.PIECES lists them.
+local PALETTE = { "K", "Q", "R", "B", "N", "P", "k", "q", "r", "b", "n", "p" }
+
+-- The editor: the band with the title, the board, the palette of pieces with Erase on its right, and the buttons.
+function BoardScreen:palette_layout()
+    local margin = self:px(6)
+    local band_h, button_h = self:px(56), self:px(Style.BAR)
+    self.frame = self.coordinates and self:px(18) or self:px(8)
+    local gap = self:px(8)
+    local erase_w = self:px(86)
+    local tile_w = math.floor((self.width - 2 * self:px(16) - erase_w - 6 * gap) / 6)
+    local tile_h = math.min(tile_w, self:px(66))
+    local palette_h = 2 * tile_h + gap
+    local room = self.height - StatusStrip.height() - band_h - self:px(8) - 2 * self.frame - self:px(10) - palette_h - self:px(10) - button_h - margin
+    self.square = math.floor(math.min(self.width - 2 * (self:px(14) + self.frame), room) / 8)
+    local board_size = self.square * 8
+    self.board_x = math.floor((self.width - board_size) / 2)
+    self.band_rect = { x = 0, y = 0, w = self.width, h = band_h }
+    self.top_bar = self.band_rect
+    self.banner_rect = self.band_rect
+    self.banner_sizes = nil
+    self.board_y = band_h + self:px(8) + self.frame
+    self.board_rect = Geom:new{ x = self.board_x, y = self.board_y, w = board_size, h = board_size }
+    self.frame_rect = { x = self.board_x - self.frame, y = self.board_y - self.frame, w = board_size + 2 * self.frame, h = board_size + 2 * self.frame }
+    local top = self.frame_rect.y + self.frame_rect.h + self:px(10)
+    self.palette_rects = {}
+    for index, piece in ipairs(PALETTE) do
+        local column, row = (index - 1) % 6, math.floor((index - 1) / 6)
+        self.palette_rects[index] = { tool = piece, x = self:px(16) + column * (tile_w + gap), y = top + row * (tile_h + gap), w = tile_w, h = tile_h }
+    end
+    self.palette_rects[#self.palette_rects + 1] = { tool = "erase", x = self.width - self:px(16) - erase_w, y = top, w = erase_w, h = palette_h }
+    self.palette_area = { x = 0, y = top, w = self.width, h = palette_h }
+    self.bottom_bar = { x = 0, y = top, w = self.width, h = 0 }
+    self.status_rect = { x = 0, y = top + palette_h, w = self.width, h = 0 }
+    self.buttons_rect = { x = 0, y = top + palette_h + self:px(10), w = self.width, h = button_h }
+end
+
 function BoardScreen:layout()
     if self.band then
         self:band_layout()
+        return
+    elseif self.palette then
+        self:palette_layout()
         return
     end
     local margin, gap = self:px(6), self:px(6)
@@ -561,10 +680,7 @@ function BoardScreen:halo_radius()
 end
 
 function BoardScreen:halo(art)
-    if not art.halo then
-        art.halo = make_halo(art.mask, art, self:halo_radius())
-    end
-    return art.halo
+    return cached_halo(art, self:halo_radius())
 end
 
 -- The corners of a square, in black with a white edge: where the last move came from, on a board being read.
@@ -956,6 +1072,9 @@ function BoardScreen:paint_game(bb)
     if self.band then
         self:paint_review(bb)
         return
+    elseif self.palette then
+        self:paint_editor(bb)
+        return
     end
     if self.banner_lines then
         self:paint_banner(bb, self.state.banner or "")
@@ -1038,6 +1157,54 @@ function BoardScreen:paint_eval(bb, eval)
         end
         self:paint_text(bb, eval.text, BOLD, size, r.x, r.y + r.h - text_h - self:px(4), r.w, text_h, "center", foot_white and BLACK or WHITE)
     end
+end
+
+-- The title of a page in the black band, as the pages have it, with its way back.
+function BoardScreen:paint_header(bb, header)
+    local rect = self.band_rect
+    bb:paintRect(rect.x, rect.y, rect.w, rect.h, BLACK)
+    Draw.icon(bb, "back", self:px(26), rect.y + math.floor(rect.h / 2), self:px(24), WHITE)
+    if not header then
+        return
+    end
+    local subtitle_w = header.subtitle and math.min(self:px(200), MoveText.width(header.subtitle, REGULAR, 15 * self.scale) + self:px(4)) or 0
+    self:paint_text(bb, header.subtitle, REGULAR, 15, rect.w - self:px(16) - subtitle_w, rect.y, subtitle_w, rect.h, "right", Style.PALE)
+    self:paint_text(bb, header.title, BOLD, 22, self:px(52), rect.y, rect.w - self:px(52) - subtitle_w - self:px(26), rect.h, "left", WHITE)
+end
+
+-- The pieces to put, each in a box, the one chosen in black with its piece on a white disc, as a piece picked in a game; Erase is a cross with its name.
+function BoardScreen:paint_palette(bb, palette)
+    local selected = palette and palette.selected
+    for _, rect in ipairs(self.palette_rects) do
+        local chosen = rect.tool == selected
+        Draw.box(bb, rect.x, rect.y, rect.w, rect.h, self.scale, chosen)
+        local cx, cy = rect.x + math.floor(rect.w / 2), rect.y + math.floor(rect.h / 2)
+        if rect.tool == "erase" then
+            local ink = chosen and WHITE or BLACK
+            local arm = math.floor(math.min(rect.w, rect.h) * 0.22)
+            local cross_y = cy - self:px(12)
+            local thickness = math.max(2, self:px(4))
+            local steps = 2 * arm
+            for i = 0, steps do
+                local d = i - arm
+                bb:paintRect(cx + d - math.floor(thickness / 2), cross_y + d - math.floor(thickness / 2), thickness, thickness, ink)
+                bb:paintRect(cx + d - math.floor(thickness / 2), cross_y - d - math.floor(thickness / 2), thickness, thickness, ink)
+            end
+            self:paint_text(bb, palette.erase_label, BOLD, 14, rect.x + self:px(4), cross_y + arm + self:px(6), rect.w - self:px(8), self:px(24), "center", ink)
+        else
+            if chosen then
+                bb:paintCircle(cx, cy, math.floor(math.min(rect.w, rect.h) * 0.42), WHITE)
+            end
+            BoardScreen.paint_piece_fit(bb, self.piece_set, rect.tool, cx, cy, math.floor(math.min(rect.w, rect.h) * 0.62))
+        end
+    end
+end
+
+function BoardScreen:paint_editor(bb)
+    self:paint_header(bb, self.state.header)
+    self:paint_board(bb)
+    self:paint_palette(bb, self.state.palette)
+    self:paint_card(bb)
 end
 
 function BoardScreen:paint_review(bb)
@@ -1251,6 +1418,7 @@ function BoardScreen:refresh(what)
     end
     if changes.top then self:dirty_rect("ui", self.top_bar) end
     if changes.eval and self.eval_rect then self:dirty_rect("ui", self.eval_rect) end
+    if changes.palette and self.palette_area then self:dirty_rect("ui", self.palette_area) end
     if changes.bottom then self:dirty_rect("ui", self.bottom_bar) end
     if changes.status then
         -- Without a line of text, the status shows only in the card of a work under way, over the bottom plate.
@@ -1272,6 +1440,18 @@ function BoardScreen:onTap(_, ges)
             if self.on_button then
                 self.on_button(rect.id)
             end
+            return true
+        end
+    end
+    if self.palette and self.on_button then
+        for _, rect in ipairs(self.palette_rects) do
+            if x >= rect.x and x < rect.x + rect.w and y >= rect.y and y < rect.y + rect.h then
+                self.on_button("tool:" .. rect.tool)
+                return true
+            end
+        end
+        if y < self.band_rect.h and x < self:px(80) then
+            self.on_button("back")
             return true
         end
     end

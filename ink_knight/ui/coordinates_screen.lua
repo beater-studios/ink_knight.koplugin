@@ -26,6 +26,8 @@ function CoordinatesScreen.open(app, opts)
     self.screen = BoardScreen:new{
         state = {},
         coordinates = false,
+        -- What happens is said in the plate, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_suspend = function() self:pause() end,
@@ -159,6 +161,7 @@ function CoordinatesScreen:render(what)
     end
     local s, session = self.s, self.session
     local running = self.phase == "running"
+    local wrong = running and self.feedback ~= nil and self.feedback ~= s.coord_right
     local find = running and session.mode == "find"
     local position = self.app:option("coordinates_pieces") and WITH_PIECES or EMPTY
     local clock
@@ -178,6 +181,9 @@ function CoordinatesScreen:render(what)
             name = string.format(s.coord_score, session and session.score or 0),
             clock = clock,
             active = running,
+            -- A wrong answer in a pill, the rest as a line.
+            note = wrong and { text = self.feedback } or nil,
+            detail = not wrong and self:status_text() or nil,
         },
         status = self:status_text(),
         buttons = self:buttons(),

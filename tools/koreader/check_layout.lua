@@ -302,9 +302,6 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     home.settings:saveSetting("editor_fen", Chess.START_FEN)
     local editor = require("ink_knight/ui/editor_screen").open(home)
     check_board(editor.screen, language .. " editor")
-    editor:choose_piece()
-    check_page(top_page(), language .. " editor palette")
-    UIManager:close(top_page())
     editor.position = require("ink_knight/editor").new("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
     editor:options()
     check_page(top_page(), language .. " editor options")
@@ -496,10 +493,12 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         end
         local follow_row
         for _, line in ipairs(profile.lines) do
-            follow_row = follow_row or (line.text == home.strings.follow_player and line)
+            for _, item in ipairs(line.items or {}) do
+                follow_row = follow_row or (item.text == home.strings.follow_player and item)
+            end
         end
         if not unblock_row or not follow_row then
-            problem(language .. " profile: blocking should leave rows to unblock and to follow again")
+            problem(language .. " profile: blocking should leave a row to unblock and a button to follow again")
         end
         -- The notice that says so is not a page.
         while top_page() and not top_page().content_top do

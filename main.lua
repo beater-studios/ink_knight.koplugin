@@ -10,7 +10,10 @@ local PluginScreensaver = require("ink_knight/screensaver")
 
 local PLUGIN_DIR = debug.getinfo(1, "S").source:gsub("^@", ""):gsub("/main%.lua$", "")
 
-PluginScreensaver.install(PLUGIN_DIR, "ink_knight")
+-- The cover of the game on the screen, or of the one waiting for the reader's turn, while the plugin is open.
+PluginScreensaver.install(PLUGIN_DIR, "ink_knight", function()
+    return require("ink_knight/ui/sleep_cover").draw()
+end)
 -- Both undo, once per run, what a crash with the plugin open may have left on the system.
 Awake.install("ink_knight")
 Lan.install("ink_knight")

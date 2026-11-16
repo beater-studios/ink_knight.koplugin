@@ -58,6 +58,8 @@ function BoardDiff.snapshot(state)
         flipped = state.flipped == true,
         has_position = state.position ~= nil,
         top = bar_text(state.top) .. "|" .. tostring(state.banner) .. "|" .. tostring(state.banner_title) .. "|" .. tostring(state.banner_more) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
+        palette = state.palette and tostring(state.palette.selected) or "",
+        header = state.header and (tostring(state.header.title) .. "|" .. tostring(state.header.subtitle)) or "",
         eval = state.eval and (string.format("%.3f", state.eval.white or 0) .. "|" .. tostring(state.eval.text)) or "",
         overlay = overlay_text(state),
         bottom = bar_text(state.bottom),
@@ -84,8 +86,9 @@ function BoardDiff.changes(old, new)
     end
     return {
         squares = squares,
-        top = old.top ~= new.top,
+        top = old.top ~= new.top or old.header ~= new.header,
         eval = old.eval ~= new.eval,
+        palette = old.palette ~= new.palette,
         bottom = old.bottom ~= new.bottom,
         status = old.status ~= new.status,
         buttons = old.buttons ~= new.buttons,

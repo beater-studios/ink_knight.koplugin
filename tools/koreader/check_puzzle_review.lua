@@ -134,6 +134,8 @@ if puzzle_screen then
     run_all()
     puzzle_screen:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/review_solved.png")
+    -- A missed puzzle solved again does not count in the sequence of first tries.
+    check(home.settings:readSetting("puzzle_streak") == nil, "a puzzle reviewed should not count in the sequence: " .. tostring(home.settings:readSetting("puzzle_streak")))
 end
 local sent_results = false
 for _, path in ipairs(asked) do
@@ -571,6 +573,7 @@ home.settings:delSetting("puzzle_pack")
 home.settings:delSetting("puzzle_results")
 home.settings:saveSetting("puzzle_difficulty", "easier")
 home.settings:saveSetting("puzzle_color", "any")
+home.settings:saveSetting("puzzle_streak", 3)
 asked = {}
 home:offline_menu()
 local offline = home.pages[#home.pages]
@@ -598,6 +601,7 @@ end
 local progress = home.settings:readSetting("puzzle_pack") or {}
 check(progress.easier == 2, "solving the first puzzle should go on to the second: " .. tostring(progress.easier))
 check(#home:puzzle_results() == 0, "a puzzle of the package should not be recorded for Lichess")
+check(home.settings:readSetting("puzzle_streak") == 0, "a new puzzle solved by showing its moves should start the sequence again: " .. tostring(home.settings:readSetting("puzzle_streak")))
 pack_screen.on_button("next")
 UIManager:close(pack_screen)
 check((home.settings:readSetting("puzzle_pack") or {}).easier == 2, "leaving a puzzle unsolved should keep it for next time")

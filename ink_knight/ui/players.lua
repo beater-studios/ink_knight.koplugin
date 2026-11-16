@@ -154,62 +154,91 @@ function Players.show(app, username)
     end)
 end
 
-local function rating_row(app, user, name, key)
+-- A rating of the player in a tile: the kind of game above, the rating large, how many games below; a tap opens its chart.
+local function rating_tile(app, user, name, key)
     local s = app.strings
     local perf = user.perfs[key]
     local games = perf.games or perf.runs or 0
     local label = s.perf_names[key]
     -- The question mark is how Lichess shows a rating it is not sure of yet, so players know it from the site. The
     -- puzzle modes have a best score instead.
-    local row = { text = string.format("%s: %d%s", label, perf.rating or perf.score, perf.prov and "?" or "") }
+    local tile = { label = label, text = string.format("%d%s", perf.rating or perf.score, perf.prov and "?" or "") }
     if games == 0 then
-        row.value = s.no_rating
-        return row
+        tile.detail = s.no_rating
+        return tile
     end
     if perf.runs and not perf.games then
-        row.value = string.format(s.perf_runs, perf.runs)
+        tile.detail = string.format(s.perf_runs, perf.runs)
+    elseif type(perf.prog) == "number" and perf.prog ~= 0 then
+        -- How the rating moved over the last games, as Lichess shows it beside the rating.
+        tile.detail = string.format(s.rating_prog, string.format("%+d", perf.prog))
     else
-        row.value = games == 1 and s.perf_row_one or string.format(s.perf_row, games)
+        tile.detail = games == 1 and s.perf_row_one or string.format(s.perf_row, games)
     end
     if key == "storm" then
-        row.callback = function() Players.show_storm(app, user.id) end
+        tile.callback = function() Players.show_storm(app, user.id) end
     elseif not NO_CHART[key] then
-        row.callback = function() Players.show_perf(app, user.id, name, key, label) end
+        tile.callback = function() Players.show_perf(app, user.id, name, key, label) end
     end
-    return row
+    return tile
+end
+
+-- The line under the name: the title, and since when the player is on Lichess.
+local function hero_detail(s, user)
+    local parts = {}
+    if type(user.title) == "string" then
+        parts[#parts + 1] = user.title
+    end
+    if type(user.createdAt) == "number" then
+        parts[#parts + 1] = string.format(s.member_since, os.date("%Y", math.floor(user.createdAt / 1000)))
+    end
+    return #parts > 0 and table.concat(parts, " · ") or nil
 end
 
 function Players.open_profile(app, user)
     local s = app.strings
     local mine = user.id == app.my_id
     local name = user.username or user.id or "?"
-    local title = user.online and (name .. " · " .. s.online) or name
-    app:open_page{ title = title, build = function(page)
+    app:open_page{ title = name, hero = { piece = "n", title = name, detail = hero_detail(s, user), note = user.online and s.online or nil }, build = function(page)
         local rows = {}
-        if not mine then
-            rows[#rows + 1] = { kind = "primary", text = s.challenge_player, callback = function() app:challenge_time_menu(name) end }
-            -- Lichess answers "ok" and records nothing for a player who does not accept followers.
-            if user.following or user.followable ~= false then
-                rows[#rows + 1] = {
-                    text = user.following and s.unfollow_player or s.follow_player,
-                    callback = function() Players.toggle_follow(app, user, name, page) end,
-                }
-            end
-            if app.my_id then
-                rows[#rows + 1] = { text = s.crosstable, callback = function() Players.show_crosstable(app, user, name) end }
-                rows[#rows + 1] = {
-                    text = user.blocking and s.unblock_player or s.block_player,
-                    callback = function() Players.toggle_block(app, user, name, page) end,
-                }
+        local keys = {}
+        -- Only what is played here: the variants other than Chess960 stay out of the list.
+        for key in pairs(user.perfs or {}) do
+            if s.perf_names[key] then
+                keys[#keys + 1] = key
             end
         end
-        rows[#rows + 1] = { text = s.past_games, callback = function()
+        table.sort(keys)
+        local tiles = {}
+        for _, key in ipairs(keys) do
+            local perf = user.perfs[key]
+            if type(perf) == "table" and (perf.rating or (NO_CHART[key] and perf.score and (perf.runs or 0) > 0)) then
+                tiles[#tiles + 1] = rating_tile(app, user, name, key)
+            end
+        end
+        if #tiles > 0 then
+            rows[#rows + 1] = { kind = "tiles", columns = 4, items = tiles }
+        end
+        if not mine then
+            local buttons = { { text = s.challenge_player, primary = true, callback = function() app:challenge_time_menu(name) end } }
+            -- Lichess answers "ok" and records nothing for a player who does not accept followers.
+            if user.following or user.followable ~= false then
+                buttons[#buttons + 1] = { text = user.following and s.unfollow_player or s.follow_player, callback = function() Players.toggle_follow(app, user, name, page) end }
+            end
+            rows[#rows + 1] = { kind = "buttons", items = buttons }
+            rows[#rows + 1] = { kind = "section", text = s.profile_between }
+            if app.my_id then
+                rows[#rows + 1] = { text = s.crosstable, piece = "K", callback = function() Players.show_crosstable(app, user, name) end }
+            end
+        end
+        rows[#rows + 1] = { text = s.past_games, piece = "Q", callback = function()
             if mine then
                 app:past_games_menu()
             else
                 app:show_past_games(user.id, name)
             end
         end }
+        rows[#rows + 1] = { kind = "section", text = s.about }
         rows[#rows + 1] = { text = s.profile_activity, callback = function() Players.show_activity(app, user.id) end }
         rows[#rows + 1] = { text = s.studies, callback = function() require("ink_knight/ui/studies").list(app, user.id, name) end }
         -- The notes are the reader's own, about someone else, and need an optional permission of their own.
@@ -223,20 +252,11 @@ function Players.open_profile(app, user)
         if fide_id and fide_id > 0 then
             rows[#rows + 1] = { text = s.profile_fide, callback = function() Players.show_fide(app, math.floor(fide_id)) end }
         end
-        rows[#rows + 1] = { kind = "section", text = s.ratings_section }
-        local keys = {}
-        -- Only what is played here: the variants other than Chess960 stay out of the list.
-        for key in pairs(user.perfs or {}) do
-            if s.perf_names[key] then
-                keys[#keys + 1] = key
-            end
-        end
-        table.sort(keys)
-        for _, key in ipairs(keys) do
-            local perf = user.perfs[key]
-            if type(perf) == "table" and (perf.rating or (NO_CHART[key] and perf.score and (perf.runs or 0) > 0)) then
-                rows[#rows + 1] = rating_row(app, user, name, key)
-            end
+        if not mine and app.my_id then
+            rows[#rows + 1] = {
+                text = user.blocking and s.unblock_player or s.block_player,
+                callback = function() Players.toggle_block(app, user, name, page) end,
+            }
         end
         return rows
     end }

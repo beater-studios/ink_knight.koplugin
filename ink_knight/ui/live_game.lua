@@ -34,8 +34,23 @@ function LiveGame.open(app, id)
     }
     self.clock_tick = function() self:tick_clock() end
     UIManager:show(self.screen)
+    -- The cover of the sleep screen shows this game while it is open.
+    self.screen.cover_source = self
     self:connect()
     return self
+end
+
+function LiveGame:cover_info()
+    local game = self.game
+    if not game.loaded then
+        return nil
+    end
+    return {
+        position = self.optimistic or game.position,
+        flipped = game.my_color == "b",
+        title = string.format(self.s.sleep_against, self:opponent_name()),
+        detail = self:status_text(),
+    }
 end
 
 function LiveGame:connect()
@@ -71,6 +86,9 @@ function LiveGame:on_line(line)
     -- A game that ends with its board open gets the card with the review; one that ended away from it opens without.
     if was_active and not self.game:is_active() and self:can_review() then
         self.card_open = true
+        if self.game.rated then
+            self:fetch_rating_diff()
+        end
     end
     -- Only a new list of moves replaces the move on its way. A state that just brings an offer, while the move
     -- is still being sent, would otherwise put the piece back and let a second move go out.
@@ -148,6 +166,22 @@ function LiveGame:can_review()
     return game.loaded and not game:is_active() and game:is_supported() and game:outcome() ~= "aborted" and game:move_count() > 0
 end
 
+-- How much the game changed the reader's rating, for the card, from the export of the game once Lichess has it.
+function LiveGame:fetch_rating_diff()
+    local me = self.game.my_color == "b" and "black" or "white"
+    self.app.net:request(Api.game_export(self.id), function(status, body)
+        if status ~= 200 or self.is_closed then
+            return
+        end
+        local game = self.app.decode(body)
+        local player = type(game) == "table" and type(game.players) == "table" and game.players[me]
+        if type(player) == "table" and type(player.ratingDiff) == "number" then
+            self.rating_diff = player.ratingDiff
+            self:render()
+        end
+    end)
+end
+
 -- The card over the board of a game that just ended: the result, how it ended, and the review first.
 function LiveGame:card()
     local s, game = self.s, self.game
@@ -169,7 +203,8 @@ function LiveGame:card()
         icon = not piece and "draw" or nil,
         title = Broadcast.result_text(result),
         text = self:outcome_text(),
-        detail = string.format(s.game_card_moves, math.ceil(game:move_count() / 2)),
+        detail = string.format(s.game_card_moves, math.ceil(game:move_count() / 2))
+            .. (self.rating_diff and (" · " .. string.format(s.rating_diff_card, string.format("%+d", self.rating_diff))) or ""),
         buttons = buttons,
     }
 end

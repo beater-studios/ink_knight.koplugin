@@ -29,6 +29,10 @@ function LearnScreen.open(app, stage, level_index, opts)
     self.screen = BoardScreen:new{
         state = {},
         banner_lines = 3,
+        -- Learn chess, the stage and the level over the goal.
+        banner_heading = true,
+        -- What happens is said in the plate, so the board takes the room of the line of text.
+        status_line = false,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function()
@@ -79,13 +83,26 @@ function LearnScreen:buttons()
     return buttons
 end
 
+-- "Learn chess · The rook · Level 3 of 8", as much of it as fits the line over the goal.
+function LearnScreen:banner_title(level_text)
+    local learn, stage = self.t.learnLearnChess, self.t[self.stage.title]
+    for _, title in ipairs({ table.concat({ learn, stage, level_text }, " · "), stage and (stage .. " · " .. level_text) or nil }) do
+        if title and self.screen:banner_title_fits(title) then
+            return title
+        end
+    end
+    return level_text
+end
+
 function LearnScreen:render(what)
     if self.is_closed then
         return
     end
     local state, level = self.state, self.level
+    local level_text = string.format(self.s.learn_level, self.index, #self.stage.levels)
     self.screen:show({
         banner = self.t[level.goal] or "",
+        banner_title = self:banner_title(level_text),
         flipped = level.color == "b",
         position = Learn.display_position(state),
         last_move = state.last_move,
@@ -95,7 +112,7 @@ function LearnScreen:render(what)
         shapes = state.shapes,
         check_square = state.check_square,
         highlighted_rank = level.highlighted_rank,
-        bottom = { name = string.format(self.s.learn_level, self.index, #self.stage.levels), clock = tostring(state.score) },
+        bottom = { piece = self.stage.piece, name = level_text, detail = self:status_text(), clock = tostring(state.score) },
         status = self:status_text(),
         buttons = self:buttons(),
     }, what)

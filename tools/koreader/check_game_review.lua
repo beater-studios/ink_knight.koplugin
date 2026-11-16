@@ -220,6 +220,14 @@ local card = ended.screen.state.card
 check(card and card.title == "1-0" and card.text == s.ending_win_mate, "a game that ends with its board open gets the card: " .. tostring(card and card.text))
 check(card and card.buttons[1].id == "review" and card.buttons[1].primary, "the review comes first on the card")
 check(card and card.detail == string.format(s.game_card_moves, 4), "the card counts the moves: " .. tostring(card and card.detail))
+-- A rated game asks Lichess for its export, and the card adds how much the rating moved once it comes.
+local rated = export_of(false)
+rated.players.white.ratingDiff = 8
+export_body = rapidjson.encode(rated)
+ended:fetch_rating_diff()
+card = ended.screen.state.card
+check(card and card.detail == string.format(s.game_card_moves, 4) .. " · " .. string.format(s.rating_diff_card, "+8"), "the card adds the change of rating: " .. tostring(card and card.detail))
+export_body = nil
 check(ids(ended.screen) == "back rematch review more", "the bar of a finished game: " .. ids(ended.screen))
 ended.screen:paintTo(Screen.bb, 0, 0)
 Screen.bb:writePNG(out_dir .. "/end_card.png")

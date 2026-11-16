@@ -143,7 +143,7 @@ check(next(screen.state.stars) == nil and screen.state.status ~= "", "the route 
 check(ids(screen.state) == "back retry next", "the last level also offers next: " .. ids(screen.state))
 screen.on_button("next")
 local done = home.pages[#home.pages]
-check(done.lines[1].text:find(t.learnKingComplete, 1, true), "the end of the stage should say what it taught")
+check(done.lines[1].kind == "hero" and done.lines[1].stars and done.lines[2].text:find(t.learnKingComplete, 1, true), "the end of the stage should show its stars and say what it taught")
 check(row_of(done, string.format(t.learnNextX, t.learnTheKnight)), "the end of the stage should lead to the knight")
 UIManager:close(done)
 check(row_of(menu, t.learnTheKing).value ~= nil, "the list should show the king stage done")

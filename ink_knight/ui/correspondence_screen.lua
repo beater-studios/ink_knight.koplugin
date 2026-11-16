@@ -27,6 +27,8 @@ function CorrespondenceScreen.open(app, id)
         broken_text = app.strings.unexpected_error,
     }
     UIManager:show(self.screen)
+    -- The cover of the sleep screen shows this game while it is open.
+    self.screen.cover_source = self
     app.correspondence_view = self
     self:render("full")
     return self
@@ -46,6 +48,19 @@ function CorrespondenceScreen:status_text(game)
         return s.status_your_turn
     end
     return string.format(s.status_their_turn, game.opponent or s.anonymous)
+end
+
+function CorrespondenceScreen:cover_info()
+    local game = self:game()
+    if not game then
+        return nil
+    end
+    return {
+        position = (Correspondence.position(game)),
+        flipped = game.color == "b",
+        title = string.format(self.s.sleep_against, game.opponent or self.s.anonymous),
+        detail = self:status_text(game),
+    }
 end
 
 function CorrespondenceScreen:render(what)

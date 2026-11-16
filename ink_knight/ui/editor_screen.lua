@@ -1,5 +1,4 @@
--- The position editor on the board: a piece chosen from a palette goes where the reader taps, the same piece again
--- takes it away, and Done checks the position and offers to play from it, against the engine or between two people,
+-- The position editor on the board: a piece chosen from the palette under it goes where the reader taps, the same piece again takes it away, and Done checks the position and offers to play from it, against the engine or between two people,
 -- or to ask Lichess about it when the online part is open. The position is kept for the next time.
 local InputDialog = require("ui/widget/inputdialog")
 local UIManager = require("ui/uimanager")
@@ -11,18 +10,13 @@ local Editor = require("ink_knight/editor")
 local EditorScreen = {}
 EditorScreen.__index = EditorScreen
 
--- The chess symbols of FreeSerif, for the palette.
-local GLYPHS = {
-    K = "\226\153\148", Q = "\226\153\149", R = "\226\153\150", B = "\226\153\151", N = "\226\153\152", P = "\226\153\153",
-    k = "\226\153\154", q = "\226\153\155", r = "\226\153\156", b = "\226\153\157", n = "\226\153\158", p = "\226\153\159",
-}
-
 function EditorScreen.open(app)
     local self = setmetatable({ app = app, s = app.strings, tool = "Q", flipped = false }, EditorScreen)
     self.position = Editor.new(app.settings:readSetting("editor_fen"))
     self.screen = BoardScreen:new{
         state = {},
         coordinates = true,
+        palette = true,
         on_square = function(square) self:on_square(square) end,
         on_button = function(button) self:on_button(button) end,
         on_closed = function() self:closed() end,
@@ -43,28 +37,20 @@ function EditorScreen:closed()
     self:save()
 end
 
-function EditorScreen:tool_text()
-    local s = self.s
-    if self.tool == nil then
-        return s.editor_erasing
-    end
-    return string.format(s.editor_placing, s.editor_pieces[self.tool])
-end
-
 function EditorScreen:render(what)
     if self.is_closed then
         return
     end
     local s = self.s
+    local turn = self.position.turn == "w" and s.editor_white_to_move or s.editor_black_to_move
     self.screen:show({
         flipped = self.flipped,
         position = self.position,
-        top = { name = self:tool_text() },
-        bottom = { name = self.position.turn == "w" and s.editor_white_to_move or s.editor_black_to_move },
+        header = { title = s.editor, subtitle = turn },
+        palette = { selected = self.tool or "erase", erase_label = s.editor_erase },
         status = self.message or "",
         buttons = {
             { id = "back", label = s.back },
-            { id = "piece", label = s.editor_piece },
             { id = "turn", label = s.editor_turn },
             { id = "options", label = s.options_section },
             { id = "done", label = s.editor_done },
@@ -80,23 +66,6 @@ end
 function EditorScreen:on_square(square)
     Editor.place(self.position, square, self.tool)
     self:changed()
-end
-
-function EditorScreen:choose_piece()
-    local s = self.s
-    local items = {}
-    for _, piece in ipairs(Editor.PIECES) do
-        -- The names are written to follow "Placing:", so a tile starts them with a capital.
-        items[#items + 1] = { icon = GLYPHS[piece], text = (s.editor_pieces[piece]:gsub("^%l", string.upper)), callback = function()
-            self.tool = piece
-            self:changed()
-        end }
-    end
-    items[#items + 1] = { text = s.editor_erase, callback = function()
-        self.tool = nil
-        self:changed()
-    end }
-    self.app:choose(s.editor_piece, { { kind = "tiles", columns = 3, items = items } }, { close_on_tap = true, rise = true })
 end
 
 function EditorScreen:options()
@@ -172,6 +141,7 @@ function EditorScreen:done()
     if problem then
         self.message = s.editor_problems[problem]
         self:render()
+        app:info(self.message)
         return
     end
     self:save()
@@ -206,8 +176,10 @@ end
 function EditorScreen:on_button(button)
     if button == "back" then
         UIManager:close(self.screen)
-    elseif button == "piece" then
-        self:choose_piece()
+    elseif button:match("^tool:") then
+        local tool = button:sub(6)
+        self.tool = tool ~= "erase" and tool or nil
+        self:changed()
     elseif button == "turn" then
         Editor.set_turn(self.position, self.position.turn == "w" and "b" or "w")
         self:changed()

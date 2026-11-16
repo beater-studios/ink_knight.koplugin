@@ -1,6 +1,5 @@
 -- Receives the Lichess token from another device on the same network, so nobody has to type it on an e-ink
 -- keyboard. The session (code, address, firewall) is the one of lan.lua, and the server the one of http_server.lua.
-local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
@@ -22,6 +21,7 @@ local Refresh = require("ink_knight/refresh")
 local Server = require("ink_knight/http_server")
 local Sleep = require("ink_knight/sleep")
 local StatusStrip = require("ink_knight/ui/status_strip")
+local Style = require("ink_knight/ui/style")
 local TokenAccess = require("ink_knight/token_access")
 
 local Screen = Device.screen
@@ -30,8 +30,7 @@ local PORT = 8644
 -- Quick while a browser is connected, calm while it waits.
 local TICK_BUSY, TICK_IDLE = 0.05, 0.25
 local IDLE_LIMIT = 300
-local SERIF = "noto/NotoSerif-Regular.ttf"
-local SERIF_BOLD = "noto/NotoSerif-Bold.ttf"
+local REGULAR, BOLD = Style.REGULAR, Style.BOLD
 
 local TokenScreen = InputContainer:extend{
     name = "ink_knight_token",
@@ -50,7 +49,9 @@ end
 function TokenScreen:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    self.text_width = self.width - 2 * Screen:scaleBySize(30)
+    -- The text inside a card, inside the margins of the page.
+    self.card_padding = Screen:scaleBySize(18)
+    self.text_width = self.width - 2 * Screen:scaleBySize(16) - 2 * self.card_padding
     if Device:hasKeys() then
         self.key_events.Back = { { Device.input.group.Back } }
     end
@@ -185,7 +186,8 @@ function TokenScreen:button(text)
         text = text,
         width = self.text_width,
         padding_v = Screen:scaleBySize(10),
-        radius = Screen:scaleBySize(8),
+        -- A pill, as the buttons of the pages.
+        radius = Screen:scaleBySize(24),
         bordersize = Screen:scaleBySize(2),
         text_font_face = "cfont",
         text_font_size = 19,
@@ -198,14 +200,23 @@ function TokenScreen:set_group(group, kind)
     if self[1] then
         self[1]:free()
     end
+    -- The content in a white card on the gray ground of the pages.
+    local card = FrameContainer:new{
+        background = Style.WHITE,
+        bordersize = Screen:scaleBySize(2),
+        radius = Screen:scaleBySize(10),
+        padding = self.card_padding,
+        margin = 0,
+        group,
+    }
     self[1] = FrameContainer:new{
-        background = Blitbuffer.COLOR_WHITE,
+        background = Style.PAPER,
         bordersize = 0,
         padding = 0,
         margin = 0,
         width = self.width,
         height = self.height,
-        CenterContainer:new{ dimen = Geom:new{ w = self.width, h = self.height - StatusStrip.height() }, group },
+        CenterContainer:new{ dimen = Geom:new{ w = self.width, h = self.height - StatusStrip.height() }, card },
     }
     Sleep.dirty(self, function()
         return self.refresh:mode(kind), self.dimen
@@ -218,17 +229,17 @@ function TokenScreen:show_waiting()
     local qr_size = math.floor(math.min(self.width, self.height) * 0.62)
     self:set_group(VerticalGroup:new{
         align = "center",
-        self:paragraph(s.token_server_title, SERIF_BOLD, 28),
+        self:paragraph(s.token_server_title, BOLD, 28),
         VerticalSpan:new{ width = gap },
-        self:paragraph(s.scan_hint, SERIF, 17),
+        self:paragraph(s.scan_hint, REGULAR, 17),
         VerticalSpan:new{ width = gap },
         QRWidget:new{ text = self.url, width = qr_size, height = qr_size },
         VerticalSpan:new{ width = gap },
-        self:paragraph(self.url, SERIF, 14),
+        self:paragraph(self.url, REGULAR, 14),
         VerticalSpan:new{ width = gap },
-        self:paragraph(s.waiting, SERIF_BOLD, 17),
+        self:paragraph(s.waiting, BOLD, 17),
         VerticalSpan:new{ width = gap },
-        self:paragraph(s.privacy_note, SERIF, 14),
+        self:paragraph(s.privacy_note, REGULAR, 14),
         VerticalSpan:new{ width = gap },
         self:button(s.stop_button),
     }, "waiting")
@@ -238,9 +249,9 @@ function TokenScreen:show_message(message)
     local gap = Screen:scaleBySize(16)
     self:set_group(VerticalGroup:new{
         align = "center",
-        self:paragraph(self.strings.token_server_title, SERIF_BOLD, 28),
+        self:paragraph(self.strings.token_server_title, BOLD, 28),
         VerticalSpan:new{ width = gap },
-        self:paragraph(message, SERIF, 18),
+        self:paragraph(message, REGULAR, 18),
         VerticalSpan:new{ width = gap * 2 },
         self:button(self.strings.stop_button),
     }, "message")

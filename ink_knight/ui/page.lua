@@ -7,10 +7,10 @@
 -- value, such as "Your turn". piece: a piece ("K" or "k") in a light circle before the name. "game": the same.
 -- "section": text, action_text, action. "primary" and "secondary": text, callback. "stat": text, value.
 -- "toggle": text, on, on_text, off_text, callback, a switch with its word inside. "text": text, center.
--- "hero": icon, text, detail. "tiles": columns, items of { text, detail, icon, solid, callback }, and fill to
+-- "hero": icon (or piece), text, stars ({ won, of }), detail, note, and band (in a black band from the top) or card. "tiles": columns, items of { text, detail, label, icon, solid, callback }, and fill to
 -- grow into the room left on the page; solid draws the tile in black, as the one chosen.
 -- disabled, on a row or a tile: shown in gray, and tapping it does nothing.
--- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide.
+-- preview, on a plain row: function(bb, x, y, size) drawing a sample before the text, preview_columns sizes wide, each preview_size units (40 by default).
 -- "moves": number, white, black, white_current, black_current, white_callback, black_callback, as on a score sheet.
 -- "phase": text, a heading inside the score sheet, where a phase of the game begins.
 -- focus, on any row: the page opens on the sheet that holds it.
@@ -54,6 +54,8 @@ local DRAW_GRAY = Style.LIGHT
 local FOOTER_H, MARGIN = 58, 16
 -- Room above a card and below it, and inside it on the sides.
 local GAP, PAD = 14, 16
+-- The band of a page about someone.
+local HERO_H = 150
 -- Above the first row, under the header.
 local TOP = 6
 -- A tile that fills the page stops growing here, so a few of them do not turn into walls.
@@ -87,6 +89,8 @@ local Page = InputContainer:extend{
     dialog = nil,
     icon = nil,
     hint = nil,
+    -- A taller black band in place of the title, for a page about someone: hero = { piece, title, detail, note }.
+    hero = nil,
 }
 
 -- One count for every page of the plugin, since they open and close over each other with the same layout:
@@ -170,7 +174,7 @@ end
 -- What a row shows before its name: a drawing of its own, or a piece in a circle.
 function Page:lead_width(row)
     if row.preview then
-        return self:px(40) * (row.preview_columns or 1) + self:px(14)
+        return self:px(row.preview_size or 40) * (row.preview_columns or 1) + self:px(14)
     elseif row.piece then
         return self:px(48)
     end
@@ -217,14 +221,16 @@ function Page:base_height(row)
         box:free()
         return height + self:px(18)
     elseif row.kind == "tile_line" then
-        return self:px(row.has_icon and 116 or (row.has_detail and 92 or 76))
+        return self:px(row.has_icon and (row.has_detail and 136 or 116) or (row.has_label and 102 or (row.has_detail and 92 or 76)))
+    elseif row.kind == "hero" and (row.card or row.note or row.stars) then
+        return self:px(HEIGHTS.hero + (row.note and 30 or 0) + (row.card and 50 or 0) + (row.stars and 50 or 0) - ((row.stars and not row.detail) and 28 or 0))
     elseif row.kind == "state" then
         local inner = self.width - 2 * self:px(MARGIN)
         return self:px(150) + self:box_height(row.text, BOLD, 21, inner) + (row.detail and self:box_height(row.detail, REGULAR, 16, inner) + self:px(6) or 0) + self:px(24)
     elseif HEIGHTS[row.kind] then
         return self:px(HEIGHTS[row.kind])
     end
-    return self:px(row.detail and 68 or 60)
+    return math.max(self:px(row.detail and 68 or 60), row.preview_size and self:px(row.preview_size + 20) or 0)
 end
 
 -- A row with the room around its card: above the first row of a card that has no heading over it, and below the last.
@@ -245,6 +251,7 @@ local function flatten(rows)
                     line.items[#line.items + 1] = item
                     line.has_icon = line.has_icon or item.icon ~= nil
                     line.has_detail = line.has_detail or item.detail ~= nil
+                    line.has_label = line.has_label or item.label ~= nil
                 end
                 lines[#lines + 1] = line
             end
@@ -261,6 +268,9 @@ local function flatten(rows)
 end
 
 function Page:content_top()
+    if self.hero then
+        return self:px(HERO_H) + self:px(TOP)
+    end
     return (self.header and self:px(Style.BAND) or 0) + self:px(TOP)
 end
 
@@ -376,7 +386,32 @@ function Page:add_hit(x, y, w, h, callback, keep_open)
     end
 end
 
+-- The band of a page about someone: the way back, a piece in a white circle, the name, a line about them and a state with a dot, such as online.
+function Page:paint_hero(bb, hero)
+    local height = self:px(HERO_H)
+    bb:paintRect(0, 0, self.width, height, BLACK)
+    Draw.icon(bb, "back", self:px(26), self:px(32), self:px(24), WHITE)
+    self:add_hit(0, 0, self:px(80), self:px(60), function() UIManager:close(self) end, true)
+    local radius = self:px(40)
+    local cx, cy = self:px(44) + radius, self:px(30) + radius
+    bb:paintCircle(cx, cy, radius, WHITE)
+    local BoardScreen = require("ink_knight/ui/board_screen")
+    BoardScreen.paint_piece_fit(bb, BoardScreen.piece_set, hero.piece or "n", cx, cy, math.floor(radius * 1.35))
+    local x = cx + radius + self:px(18)
+    local w = self.width - x - self:px(MARGIN)
+    self:paint_text(bb, hero.title, BOLD, 26, x, self:px(36), w, self:px(36), "left", WHITE)
+    self:paint_text(bb, hero.detail, REGULAR, 15, x, self:px(72), w, self:px(24), "left", Style.PALE)
+    if hero.note then
+        bb:paintCircle(x + self:px(5), self:px(110), self:px(5), WHITE)
+        self:paint_text(bb, hero.note, BOLD, 14, x + self:px(16), self:px(98), w - self:px(16), self:px(24), "left", WHITE)
+    end
+end
+
 function Page:paint_header(bb)
+    if self.hero then
+        self:paint_hero(bb, self.hero)
+        return
+    end
     local height = self:px(Style.BAND)
     local back = self:px(52)
     bb:paintRect(0, 0, self.width, height, BLACK)
@@ -406,7 +441,7 @@ function Page:paint_nav(bb, row, y, h)
     local tag_w = self:tag_width(row)
     local text_w = self:nav_text_width(row)
     if row.preview then
-        local size = self:px(40)
+        local size = self:px(row.preview_size or 40)
         row.preview(bb, x, y + math.floor((h - size) / 2), size)
     elseif row.piece then
         self:paint_piece(bb, row.piece, x, y, h)
@@ -461,8 +496,8 @@ function Page:paint_tile(bb, item, x, y, w, h)
     end
     local pad = self:px(6)
     if item.icon then
-        -- The piece in a light band on top, the name below it.
-        local label_h = self:px(40)
+        -- The piece in a light band on top, the name below it, and a line under the name when it has one.
+        local label_h = self:px(item.detail and 60 or 40)
         local border = math.max(1, math.floor(Style.CARD_BORDER * self.scale + 0.5))
         local radius = math.max(1, self:px(Style.CARD_RADIUS) - border)
         local band_h = h - label_h - border
@@ -473,7 +508,18 @@ function Page:paint_tile(bb, item, x, y, w, h)
         local icon_h = math.min(band_h - self:px(8), self:px(96))
         -- A chess sign fills about two thirds of its size.
         self:paint_text(bb, item.icon, SYMBOLS, math.floor(icon_h * 1.25 / self.scale), x, y + border + math.floor((band_h - icon_h) / 2), w, icon_h, "center", color)
-        self:paint_text(bb, item.text, BOLD, 18, x + pad, y + h - label_h, w - 2 * pad, label_h, "center", color)
+        if item.detail then
+            self:paint_text(bb, item.text, BOLD, 18, x + pad, y + h - label_h + self:px(4), w - 2 * pad, self:px(30), "center", color)
+            self:paint_text(bb, item.detail, REGULAR, 13, x + pad, y + h - label_h + self:px(32), w - 2 * pad, self:px(22), "center", detail_color)
+        else
+            self:paint_text(bb, item.text, BOLD, 18, x + pad, y + h - label_h, w - 2 * pad, label_h, "center", color)
+        end
+    elseif item.label then
+        -- A number with what it counts above it, as the ratings of a player, and a line below.
+        local top = y + math.floor((h - self:px(80)) / 2)
+        self:paint_text(bb, item.label, REGULAR, 13, x + pad, top, w - 2 * pad, self:px(20), "center", detail_color)
+        self:paint_text(bb, item.text, BOLD, 24, x + pad, top + self:px(20), w - 2 * pad, self:px(38), "center", color)
+        self:paint_text(bb, item.detail, REGULAR, 12, x + pad, top + self:px(58), w - 2 * pad, self:px(20), "center", detail_color)
     elseif item.detail then
         local top = y + math.floor((h - self:px(66)) / 2)
         self:paint_text(bb, item.text, BOLD, 24, x + pad, top, w - 2 * pad, self:px(40), "center", color)
@@ -636,14 +682,45 @@ function Page:paint_line(bb, row, y, h)
         box:paintTo(bb, m + self:px(4), y + self:px(9))
         box:free()
     elseif row.kind == "hero" then
-        -- The piece in a white circle, the name and a line below it.
+        -- The piece in a circle, the name and a line below it: on the ground, in a black band from the top of the screen (band), or in a card (card), with a note under them.
         local hero_y = y + math.floor((h - self:px(HEIGHTS.hero)) / 2)
         local radius = self:px(52)
-        bb:paintCircle(math.floor(self.width / 2), hero_y + radius + self:px(4), radius, WHITE)
-        bb:paintCircle(math.floor(self.width / 2), hero_y + radius + self:px(4), radius, BLACK, self:px(3))
-        self:paint_text(bb, row.icon, SYMBOLS, 66, 0, hero_y + self:px(4), self.width, 2 * radius, "center")
-        self:paint_text(bb, row.text, BOLD, 26, m, hero_y + self:px(116), self.width - 2 * m, self:px(40), "center")
-        self:paint_text(bb, row.detail, REGULAR, 16, m, hero_y + self:px(156), self.width - 2 * m, self:px(28), "center", GRAY)
+        local x, w = m, self.width - 2 * m
+        local fg, sub = BLACK, GRAY
+        local cx, cy = math.floor(self.width / 2), hero_y + radius + self:px(4)
+        if row.band then
+            bb:paintRect(0, 0, self.width, y + h, BLACK)
+            fg, sub = WHITE, Style.PALE
+            bb:paintCircle(cx, cy, radius, WHITE)
+        elseif row.card then
+            local shadow = self:px(Style.CARD_SHADOW)
+            Draw.card(bb, self:px(40), y + self:px(10), self.width - self:px(80) - shadow, h - self:px(20) - shadow, self.scale)
+            x, w = self:px(56), self.width - self:px(112) - shadow
+            hero_y = y + self:px(30)
+            cy = hero_y + radius + self:px(4)
+            bb:paintCircle(cx, cy, radius, BLACK)
+        else
+            bb:paintCircle(cx, cy, radius, WHITE)
+            bb:paintCircle(cx, cy, radius, BLACK, self:px(3))
+        end
+        if row.piece then
+            local BoardScreen = require("ink_knight/ui/board_screen")
+            BoardScreen.paint_piece_fit(bb, BoardScreen.piece_set, row.piece, cx, cy, math.floor(radius * 1.3))
+        else
+            self:paint_text(bb, row.icon, SYMBOLS, 82, 0, cy - radius, self.width, 2 * radius, "center", row.card and WHITE or BLACK)
+        end
+        self:paint_text(bb, row.text, BOLD, 26, x, hero_y + self:px(116), w, self:px(40), "center", fg)
+        local line = hero_y + self:px(156)
+        if row.stars then
+            -- Stars won of the stars there are, filled and hollow.
+            local text = string.rep("\226\152\133", row.stars[1]) .. string.rep("\226\152\134", row.stars[2] - row.stars[1])
+            self:paint_text(bb, text, SYMBOLS, 40, x, line, w, self:px(48), "center", fg)
+            line = line + self:px(50)
+        end
+        self:paint_text(bb, row.detail, REGULAR, 16, x, line, w, self:px(28), "center", sub)
+        if row.note then
+            self:paint_text(bb, row.note, REGULAR, 14, x, line + self:px(34), w, self:px(26), "center", sub)
+        end
     elseif row.kind == "state" then
         -- What a page has instead of its rows: loading, nothing to show, no connection, an error. A piece in a
         -- circle over what happened, in the middle of the room the row has.

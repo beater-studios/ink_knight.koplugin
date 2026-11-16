@@ -103,19 +103,21 @@ def draw_header(width, height, fonts, icon, layout):
     return image.resize((width, height), Image.LANCZOS)
 
 
-def draw_screensaver(fonts, icon):
-    # Laid out in 600x800 units and saved at twice that, so larger screens get a sharp image and 600x800 gets a clean halving.
+def draw_screensaver(fonts, icon, knight_font_path, sans_bold):
+    # The sleep screen when the plugin is open with no game to show, in the look of the plugin: the knight in a white circle and the name on black, and below, on the light gray of the pages, a crescent moon for resting. No words of any language, since one image serves all of them. Laid out in 600x800 units and saved at twice that, so larger screens get a sharp image and 600x800 gets a clean halving.
     k, w, h = 4, 600, 800
-    image = Image.new("L", (w * k, h * k), BLACK)
-    cx, cy = w // 2, 572
-    halftone(image, cx * k, cy * k, 290 * k, 26 * k)
-    place_screen(image, "start", ((cx - 100) * k, (cy + 8) * k), 330 * k, 6)
-    place_screen(image, "game", ((cx + 100) * k, (cy - 8) * k), 330 * k, -5)
-    icon_size = 150
-    small = icon.resize((icon_size * k, icon_size * k), Image.LANCZOS)
-    image.paste(small.getchannel("L"), ((cx - icon_size // 2) * k, 56 * k), small.getchannel("A"))
+    paper = 238
+    image = Image.new("L", (w * k, h * k), paper)
     d = ImageDraw.Draw(image)
-    d.text((cx * k, 222 * k), "Ink Knight", font=ImageFont.truetype(fonts["bold"], 62 * k), fill=WHITE, anchor="mt")
+    d.rectangle([0, 0, w * k, 560 * k], fill=BLACK)
+    cx = w // 2
+    d.ellipse([(cx - 96) * k, 154 * k, (cx + 96) * k, 346 * k], fill=WHITE)
+    d.text((cx * k, 250 * k), KNIGHT, font=ImageFont.truetype(knight_font_path, 150 * k), fill=BLACK, anchor="mm")
+    d.text((cx * k, 410 * k), "Ink Knight", font=ImageFont.truetype(sans_bold, 44 * k), fill=WHITE, anchor="mm")
+    moon_r = 34
+    d.ellipse([(cx - moon_r) * k, (680 - moon_r) * k, (cx + moon_r) * k, (680 + moon_r) * k], fill=BLACK)
+    shift_x, shift_y, inner = moon_r * 0.45, moon_r * 0.35, moon_r * 0.82
+    d.ellipse([(cx + shift_x - inner) * k, (680 - shift_y - inner) * k, (cx + shift_x + inner) * k, (680 - shift_y + inner) * k], fill=paper)
     image = image.resize((w * 2, h * 2), Image.LANCZOS)
     return image.point(lambda v: round(v / 17) * 17)
 
@@ -135,7 +137,7 @@ def main():
     icon = draw_icon(os.path.join(koreader, "fonts", "freefont", "FreeSerif.ttf"))
     if sys.argv[1:] == ["screensaver"]:
         os.makedirs(os.path.join(ROOT, "assets"), exist_ok=True)
-        draw_screensaver(fonts, icon).save(os.path.join(ROOT, "assets", "screensaver.png"), optimize=True)
+        draw_screensaver(fonts, icon, os.path.join(koreader, "fonts", "freefont", "FreeSerif.ttf"), os.path.join(noto, "NotoSans-Bold.ttf")).save(os.path.join(ROOT, "assets", "screensaver.png"), optimize=True)
         print("Image generated in assets/screensaver.png")
         return
     icon.save(os.path.join(brand, "icon.png"), optimize=True)
