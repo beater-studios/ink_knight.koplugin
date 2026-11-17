@@ -25,6 +25,13 @@ test("a line of Stockfish read: depth, score and the best line, bounds and other
     eq(into.depth, 12); eq(into.cp, 35); eq(into.mate, nil); eq(into.pv, "e2e4 e7e5 g1f3")
     assert(Stockfish.read_info("info depth 20 score mate -3 nodes 1 pv h7h8q", into))
     eq(into.mate, -3)
+    -- As on the Kindle when the time ran out: the last line has only its first move, and the line before stays.
+    local stopped = {}
+    assert(Stockfish.read_info("info depth 13 score cp 36 pv b2b3 e7d6 c1b2 b7b6", stopped))
+    assert(Stockfish.read_info("info depth 14 score cp 46 time 2514 pv b2b3", stopped))
+    eq(stopped.depth, 14); eq(stopped.cp, 46); eq(stopped.pv, "b2b3 e7d6 c1b2 b7b6")
+    assert(Stockfish.read_info("info depth 15 score cp 20 pv d4c5", stopped))
+    eq(stopped.pv, "d4c5", "another first move replaces the line")
     assert(not Stockfish.read_info("info depth 13 score cp 50 lowerbound nodes 1 pv d2d4", {}), "a bound is no score")
     assert(not Stockfish.read_info("info depth 13 multipv 2 score cp 10 pv d2d4", {}), "only the best line")
     assert(not Stockfish.read_info("info string NNUE evaluation", {}))

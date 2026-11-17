@@ -162,6 +162,11 @@ function Stockfish.read_info(line, into)
     if not depth or not (cp or mate) or not pv then
         return false
     end
+    -- The line Stockfish 11 sends when the time runs out has only the first move of a depth it did not finish; the longer line of the depth before stays when it starts with the same move.
+    local kept = into.pv
+    if kept and not pv:find(" ", 1, true) and kept:sub(1, #pv + 1) == pv .. " " then
+        pv = kept
+    end
     into.depth, into.cp, into.mate, into.pv = depth, cp, mate, pv
     return true
 end
