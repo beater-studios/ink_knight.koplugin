@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0]
 
 - New look for every screen: black bands for the titles, white cards on a light gray ground, buttons in pills, Yes/No switches, a piece in a circle on the rows, and icons on the buttons of the board. The settings show the board style and the piece set chosen.
 - The board sits in a black frame with the coordinates, always shown in the review, practice, studies and the editor. The players are plates with the side's piece, their clock in a pill and what is going on: the opponent's last move, a draw offered, the opponent gone, reconnecting, check, a hint. The line of text under the board is gone, so the board is larger.
