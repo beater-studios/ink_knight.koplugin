@@ -41,6 +41,20 @@ function Analysis.eval(position, cloud)
     return { score = Api.eval_text(line.cp, line.mate), depth = tonumber(cloud.depth) or 0, line = line_text(position, line.moves) }
 end
 
+-- What the plugin's Stockfish found ({ cp or mate, depth, pv } for the side to move, as Stockfish:poll gives it), as the cloud evaluation: { score, depth, mate, line }, the score from white's side as Lichess writes it; nil without a score.
+function Analysis.engine_eval(position, result)
+    if type(result) ~= "table" or not (result.cp or result.mate) then
+        return nil
+    end
+    local sign = position.turn == "b" and -1 or 1
+    return {
+        score = Api.eval_text(result.cp and result.cp * sign, result.mate and result.mate * sign),
+        depth = tonumber(result.depth) or 0,
+        mate = result.mate ~= nil,
+        line = line_text(position, result.pv or ""),
+    }
+end
+
 -- An answer of the explorer, of any of its databases: { opening, moves = { { san, white, draws, black, total } } },
 -- the most played first; nil without a game.
 function Analysis.games(data)

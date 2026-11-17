@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Position analysis: when Lichess has no evaluation of the position, a button analyzes it with the plugin's Stockfish for a few seconds, and shows the evaluation and the best line marked as the plugin's engine. In the offline part, the editor has the analysis too, with only the plugin's engine, where it runs.
+
 ## [0.7.0]
 
 - New look for every screen: black bands for the titles, white cards on a light gray ground, buttons in pills, Yes/No switches, a piece in a circle on the rows, and icons on the buttons of the board. The settings show the board style and the piece set chosen.

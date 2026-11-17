@@ -116,10 +116,10 @@ castle.callback()
 check(screen.state.position.castling == "K", "the right should be on: " .. tostring(screen.state.position.castling))
 UIManager:close(options)
 
--- Done: no analysis offline, and a game against the engine from here.
+-- Done: offline and with no Stockfish here, no analysis (check_game_review sees it offered with one), and a game against the engine from here.
 screen.on_button("done")
 local play_page = home.pages[#home.pages]
-check(row_of(play_page, s.analysis) == nil, "no analysis without the online part")
+check(row_of(play_page, s.analysis) == nil, "no analysis offline without the plugin's Stockfish")
 local level1
 for _, line in ipairs(play_page.lines) do
     for _, item in ipairs(line.items or {}) do

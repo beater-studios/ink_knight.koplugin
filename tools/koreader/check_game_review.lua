@@ -540,10 +540,110 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     check(opening.hint_text ~= nil and not opening.engine_player:usable(), "the small engine gives the hint once Stockfish is gone: " .. tostring(opening.hint_text))
     UIManager:close(opening.screen)
     check(engines_running() == 0, "no Stockfish left after the game: " .. engines_running())
+    -- The analysis of a position: offline, from the editor, only the plugin's engine, on request; online, its button only where the cloud of Lichess has no evaluation.
+    local function line_of(page, kind, text)
+        for _, line in ipairs(page and page.lines or {}) do
+            if (not kind or line.kind == kind) and (not text or line.text == text) then
+                return line
+            end
+        end
+    end
+    local mate_in_one = Chess.parse_fen("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")
+    home.net = nil
+    -- From the editor, which offers it offline with Stockfish.
+    home.settings:saveSetting("editor_fen", Chess.to_fen(mate_in_one))
+    local editor = require("ink_knight/ui/editor_screen").open(home)
+    editor:done()
+    local analysis_row = line_of(home.pages[#home.pages], nil, s.analysis)
+    check(analysis_row ~= nil, "offline, the editor offers the analysis with the plugin's Stockfish")
+    if analysis_row then
+        analysis_row.callback()
+    end
+    local offline_page = home.pages[#home.pages]
+    local button = line_of(offline_page, "secondary", s.analyze_plugin)
+    check(button and not line_of(offline_page, "metric") and engines_running() == 0, "offline, the page offers the engine and waits for the tap")
+    button.callback()
+    check(line_of(offline_page, "text", s.analysis_engine_thinking), "the page says the engine is analyzing")
+    wait(function() return line_of(offline_page, "metric") ~= nil end, 15)
+    local found = line_of(offline_page, "metric")
+    check(found and found.value == "#1" and found.detail == string.format(s.analysis_line, "Qxf7#") and found.text == s.analysis_engine,
+        "the engine finds the mate, marked as the plugin's: " .. tostring(found and found.value) .. " " .. tostring(found and found.detail) .. " " .. tostring(found and found.text))
+    offline_page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/position_engine_offline.png")
+    UIManager:close(offline_page)
+    home:close_pages()
+    UIManager:close(editor.screen)
+    check(engines_running() == 0, "no Stockfish left after the analysis page: " .. engines_running())
+    -- A Stockfish that dies in the middle: the page says so and offers the button again, which starts another.
+    home.net = nil
+    ReviewScreen.analyze(home, Chess.parse_fen(Chess.START_FEN), "white")
+    local retry_page = home.pages[#home.pages]
+    line_of(retry_page, "secondary", s.analyze_plugin).callback()
+    local search_pid
+    wait(function()
+        local player = retry_page and home.pages[#home.pages] == retry_page and retry_page
+        for _, line in ipairs(player and player.lines or {}) do
+            if line.text == s.analysis_engine_thinking then
+                local list = io.popen("pgrep -n -x " .. os.getenv("INK_KNIGHT_STOCKFISH"):match("[^/]+$"))
+                search_pid = tonumber(list:read("*a"))
+                list:close()
+            end
+        end
+        return search_pid ~= nil
+    end, 5)
+    os.execute(string.format("kill -9 %d", search_pid or 0))
+    wait(function() return line_of(retry_page, "text", s.analysis_engine_failed) ~= nil end, 30)
+    local again = line_of(retry_page, "secondary", s.analyze_plugin)
+    check(line_of(retry_page, "text", s.analysis_engine_failed) and again, "a dead engine is said, with the button to try again")
+    if again then
+        again.callback()
+        wait(function() return line_of(retry_page, "metric") ~= nil end, 15)
+        check(line_of(retry_page, "metric") ~= nil, "trying again starts another Stockfish and finds the evaluation")
+    end
+    UIManager:close(retry_page)
+    check(engines_running() == 0, "no Stockfish left after trying again: " .. engines_running())
+    -- With few pieces, the result of perfect play leaves no room for a short search.
+    home.net = { request = function(_, request, callback)
+        if request.path:find("tablebase", 1, true) or request.path:find("/standard", 1, true) then
+            callback(200, '{"category":"draw","moves":[{"san":"Kd7","category":"draw"}]}')
+        elseif request.path:find("/api/cloud-eval", 1, true) then
+            callback(404, "{}")
+        else
+            callback(200, '{"moves":[]}')
+        end
+    end }
+    ReviewScreen.analyze(home, Chess.parse_fen("4k3/8/4K3/4P3/8/8/8/8 b - - 0 1"), "black")
+    local ending_page = home.pages[#home.pages]
+    check(line_of(ending_page, "text", s.analysis_end_draw) or line_of(ending_page, "section", s.analysis_end_section), "the result of perfect play is there")
+    check(not line_of(ending_page, "secondary", s.analyze_plugin), "with the result of perfect play, no button for the engine")
+    UIManager:close(ending_page)
+    local function lichess_net(cloud)
+        return { request = function(_, request, callback)
+            if request.path:find("/api/cloud-eval", 1, true) then
+                callback(cloud and 200 or 404, cloud or '{"error":"No cloud evaluation available for that position"}')
+            else
+                callback(200, '{"moves":[]}')
+            end
+        end }
+    end
+    home.net = lichess_net(nil)
+    ReviewScreen.analyze(home, mate_in_one, "white")
+    local online_page = home.pages[#home.pages]
+    check(line_of(online_page, "text", s.analysis_no_eval) and line_of(online_page, "secondary", s.analyze_plugin) and engines_running() == 0,
+        "online, without a cloud evaluation, the engine waits for its button")
+    online_page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/position_engine_button.png")
+    UIManager:close(online_page)
+    home.net = lichess_net('{"depth":40,"pvs":[{"moves":"h5f7","mate":1}]}')
+    ReviewScreen.analyze(home, mate_in_one, "white")
+    online_page = home.pages[#home.pages]
+    check(line_of(online_page, "metric") and not line_of(online_page, "secondary", s.analyze_plugin), "online, with the cloud evaluation, no button for the engine")
+    UIManager:close(online_page)
+    home.net = real_net
     -- The opponent: 8 levels where Stockfish runs, its moves, the kind of engine kept with the game.
     check(#home:level_tiles(function() end) == 8, "with Stockfish, the offline games have 8 levels")
     local versus = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "black" })
-    check(versus.thinking and versus.screen.state.top.name == string.format(s.offline_level, 8, 8), "Stockfish plays white at level 8 of 8: " .. tostring(versus.screen.state.top.name))
+    check(versus.thinking and versus.screen.state.top.name == "Stockfish" and versus.screen.state.top.detail == string.format(s.offline_level, 8, 8), "Stockfish plays white at level 8 of 8: " .. tostring(versus.screen.state.top.name) .. ", " .. tostring(versus.screen.state.top.detail))
     wait(function() return not versus.thinking end, 15)
     local function count_moves(text)
         local n = 0

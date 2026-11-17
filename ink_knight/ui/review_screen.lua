@@ -7,6 +7,7 @@ local Api = require("ink_knight/api")
 local BoardScreen = require("ink_knight/ui/board_screen")
 local Broadcast = require("ink_knight/broadcast")
 local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+local EnginePlayer = require("ink_knight/ui/engine_player")
 local EvalChart = require("ink_knight/ui/eval_chart")
 local Chess = require("ink_knight/chess")
 local MoveList = require("ink_knight/ui/move_list")
@@ -605,23 +606,88 @@ local function games_rows(s, data, empty_text)
     return rows
 end
 
+-- How long the plugin's Stockfish looks at a position on the analysis page: depth 12 to 14 on the Kindle.
+ReviewScreen.ENGINE_MILLISECONDS = 2500
+-- From this depth on, a mate is shown without its depth: Stockfish reaches 245 once it has proven one.
+ReviewScreen.DEEPEST_SHOWN = 100
+
 -- What Lichess knows about a position: the cloud evaluation, the most played moves and, with few pieces, the
 -- tablebase. For a finished game in the review, and for a position set up in the editor. Below it, on request, the
 -- games of masters and the reader's own games with color ("white" or "black").
+-- The plugin's Stockfish comes only on request, with a button: online, only where the cloud has no evaluation, since the cloud of Lichess is far stronger and the reader asked for Lichess; offline (no app.net, from the editor), the page has only that evaluation.
 function ReviewScreen.analyze(app, position, color)
     local s, net = app.strings, app.net
+    local offline = not net
     local fen = Chess.to_fen(position)
     local answers, reached = {}, false
+    local engine = {}
+    local page
     local function take(name, status, body)
         reached = reached or status ~= nil
         answers[name] = status == 200 and app.decode(body) or nil
     end
-    local function finish()
-        if not reached then
-            app:info(s.no_network)
+    local function redraw()
+        if page then
+            page:reload()
+        end
+    end
+    -- Whether the button is offered: a position with a move, where the plugin's Stockfish runs. Asked once per page.
+    local offered
+    local function engine_offered()
+        if offered == nil then
+            offered = #Chess.legal_moves(position) > 0 and EngineAnalysis.available(app)
+        end
+        return offered
+    end
+    local function start_engine()
+        if engine.thinking or engine.eval then
             return
         end
+        -- One that failed is dropped, so trying again starts another Stockfish.
+        if engine.engine_player and not engine.engine_player:usable() then
+            engine.engine_player:close()
+            engine.engine_player = nil
+        end
+        local player = EnginePlayer.of(engine, app, page)
+        if not player then
+            engine.engine_player, engine.failed = nil, true
+            redraw()
+            return
+        end
+        engine.thinking, engine.failed = true, false
+        redraw()
+        player:best_move({ fen = fen, milliseconds = ReviewScreen.ENGINE_MILLISECONDS }, function(_, result)
+            engine.thinking = false
+            engine.eval = Analysis.engine_eval(position, result)
+            engine.failed = engine.eval == nil
+            redraw()
+        end)
+    end
+    -- The evaluation of the plugin's Stockfish: its button, the search under way, what it found, or that it failed with the button to try again.
+    local function add_engine(rows)
+        local eval = engine.eval
+        if eval then
+            -- A mate it has proven ends the search at the deepest depth Stockfish has (245), which would read as a fault, so then only whose it is.
+            local deepest = eval.mate and eval.depth >= ReviewScreen.DEEPEST_SHOWN
+            rows[#rows + 1] = { kind = "metric", text = deepest and s.analysis_engine or string.format(s.analysis_engine_depth, eval.depth), detail = eval.line ~= "" and string.format(s.analysis_line, eval.line) or nil, value = eval.score }
+        elseif engine.thinking then
+            rows[#rows + 1] = { kind = "text", text = s.analysis_engine_thinking, center = true }
+        else
+            if engine.failed then
+                rows[#rows + 1] = { kind = "text", text = s.analysis_engine_failed, center = true }
+            end
+            if engine_offered() then
+                rows[#rows + 1] = { kind = "secondary", text = s.analyze_plugin, keep_open = true, callback = start_engine }
+            end
+        end
+    end
+    local function build()
         local rows = {}
+        if offline then
+            rows[#rows + 1] = { kind = "section", text = s.analysis_eval_section }
+            add_engine(rows)
+            return rows
+        end
         local ending = Analysis.ending(s, position, answers.tablebase)
         if ending then
             rows[#rows + 1] = { kind = "section", text = s.analysis_end_section }
@@ -633,19 +699,40 @@ function ReviewScreen.analyze(app, position, color)
             rows[#rows + 1] = { kind = "metric", text = string.format(s.analysis_depth, eval.depth), detail = eval.line ~= "" and string.format(s.analysis_line, eval.line) or nil, value = eval.score }
         else
             rows[#rows + 1] = { kind = "text", text = s.analysis_no_eval, center = true }
+            -- With the result of perfect play above, a short search could only contradict it.
+            if not ending then
+                add_engine(rows)
+            end
         end
         for _, row in ipairs(games_rows(s, answers.explorer, s.analysis_no_games)) do
             rows[#rows + 1] = row
         end
         rows[#rows + 1] = { kind = "section", text = s.analysis_more_section }
         rows[#rows + 1] = { text = s.analysis_masters, callback = function() ReviewScreen.masters(app, position) end }
-        local page
         if app.my_name and color then
             rows[#rows + 1] = { text = own_games_title(s, color), callback = function()
                 ReviewScreen.own_games(app, position, color, page)
             end }
         end
-        page = app:open_list(s.analysis_title, rows)
+        return rows
+    end
+    local function open()
+        page = app:open_page{ title = s.analysis_title, build = build, on_closed = function()
+            if engine.engine_player then
+                engine.engine_player:close()
+            end
+        end }
+    end
+    if offline then
+        open()
+        return
+    end
+    local function finish()
+        if not reached then
+            app:info(s.no_network)
+            return
+        end
+        open()
     end
     app:info(s.analysis_loading, 2)
     net:request(Api.cloud_eval(fen), function(status, body)

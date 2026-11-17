@@ -164,7 +164,8 @@ function EditorScreen:done()
             end)
         end },
     }
-    if app.net then
+    -- Online, what Lichess knows; offline, the evaluation of the plugin's Stockfish, where it runs.
+    if app.net or require("ink_knight/ui/engine_analysis").available(app) then
         rows[#rows + 1] = { text = s.analysis, callback = function()
             local position = Chess.parse_fen(fen)
             require("ink_knight/ui/review_screen").analyze(app, position, position.turn == "b" and "black" or "white")
