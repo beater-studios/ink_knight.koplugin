@@ -139,5 +139,23 @@ test("kept studies: the address or code, the file, its chapters, set aside and p
     eq(#index, 1); eq(#index[1].chapters, 2)
 end)
 
+test("names keep what the fonts draw", function()
+    eq(StudyStore.plain_name("\240\159\143\176 Caro-Kann Defense\240\159\148\165"), "Caro-Kann Defense", "emoji around")
+    eq(StudyStore.plain_name("\240\159\135\171\240\159\135\183 French Defense \240\159\135\171\240\159\135\183"), "French Defense", "flags")
+    eq(StudyStore.plain_name("\226\153\166 All about the Sicilian \226\153\166"), "\226\153\166 All about the Sicilian \226\153\166", "symbols of the first plane stay")
+    eq(StudyStore.plain_name("\226\157\164\239\184\143 Ruy L\195\179pez"), "\226\157\164 Ruy L\195\179pez", "variation selector")
+    eq(StudyStore.plain_name("\240\159\148\165"), "\240\159\148\165", "only emoji stays")
+    eq(StudyStore.plain_name("1\239\184\143\226\131\163 e4 Openings"), "1 e4 Openings", "keycap")
+    eq(StudyStore.read_index({ { id = "abcdEFGH", name = "\240\159\143\176 Caro-Kann", chapters = { { name = "\240\159\148\165 Intro" } } } })[1].name, "Caro-Kann", "kept before the cleaning")
+end)
+
+test("the site pages of studies", function()
+    local search = Api.study_search("Caro Kann & co", 2, true)
+    eq(search.path, "/study/search?q=Caro%20Kann%20%26%20co&page=2", "search path")
+    eq(search.accept, "application/json", "search accept")
+    eq(search.anonymous, true, "search anonymous")
+    eq(Api.study_popular(1).path, "/study/all/popular?page=1", "popular path")
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

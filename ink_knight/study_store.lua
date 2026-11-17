@@ -23,10 +23,10 @@ function Store.read_index(saved)
             local chapters = {}
             for _, chapter in ipairs(type(study.chapters) == "table" and study.chapters or {}) do
                 if type(chapter) == "table" and type(chapter.name) == "string" then
-                    chapters[#chapters + 1] = { name = chapter.name, guided = chapter.guided == true }
+                    chapters[#chapters + 1] = { name = Store.plain_name(chapter.name), guided = chapter.guided == true }
                 end
             end
-            list[#list + 1] = { id = study.id, name = type(study.name) == "string" and study.name or study.id, at = tonumber(study.at), chapters = chapters }
+            list[#list + 1] = { id = study.id, name = type(study.name) == "string" and Store.plain_name(study.name) or study.id, at = tonumber(study.at), chapters = chapters }
         end
     end
     return list
@@ -74,9 +74,9 @@ function Store:chapters_of(study)
     for index, chapter_text in ipairs(Broadcast.split_games(text)) do
         local tags = Broadcast.tags(chapter_text)
         name = name or tags.StudyName
-        chapters[#chapters + 1] = { name = tags.ChapterName or tags.Event or tostring(index), guided = tags.ChapterMode == "gamebook" }
+        chapters[#chapters + 1] = { name = Store.plain_name(tags.ChapterName or tags.Event or tostring(index)), guided = tags.ChapterMode == "gamebook" }
     end
-    return chapters, name
+    return chapters, name and Store.plain_name(name)
 end
 
 -- The text of each chapter of the kept file, in order.
@@ -108,6 +108,14 @@ function Store:delete(study)
     for _, suffix in ipairs({ "", ".part", ".code", ".old" }) do
         self.remove(path .. suffix)
     end
+end
+
+-- A name of Lichess without what the fonts of KOReader cannot draw, which would show as empty boxes: the characters past the first plane of Unicode (emoji, flags), the variation selectors of emoji and text, the joiner and the keycap, with the spaces they leave collapsed. A name made only of those stays as it was.
+function Store.plain_name(text)
+    text = tostring(text or "")
+    local plain = text:gsub("[\240-\244][\128-\191][\128-\191][\128-\191]", ""):gsub("\239\184[\142\143]", ""):gsub("\226\128\141", ""):gsub("\226\131\163", "")
+    plain = plain:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+    return plain ~= "" and plain or text
 end
 
 -- "abcdEFGH" from a study's address (https://lichess.org/study/abcdEFGH, with a chapter or not) or its code.

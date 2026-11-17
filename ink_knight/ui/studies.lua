@@ -77,6 +77,10 @@ function Studies.menu(app)
                 require("ink_knight/ui/players").ask_name(app, function(name) Studies.list(app, name, name) end)
             end },
             { text = s.study_open_code, callback = function() Studies.ask_code(app) end },
+            { text = s.study_search, callback = function() Studies.ask_search(app) end },
+            { text = s.study_popular, callback = function()
+                Studies.site_list(app, s.study_popular, function(page) return Api.study_popular(page, not app:reads_studies()) end)
+            end },
             { kind = "section", text = s.study_kept_section },
         }
         local before = #rows
@@ -114,11 +118,12 @@ function Studies.list(app, username, title)
             for line in tostring(body or ""):gmatch("[^\n]+") do
                 local study = app.decode(line)
                 if type(study) == "table" and Api.is_safe_id(study.id) and type(study.name) == "string" then
+                    local name = StudyStore.plain_name(study.name)
                     rows[#rows + 1] = {
-                        text = study.name,
+                        text = name,
                         wrap = true,
                         detail = day_text(study.updatedAt),
-                        callback = function() Studies.study(app, { id = study.id, name = study.name, chapters = {} }) end,
+                        callback = function() Studies.study(app, { id = study.id, name = name, chapters = {} }) end,
                     }
                 end
             end
@@ -129,6 +134,159 @@ function Studies.list(app, username, title)
             app:open_list(title or s.studies, rows)
         end)
     end)
+end
+
+-- The characters of a text, each as its bytes in UTF-8.
+local function characters(text)
+    local chars = {}
+    for char in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        chars[#chars + 1] = char
+    end
+    return chars
+end
+
+-- The studies of a page of the site, as rows, and whether it has a next page; nil when the answer is not the paginator the plugin knows. Lichess serves only the first Api.STUDY_SITE_PAGES pages and answers 400 past them, though the 40th still names a next one.
+function Studies.site_rows(app, body)
+    local s = app.strings
+    local data = app.decode(body)
+    local paginator = type(data) == "table" and data.paginator
+    local results = type(paginator) == "table" and paginator.currentPageResults
+    if type(results) ~= "table" then
+        return nil
+    end
+    local rows = {}
+    for _, study in ipairs(results) do
+        if type(study) == "table" and Api.is_safe_id(study.id) and type(study.name) == "string" then
+            local parts = {}
+            if type(study.owner) == "table" and type(study.owner.name) == "string" then
+                parts[#parts + 1] = study.owner.name
+            end
+            if type(study.likes) == "number" then
+                parts[#parts + 1] = string.format(s.study_likes, study.likes)
+            end
+            local name = StudyStore.plain_name(study.name)
+            rows[#rows + 1] = {
+                text = name,
+                wrap = true,
+                detail = #parts > 0 and table.concat(parts, " · ") or nil,
+                callback = function() Studies.study(app, kept_entry(app, study.id) or { id = study.id, name = name, chapters = {} }) end,
+            }
+        end
+    end
+    local next_page = paginator.nextPage
+    return rows, type(next_page) == "number" and next_page <= Api.STUDY_SITE_PAGES
+end
+
+-- What went wrong with a page of the site. A 403 there is not about the token, which goes only with study:read: Lichess or what protects it turned the request away.
+local function site_problem(app, status)
+    if status == 403 then
+        return app.strings.study_site_refused
+    end
+    return app:error_text(status)
+end
+
+-- A list of studies from a page of the site, which grows a page at a time with "More studies". request_of(page) gives the request of a page, from 1.
+function Studies.site_list(app, title, request_of)
+    local s = app.strings
+    -- Loading from the start, so the page never opens saying nothing was found.
+    local found = { rows = {}, page = 1, loading = true }
+    local page_widget
+    local function redraw()
+        if page_widget and not found.closed then
+            page_widget:reload()
+        end
+    end
+    local function load()
+        if not app.net then
+            found.loading, found.problem, found.retry = false, s.no_network, false
+            redraw()
+            return
+        end
+        found.loading, found.problem = true, nil
+        redraw()
+        app.net:request(request_of(found.page), function(status, body)
+            found.loading = false
+            if status ~= 200 then
+                found.problem = site_problem(app, status)
+                -- Trying again helps only when the network or the load of the site was the trouble.
+                found.retry = not status or status == 429 or status >= 500
+            else
+                local rows, more = Studies.site_rows(app, body)
+                if not rows then
+                    found.problem, found.retry = s.study_site_changed, false
+                else
+                    for _, row in ipairs(rows) do
+                        found.rows[#found.rows + 1] = row
+                    end
+                    found.more, found.page = more, found.page + 1
+                end
+            end
+            redraw()
+        end)
+    end
+    page_widget = app:open_page{ title = title, on_closed = function() found.closed = true end, build = function()
+        local rows = {}
+        for _, row in ipairs(found.rows) do
+            rows[#rows + 1] = row
+        end
+        if #rows == 0 then
+            if found.loading then
+                rows[1] = { kind = "state", piece = "N", fill = true, text = s.loading }
+            elseif found.problem then
+                rows[1] = { kind = "state", piece = "r", fill = true, text = found.problem }
+            else
+                rows[1] = { kind = "state", piece = "P", fill = true, text = s.study_search_none }
+            end
+        elseif found.loading then
+            rows[#rows + 1] = { kind = "text", text = s.loading, center = true }
+        elseif found.problem then
+            rows[#rows + 1] = { kind = "text", text = found.problem, center = true }
+        end
+        if #found.rows > 0 and not found.loading and (found.problem and found.retry or not found.problem and found.more) then
+            rows[#rows + 1] = { kind = "secondary", text = s.study_more, keep_open = true, callback = function()
+                if not found.loading then
+                    load()
+                end
+            end }
+        end
+        return rows
+    end }
+    load()
+    return page_widget
+end
+
+-- The title of a search: what was searched, short enough for the title of the page, the first characters with "…" when it goes on.
+function Studies.search_title(app, text)
+    local chars = characters(text)
+    if #chars > 16 then
+        text = table.concat(chars, "", 1, 15) .. "…"
+    end
+    return string.format(app.strings.study_search_title, text)
+end
+
+-- What to search, typed with the keyboard of KOReader. Lichess takes a search of 2 characters or fewer as no search and answers with all studies, so those are not sent.
+function Studies.ask_search(app)
+    local s = app.strings
+    local dialog
+    dialog = InputDialog:new{
+        title = s.study_search,
+        buttons = { {
+            { text = s.cancel, id = "close", callback = function() UIManager:close(dialog) end },
+            { text = s.study_search, is_enter_default = true, callback = function()
+                local text = (dialog:getInputText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                UIManager:close(dialog)
+                if text == "" then
+                    return
+                elseif #characters(text) < 3 then
+                    app:info(s.study_search_short)
+                    return
+                end
+                Studies.site_list(app, Studies.search_title(app, text), function(page) return Api.study_search(text, page, not app:reads_studies()) end)
+            end },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 function Studies.ask_code(app)

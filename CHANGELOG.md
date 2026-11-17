@@ -12,6 +12,7 @@
 - The texts of practice and studies have a heading with the study and the chapter, and a tap reads them whole, in place of the Read button. Commented games have Previous, Next, Comment and Chapter.
 - The profile opens under a band with the player, the ratings in cards with their recent progress, Challenge and Follow side by side. The rating chart has periods: 1 month, 3 months, 1 year and all.
 - The chess clock is two cards, black for the side to move, with pill buttons. The editor has its palette of pieces under the board.
+- Studies has Search studies, with the keyboard of KOReader, and Popular studies: each lists studies with their author and likes, More studies brings the next ones, and any of them opens and can be kept like the others. Names lose the emoji the e-reader cannot draw.
 - While the plugin is open, the sleep screen shows the game on the screen, or the one waiting for your turn, under a band that says the e-reader is resting.
 - A game on Lichess no longer stops getting the opponent's moves when the connection dies without a word, as when the Wi-Fi of the e-reader dozes: Lichess keeps a game alive with an empty line every 7 seconds, and after 20 seconds of nothing the plugin connects again, showing Reconnecting. Before, the moves only came back after leaving the game and opening it again. The list of games and challenges does the same.
 - After a full refresh, the next update waits for it to end, so a tap right after a flash no longer leaves part of the screen white on a Kindle.

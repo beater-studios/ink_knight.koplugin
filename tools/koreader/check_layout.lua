@@ -101,6 +101,13 @@ local STUDY_PGN = '[Event "x"]\n[StudyName "' .. STUDY_NAME .. '"]\n[ChapterName
     .. string.rep("A long introduction to this chapter of the study, written by its author. ", 8) .. '} 1. e4 { A comment after the first move. [%cal Ge2e4] } 1... e5 ( 1... c5 { The Sicilian. } ) 2. Nf3 *\n\n\n'
     .. '[Event "y"]\n[ChapterName "Puzzle: find the move"]\n[FEN "rn1r2k1/pb3ppp/1p2pn2/3p4/1PP5/q2N2P1/P2NPPBP/R2Q1RK1 b - - 0 14"]\n[Orientation "black"]\n[ChapterMode "gamebook"]\n\n'
     .. '{ What had Black missed? } 14... a5 { Now White traps the queen. } ( 14... Qxb4 { No, that loses the queen at once. } ) 15. Nb1 Qxb4 *\n'
+-- The pages of the site with studies, popular and searched: a full page of the longest names, with a next one.
+local SITE_STUDIES = {}
+for index = 1, 16 do
+    SITE_STUDIES[index] = string.format('{"id":"Site%04d","name":"%s","likes":999999,"owner":{"id":"%s","name":"%s"}}', index, STUDY_NAME, LONG_NAME:lower(), LONG_NAME)
+end
+ANSWERS["/study/all/popular"] = '{"paginator":{"currentPage":1,"maxPerPage":16,"currentPageResults":[' .. table.concat(SITE_STUDIES, ",") .. '],"nextPage":2}}'
+ANSWERS["/study/search"] = '{"paginator":{"currentPage":1,"maxPerPage":16,"currentPageResults":[],"nextPage":null}}'
 ANSWERS["/api/player"] = '{"correspondence":[{"id":"' .. OTHER:lower() .. '","username":"' .. OTHER .. '","title":"WCM","perfs":{"correspondence":{"rating":2999}}}]}'
 
 local real_new = Net.new
@@ -634,6 +641,17 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     Studies.list(home, LONG_NAME:lower(), home.strings.study_mine)
     settle()
     check_page(top_page(), language .. " study list")
+    local popular = Studies.site_list(home, home.strings.study_popular, function(page) return require("ink_knight/api").study_popular(page) end)
+    if not (popular.lines[1] and popular.lines[1].text == home.strings.loading) then
+        problem(language .. " popular studies: the page should open loading, not saying nothing was found")
+    end
+    settle()
+    check_page(top_page(), language .. " popular studies")
+    UIManager:close(top_page())
+    Studies.site_list(home, Studies.search_title(home, string.rep("W", 40)), function(page) return require("ink_knight/api").study_search(STUDY_NAME, page) end)
+    settle()
+    check_page(top_page(), language .. " study search, none found")
+    UIManager:close(top_page())
     home.downloads = Downloader.new{ work_dir = out_dir .. "/downloads", hosts = { "lichess.org" },
         spawn = function(list, progress)
             for line in io.lines(list) do

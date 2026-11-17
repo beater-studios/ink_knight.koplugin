@@ -419,6 +419,18 @@ function Api.study_list(username, anonymous)
     return { method = "GET", path = "/api/study/by/" .. path_id(username), accept = "application/x-ndjson", anonymous = anonymous }
 end
 
+-- The search of studies and the popular ones come from pages of the site that answer in JSON, outside the documented API (checked against Lichess on 2026-11-16): a paginator of 16 studies, page from 1. As the list of a player, the token goes only when it reads studies.
+-- The pages the site serves of a search or the popular ones: the 41st answers 400, "resource too old" (checked on 2026-11-16).
+Api.STUDY_SITE_PAGES = 40
+
+function Api.study_search(text, page, anonymous)
+    return { method = "GET", path = "/study/search?q=" .. encode(text) .. "&page=" .. math.floor(page), accept = "application/json", anonymous = anonymous }
+end
+
+function Api.study_popular(page, anonymous)
+    return { method = "GET", path = "/study/all/popular?page=" .. math.floor(page), accept = "application/json", anonymous = anonymous }
+end
+
 -- The whole study in PGN, with comments, variations and drawings, without the clocks a study of a game may carry.
 function Api.study_pgn(id)
     return { method = "GET", path = "/api/study/" .. path_id(id) .. ".pgn?clocks=false", accept = "application/x-chess-pgn" }

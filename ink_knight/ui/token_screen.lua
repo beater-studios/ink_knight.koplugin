@@ -1,21 +1,19 @@
 -- Receives the Lichess token from another device on the same network, so nobody has to type it on an e-ink
 -- keyboard. The session (code, address, firewall) is the one of lan.lua, and the server the one of http_server.lua.
-local Button = require("ui/widget/button")
-local CenterContainer = require("ui/widget/container/centercontainer")
-local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local Font = require("ui/font")
-local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
+local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local QRWidget = require("ui/widget/qrwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
-local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 local logger = require("logger")
 
+local Draw = require("ink_knight/ui/draw")
 local Lan = require("ink_knight/lan")
+local Page = require("ink_knight/ui/page")
 local Portrait = require("ink_knight/portrait")
 local Refresh = require("ink_knight/refresh")
 local Server = require("ink_knight/http_server")
@@ -49,9 +47,8 @@ end
 function TokenScreen:setup()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    -- The text inside a card, inside the margins of the page.
-    self.card_padding = Screen:scaleBySize(18)
-    self.text_width = self.width - 2 * Screen:scaleBySize(16) - 2 * self.card_padding
+    self.scale = math.min(self.width / 600, self.height / 800)
+    self.ges_events = { Tap = { GestureRange:new{ ges = "tap", range = self.dimen } } }
     if Device:hasKeys() then
         self.key_events.Back = { { Device.input.group.Back } }
     end
@@ -123,29 +120,35 @@ function TokenScreen:stop_session()
     self.access = nil
 end
 
--- The question can outlast the session (the device sleeps, the page times out), so each answer checks that the
--- session is still the one that asked.
+-- The question can outlast the session (the device sleeps, the page times out), so each answer checks that the session is still the one that asked. It is the card of a question over the page; going back, or a tap beside it, refuses, since the phone waits for an answer. self.answer keeps both answers, for the checks.
 function TokenScreen:ask_permission(client)
     local s = self.strings
     local access = self.access
-    self.confirm = ConfirmBox:new{
-        text = string.format(s.allow_question, client),
-        ok_text = s.allow_button,
-        cancel_text = s.deny_button,
-        -- A tap outside would count as a refusal.
-        dismissable = false,
-        ok_callback = function()
-            self.confirm = nil
-            if self.server and self.access == access then
-                access:approve(client)
-                self:show_message(s.connected_phone)
-            end
-        end,
-        cancel_callback = function()
-            self.confirm = nil
-            if self.server and self.access == access then
-                access:deny(client)
-            end
+    local function approve()
+        self.confirm = nil
+        if self.server and self.access == access then
+            access:approve(client)
+            self:show_message(s.connected_phone)
+        end
+    end
+    local function deny()
+        self.confirm = nil
+        if self.server and self.access == access then
+            access:deny(client)
+        end
+    end
+    self.answer = { ok = approve, cancel = deny }
+    self.confirm = Page:new{
+        dialog = "center",
+        title = string.format(s.allow_question, client),
+        close_on_tap = true,
+        rows = {
+            { kind = "primary", text = s.allow_button, callback = approve },
+            { kind = "secondary", text = s.deny_button, callback = deny },
+        },
+        on_back = function(page)
+            UIManager:close(page)
+            deny()
         end,
     }
     Sleep.show(self, self.confirm)
@@ -177,89 +180,123 @@ function TokenScreen:tick()
     Sleep.schedule(self, busy and TICK_BUSY or TICK_IDLE, self.tick_callback)
 end
 
-function TokenScreen:paragraph(text, face, size)
-    return TextBoxWidget:new{ text = text, face = Font:getFace(face, size), width = self.text_width, alignment = "center" }
-end
-
-function TokenScreen:button(text)
-    return Button:new{
-        text = text,
-        width = self.text_width,
-        padding_v = Screen:scaleBySize(10),
-        -- A pill, as the buttons of the pages.
-        radius = Screen:scaleBySize(24),
-        bordersize = Screen:scaleBySize(2),
-        text_font_face = "cfont",
-        text_font_size = 19,
-        callback = function() UIManager:close(self) end,
-    }
+function TokenScreen:px(value)
+    return math.floor(value * self.scale + 0.5)
 end
 
 -- kind: the layout now on the screen. The same one again is a change inside it.
-function TokenScreen:set_group(group, kind)
-    if self[1] then
-        self[1]:free()
-    end
-    -- The content in a white card on the gray ground of the pages.
-    local card = FrameContainer:new{
-        background = Style.WHITE,
-        bordersize = Screen:scaleBySize(2),
-        radius = Screen:scaleBySize(10),
-        padding = self.card_padding,
-        margin = 0,
-        group,
-    }
-    self[1] = FrameContainer:new{
-        background = Style.PAPER,
-        bordersize = 0,
-        padding = 0,
-        margin = 0,
-        width = self.width,
-        height = self.height,
-        CenterContainer:new{ dimen = Geom:new{ w = self.width, h = self.height - StatusStrip.height() }, card },
-    }
+function TokenScreen:set_view(view, kind)
+    self.view = view
     Sleep.dirty(self, function()
         return self.refresh:mode(kind), self.dimen
     end)
 end
 
 function TokenScreen:show_waiting()
-    local s = self.strings
-    local gap = Screen:scaleBySize(12)
-    local qr_size = math.floor(math.min(self.width, self.height) * 0.62)
-    self:set_group(VerticalGroup:new{
-        align = "center",
-        self:paragraph(s.token_server_title, BOLD, 28),
-        VerticalSpan:new{ width = gap },
-        self:paragraph(s.scan_hint, REGULAR, 17),
-        VerticalSpan:new{ width = gap },
-        QRWidget:new{ text = self.url, width = qr_size, height = qr_size },
-        VerticalSpan:new{ width = gap },
-        self:paragraph(self.url, REGULAR, 14),
-        VerticalSpan:new{ width = gap },
-        self:paragraph(s.waiting, BOLD, 17),
-        VerticalSpan:new{ width = gap },
-        self:paragraph(s.privacy_note, REGULAR, 14),
-        VerticalSpan:new{ width = gap },
-        self:button(s.stop_button),
-    }, "waiting")
+    self:set_view({ kind = "waiting" }, "waiting")
 end
 
 function TokenScreen:show_message(message)
-    local gap = Screen:scaleBySize(16)
-    self:set_group(VerticalGroup:new{
-        align = "center",
-        self:paragraph(self.strings.token_server_title, BOLD, 28),
-        VerticalSpan:new{ width = gap },
-        self:paragraph(message, REGULAR, 18),
-        VerticalSpan:new{ width = gap * 2 },
-        self:button(self.strings.stop_button),
-    }, "message")
+    self:set_view({ kind = "message", text = message }, "message")
 end
 
+function TokenScreen:text(bb, text, name, size, x, y, w, h, color, align)
+    local widget = TextWidget:new{ text = text, face = Font:getFace(name, size * self.scale * 1000 / Screen:scaleBySize(1000)), fgcolor = color or Style.BLACK, max_width = w }
+    local measured = widget:getSize()
+    local left = align == "left" and x or x + math.floor((w - measured.w) / 2)
+    widget:paintTo(bb, left, y + math.floor((h - measured.h) / 2))
+    widget:free()
+end
+
+-- Wrapped text, drawn at x, y; returns its height.
+function TokenScreen:paragraph(bb, text, size, x, y, w, color, align)
+    local box = TextBoxWidget:new{ text = text, face = Font:getFace(REGULAR, size * self.scale * 1000 / Screen:scaleBySize(1000)), width = w, alignment = align or "left", fgcolor = color or Style.BLACK, bgcolor = Style.WHITE }
+    local h = box:getSize().h
+    if bb then
+        box:paintTo(bb, x, y)
+    end
+    box:free()
+    return h
+end
+
+-- The code, made once for its address and size, and kept until the page closes.
+function TokenScreen:code(size)
+    if not self.qr or self.qr_size ~= size or self.qr_url ~= self.url then
+        if self.qr then
+            self.qr:free()
+        end
+        self.qr, self.qr_size, self.qr_url = QRWidget:new{ text = self.url, width = size, height = size }, size, self.url
+    end
+    return self.qr
+end
+
+-- The page: a black band with the title and the way back; a card with what to do, the code, the address in a pill and the state; the note of the network under it; Cancel in a pill.
 function TokenScreen:paintTo(bb, x, y)
-    InputContainer.paintTo(self, bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local s, px = self.strings, function(v) return self:px(v) end
+    local width = self.width
+    bb:paintRect(0, 0, width, self.height, Style.PAPER)
+    local band = px(Style.BAND)
+    bb:paintRect(0, 0, width, band, Style.BLACK)
+    Draw.icon(bb, "back", px(26), math.floor(band / 2), px(24), Style.WHITE)
+    self:text(bb, s.token_server_title, BOLD, Style.TITLE, px(52), 0, width - px(68), band, Style.WHITE, "left")
+    local view = self.view or { kind = "message", text = "" }
+    local m, pad = px(16), px(16)
+    local shadow = px(Style.CARD_SHADOW)
+    local card_w = width - 2 * m - shadow
+    local inner = card_w - 2 * pad
+    local top = band + px(16)
+    local cursor = top + pad
+    local function card_height()
+        if view.kind == "waiting" then
+            local qr = math.min(inner, px(220))
+            return pad + self:paragraph(nil, s.scan_hint, 16, 0, 0, inner) + px(12) + qr + px(14) + px(44) + px(12) + px(32) + pad
+        end
+        return pad + self:paragraph(nil, view.text, 18, 0, 0, inner, nil, "center") + pad
+    end
+    local h = card_height()
+    Draw.card(bb, m, top, card_w, h, self.scale)
+    if view.kind == "waiting" then
+        cursor = cursor + self:paragraph(bb, s.scan_hint, 16, m + pad, cursor, inner) + px(12)
+        local qr = math.min(inner, px(220))
+        self:code(qr):paintTo(bb, m + math.floor((card_w - qr) / 2), cursor)
+        cursor = cursor + qr + px(14)
+        local address = self.url:gsub("^http://", ""):gsub("/$", "")
+        Draw.pill(bb, m + pad, cursor, inner, px(44), self.scale, false)
+        self:text(bb, address, BOLD, 17, m + pad + px(12), cursor, inner - px(24), px(44))
+        cursor = cursor + px(44) + px(12)
+        local wait_w = math.min(inner, Draw.text_width(s.waiting, BOLD, 14 * self.scale) + px(60))
+        local wait_x = m + math.floor((card_w - wait_w) / 2)
+        Draw.pill(bb, wait_x, cursor, wait_w, px(32), self.scale, true)
+        bb:paintCircle(wait_x + px(20), cursor + px(16), px(5), Style.WHITE)
+        self:text(bb, s.waiting, BOLD, 14, wait_x + px(32), cursor, wait_w - px(44), px(32), Style.WHITE)
+        local note_y = top + h + shadow + px(14)
+        self:note(bb, s.privacy_note, m + px(4), note_y, width - 2 * m - px(8))
+    else
+        self:paragraph(bb, view.text, 18, m + pad, cursor, inner, nil, "center")
+    end
+    local bw, bh = px(300), px(52)
+    self.cancel_rect = { x = math.floor((width - bw) / 2), y = self.height - StatusStrip.height() - px(40) - bh, w = bw, h = bh }
+    local r = self.cancel_rect
+    Draw.pill(bb, r.x, r.y, r.w, r.h, self.scale, false)
+    self:text(bb, s.stop_button, BOLD, 18, r.x, r.y, r.w, r.h)
     StatusStrip.paint(bb, self.width, self.height)
+end
+
+-- A line of note on the gray ground.
+function TokenScreen:note(bb, text, x, y, w)
+    local box = TextBoxWidget:new{ text = text, face = Font:getFace(REGULAR, 13 * self.scale * 1000 / Screen:scaleBySize(1000)), width = w, fgcolor = Style.DARK, bgcolor = Style.PAPER }
+    box:paintTo(bb, x, y)
+    box:free()
+end
+
+function TokenScreen:onTap(_, ges)
+    local x, y = ges.pos.x, ges.pos.y
+    local r = self.cancel_rect
+    if (y < self:px(Style.BAND) and x < self:px(80)) or (r and x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h) then
+        UIManager:close(self)
+    end
+    return true
 end
 
 function TokenScreen:strip_region()
@@ -291,6 +328,10 @@ end
 
 function TokenScreen:onCloseWidget()
     self:stop_session()
+    if self.qr then
+        self.qr:free()
+        self.qr = nil
+    end
     Portrait.close(self)
     UIManager:setDirty(nil, "full")
 end

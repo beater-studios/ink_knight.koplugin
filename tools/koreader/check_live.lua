@@ -399,6 +399,45 @@ do
         shot("study_list")
         close_top()
     end
+    -- The search and the popular studies come from pages of the site outside the API: each should list studies, and the popular ones should grow with "More studies".
+    local function study_rows(page)
+        local rows = {}
+        for _, line in ipairs(page.lines or {}) do
+            if line.text and line.wrap and line.callback then
+                rows[#rows + 1] = line
+            end
+        end
+        return rows
+    end
+    local function more_row(page)
+        for _, line in ipairs(page.lines or {}) do
+            if line.kind == "secondary" and line.text == s.study_more then
+                return line
+            end
+        end
+    end
+    local popular = Studies.site_list(home, s.study_popular, function(page) return Api.study_popular(page, not home:reads_studies()) end)
+    if pump(function() return #study_rows(popular) > 0 end, 30, "popular studies") then
+        local first = #study_rows(popular)
+        print(string.format("popular studies: %d, first %q (%s)", first, study_rows(popular)[1].text, tostring(study_rows(popular)[1].detail)))
+        shot("study_popular")
+        local more = more_row(popular)
+        if not more then
+            problem("popular studies: no More studies")
+        else
+            more.callback()
+            if pump(function() return #study_rows(popular) > first end, 30, "more popular studies") then
+                print("popular studies after More: " .. #study_rows(popular))
+            end
+        end
+    end
+    UIManager:close(popular)
+    local search = Studies.site_list(home, string.format(s.study_search_title, "Najdorf"), function(page) return Api.study_search("Najdorf", page, not home:reads_studies()) end)
+    if pump(function() return #study_rows(search) > 0 end, 30, "study search") then
+        print(string.format("search Najdorf: %d, first %q", #study_rows(search), study_rows(search)[1].text))
+        shot("study_search")
+    end
+    UIManager:close(search)
     local kept_studies_before = home.settings:readSetting("saved_studies")
     local study = { id = "Zwqt6BdF", name = "Zwqt6BdF", chapters = {} }
     home:save_study_index({ study })
