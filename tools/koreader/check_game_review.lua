@@ -697,6 +697,75 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     check(line_of(online_page, "metric") and not line_of(online_page, "secondary", s.analyze_plugin), "online, with the cloud evaluation, no button for the engine")
     UIManager:close(online_page)
     home.net = real_net
+    -- The time of the computer: only the strongest level takes the reader's choice, and while it thinks for long its plate says so and what cannot be used is drawn as such.
+    local EnginePlayer = require("ink_knight/ui/engine_player")
+    check(EnginePlayer.level_search(home, 8).milliseconds == 1500 and EnginePlayer.level_search(home, 7).milliseconds == 900, "at first every level has its own time")
+    home:save_setting("engine_time", "longer")
+    check(EnginePlayer.level_search(home, 8).milliseconds == 15000 and EnginePlayer.level_search(home, 7).milliseconds == 900, "very long gives the strongest level 15 s")
+    home:save_setting("engine_time", "long")
+    check(EnginePlayer.level_search(home, 8).milliseconds == 5000 and EnginePlayer.level_search(home, 7).milliseconds == 900 and EnginePlayer.level_search(home, 8).depth == nil,
+        "long gives the strongest level 5 s, and leaves the others as they are")
+    local function button_of(game, id)
+        for _, button in ipairs(game.screen.state.buttons) do
+            if button.id == id then
+                return button
+            end
+        end
+    end
+    local function note_of(game)
+        return game.screen.state.top.note and game.screen.state.top.note.text
+    end
+    local BoardScreen = require("ink_knight/ui/board_screen")
+    local updates = 0
+    local real_board_refresh = BoardScreen.refresh
+    BoardScreen.refresh = function(...)
+        updates = updates + 1
+        return real_board_refresh(...)
+    end
+    local slow = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "black" })
+    BoardScreen.refresh = real_board_refresh
+    check(updates == 1, "a game the computer opens with a long wait is drawn once, already with the wait: " .. updates)
+    check(slow.thinking and button_of(slow, "hint").disabled == true and button_of(slow, "undo").disabled == true and note_of(slow) == s.thinking_note,
+        "while the computer thinks for long, its plate says so, and the hint and an undo with nothing to take back are out of use")
+    -- A tap on a button out of use does nothing.
+    local hint_rect
+    for _, rect in ipairs(slow.screen:button_rects()) do
+        if rect.id == "hint" then hint_rect = rect end
+    end
+    local pressed
+    local real_button = slow.screen.on_button
+    slow.screen.on_button = function(id) pressed = id end
+    slow.screen:onTap(nil, { pos = { x = hint_rect.x + 5, y = hint_rect.y + 5 } })
+    slow.screen.on_button = real_button
+    check(pressed == nil, "a tap on a button out of use reaches no one: " .. tostring(pressed))
+    slow.screen:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/long_think.png")
+    wait(function() return not slow.thinking end, 15)
+    check(not slow.thinking and button_of(slow, "hint").disabled == nil and button_of(slow, "undo").disabled == nil and note_of(slow) == nil
+        and slow.screen.state.top.detail:find(string.format(s.played_move, ""), 1, true), "once it moved, the buttons are back and the plate says the move: " .. tostring(slow.screen.state.top.detail))
+    -- The reader answers and takes the move back while the computer thinks for long: the wait ends at once, with nothing left of it.
+    local answer = Chess.legal_moves(slow.position)[1]
+    slow:on_square(answer.from)
+    slow:on_square(Chess.target_square(slow.position, answer))
+    check(slow.thinking and slow.long_think and button_of(slow, "undo").disabled == nil, "after the reader's move the computer thinks for long again, and undo can take that move back")
+    slow.screen.on_button("undo")
+    check(not slow.thinking and not slow.long_think and button_of(slow, "hint").disabled == nil and note_of(slow) == nil, "undo during a long wait ends it and leaves nothing of it")
+    UIManager:close(slow.screen)
+    -- With one move to play there is nothing to think about: the computer answers at once, with no long wait.
+    local forced = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "white", initial_fen = "7k/8/8/8/8/8/5Q2/6K1 w - - 0 1" })
+    local started_at = util.getTimestamp()
+    play(forced, "f2", "f8")
+    check(forced.thinking and not forced.long_think and note_of(forced) == nil, "a forced move is no long wait")
+    wait(function() return not forced.thinking end, 15)
+    check(util.getTimestamp() - started_at < 2, string.format("the only move comes at once: %.1f s", util.getTimestamp() - started_at))
+    UIManager:close(forced.screen)
+    home:save_setting("engine_time", "normal")
+    local quick = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "black" })
+    check(quick.thinking and button_of(quick, "hint").disabled == nil and note_of(quick) == nil, "a short wait leaves the bar and the plate as they are")
+    wait(function() return not quick.thinking end, 15)
+    UIManager:close(quick.screen)
+    home.settings:delSetting("offline_game")
+    check(engines_running() == 0, "no Stockfish left after these games: " .. engines_running())
     -- The opponent: 8 levels where Stockfish runs, its moves, the kind of engine kept with the game.
     check(#home:level_tiles(function() end) == 8, "with Stockfish, the offline games have 8 levels")
     local versus = OfflineGame.open(home, { level = 8, engine = "stockfish", color_choice = "black" })

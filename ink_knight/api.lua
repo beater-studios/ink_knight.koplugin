@@ -485,6 +485,11 @@ function Api.eval_text(cp, mate)
     return "?"
 end
 
+-- A number written with the decimal separator of the language: Api.decimal("%.1f", 1.5, ",") is "1,5".
+function Api.decimal(format, value, separator)
+    return (string.format(format, value):gsub("%.", separator))
+end
+
 function Api.format_count(count)
     if count >= 1000000 then
         return string.format("%.1fM", count / 1000000)

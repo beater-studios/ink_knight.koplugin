@@ -24,6 +24,10 @@ local SLICE_SECONDS = 0.04
 local SLICE_PAUSE = 0.02
 -- How long Stockfish looks for a hint: depth 12 or so on the Kindle, against 3 for the small engine in 3 s.
 OfflineGame.HINT_MILLISECONDS = 1500
+-- From this long on, a move of the computer counts as a long wait.
+OfflineGame.LONG_THINK_MILLISECONDS = 2000
+-- With a single move to play, the computer takes no longer than this.
+OfflineGame.FORCED_MILLISECONDS = 300
 
 function OfflineGame.open(app, opts)
     local self = setmetatable({ app = app, s = app.strings }, OfflineGame)
@@ -80,8 +84,10 @@ function OfflineGame.open(app, opts)
     self.screen.cover_source = self
     self:check_end()
     self:start_clock()
-    self:render("full")
-    self:maybe_think()
+    -- A game the computer opens is drawn once, already with its wait.
+    if not self:maybe_think("full") then
+        self:render("full")
+    end
     return self
 end
 
@@ -283,11 +289,12 @@ function OfflineGame:render(what)
         self:show_state(buttons, what)
         return
     end
-    -- During a game the bar stays the same, so a move does not redraw it on e-ink: what cannot be done at that moment does nothing, such as a hint while the computer thinks or undo with no move to take back.
+    -- During a game the bar stays the same, so a move does not redraw it on e-ink: what cannot be done at that moment does nothing, such as a hint while the computer thinks or undo with no move to take back. Only while the computer thinks for long (long_think) is what cannot be used drawn as such, the hint and an undo with nothing to take back, so the wait is not taken for a tap that failed.
+    local waiting = self.thinking and self.long_think
     if not self.two_players then
-        buttons[#buttons + 1] = { id = "hint", label = s.hint }
+        buttons[#buttons + 1] = { id = "hint", label = s.hint, disabled = waiting or nil }
     end
-    buttons[#buttons + 1] = { id = "undo", label = s.undo }
+    buttons[#buttons + 1] = { id = "undo", label = s.undo, disabled = waiting and not self:can_undo() or nil }
     buttons[#buttons + 1] = { id = "moves", label = s.moves }
     if self.two_players then
         buttons[#buttons + 1] = { id = "flip", label = s.flip_board }
@@ -319,6 +326,10 @@ function OfflineGame:engine_plates(status)
         detail = detail .. " · " .. string.format(s.played_move, self:last_san())
     end
     local top = { name = self.engine_kind == "stockfish" and "Stockfish" or s.computer_short, detail = detail }
+    -- A long wait is said on the plate of the computer; a short one would only make it blink at each move.
+    if self.thinking and self.long_think then
+        top.note = { text = s.thinking_note }
+    end
     local bottom = { name = s.you }
     local color = self.my_color == "w" and s.color_white or s.color_black
     if self.hinting then
@@ -684,7 +695,7 @@ end
 
 -- Stops the computer or a hint, so nothing found for a position that is gone lands on the board.
 function OfflineGame:stop_search()
-    self.search, self.thinking, self.hinting = nil, false, false
+    self.search, self.thinking, self.hinting, self.long_think = nil, false, false, false
     if self.engine_player then
         self.engine_player:cancel()
     end
@@ -709,36 +720,50 @@ function OfflineGame:fall_back_to_small_engine()
     self.app:info(string.format(self.s.engine_fallback, self.level, #Engine.LEVELS))
 end
 
-function OfflineGame:maybe_think()
+-- What to ask of the plugin's Stockfish for the computer's move: the time, skill and depth of the level, and almost no time when there is only one move to play, which needs no thought.
+function OfflineGame:engine_search()
+    local search = EnginePlayer.level_search(self.app, self.level)
+    if #Chess.legal_moves(self.position) == 1 then
+        search.milliseconds = math.min(search.milliseconds, OfflineGame.FORCED_MILLISECONDS)
+    end
+    return search
+end
+
+-- Starts the computer's move when it is its turn, and says whether it did. what: as for render, for the first drawing of a game the computer opens.
+function OfflineGame:maybe_think(what)
     if self.two_players or self:is_over() or self.position.turn == self.my_color or self.thinking then
-        return
+        return false
     end
     self.thinking = true
-    self:render()
+    local player = self.engine_kind == "stockfish" and self:stockfish() or nil
+    local search = player and self:engine_search()
+    -- A long wait shows what cannot be used meanwhile; a short one leaves the bar as it is, so it does not blink at each move. Known before the first drawing, so the wait is drawn once.
+    self.long_think = search ~= nil and search.milliseconds >= OfflineGame.LONG_THINK_MILLISECONDS
+    self:render(what)
     local function play(move)
-        self.thinking = false
+        self.thinking, self.long_think = false, false
         if move then
             self:apply(move)
         end
         self:render()
     end
     if self.engine_kind == "stockfish" then
-        local player = self:stockfish()
         if player then
-            local level = EnginePlayer.LEVELS[self.level] or EnginePlayer.LEVELS[#EnginePlayer.LEVELS]
-            player:best_move({ initial_fen = self.initial_fen, moves = self.moves, milliseconds = level.milliseconds, skill = level.skill, depth = level.depth }, function(move)
+            player:best_move({ initial_fen = self.initial_fen, moves = self.moves, milliseconds = search.milliseconds, skill = search.skill, depth = search.depth }, function(move)
                 if move or player:usable() then
                     play(move)
                 else
+                    self.long_think = false
                     self:fall_back_to_small_engine()
                     self:run_search({ level = self.level }, play)
                 end
             end)
-            return
+            return true
         end
         self:fall_back_to_small_engine()
     end
     self:run_search({ level = self.level }, play)
+    return true
 end
 
 -- Marks the piece and its square, so a tap on the square plays it, and names the move below the board.

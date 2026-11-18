@@ -418,9 +418,13 @@ for _, language in ipairs({ "en", "pt", "es" }) do
     local real_available = EngineAnalysis.available
     EngineAnalysis.available = function() return true end
     local level_row = home:analysis_level_row(home.hub)
+    local time_row = home:engine_time_row(home.hub)
     EngineAnalysis.available = real_available
     level_row.callback()
     check_page(top_page(), language .. " analysis depth")
+    UIManager:close(top_page())
+    time_row.callback()
+    check_page(top_page(), language .. " computer's time")
     UIManager:close(top_page())
     -- The preferences of the site brought into the options, and what they now are.
     home:settings_menu()

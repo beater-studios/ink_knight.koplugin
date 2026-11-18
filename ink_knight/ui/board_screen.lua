@@ -937,7 +937,7 @@ function BoardScreen:button_rects()
     local x = pad
     for index, button in ipairs(buttons) do
         local bw = (small and not button.pill) and small or w
-        rects[index] = { id = button.id, label = button.label, icon = button.icon, pill = button.pill, primary = button.primary, x = x, y = rect.y, w = bw, h = rect.h }
+        rects[index] = { id = button.id, label = button.label, icon = button.icon, pill = button.pill, primary = button.primary, disabled = button.disabled, x = x, y = rect.y, w = bw, h = rect.h }
         x = x + bw + gap
     end
     return rects
@@ -956,22 +956,24 @@ function BoardScreen:paint_buttons(bb)
             MoveText.paint(self, bb, rect.label, BOLD, size, rect.x + self:px(14), rect.y, inner, rect.h, "center", rect.primary and WHITE or BLACK)
             goto continue
         end
-        Draw.box(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false)
+        -- A button out of use for now (button.disabled) is drawn in gray, as a row of a page is, and a tap on it does nothing.
+        local ink = rect.disabled and Style.DISABLED or BLACK
+        Draw.box(bb, rect.x, rect.y, rect.w, rect.h, self.scale, false, rect.disabled and Style.LIGHT or nil)
         local icon = rect.icon or BUTTON_ICONS[rect.id]
         local inner = rect.w - self:px(8)
         -- A name that is only a sign, such as "<", says nothing the icon does not.
         if icon and not rect.label:find("[%a\128-\255]") then
-            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + math.floor(rect.h / 2), self:px(28))
+            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + math.floor(rect.h / 2), self:px(28), ink)
         elseif icon and MoveText.width(rect.label, BOLD, 13 * self.scale) <= inner then
-            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + self:px(22), self:px(24))
-            self:paint_text(bb, rect.label, BOLD, 13, rect.x + self:px(4), rect.y + self:px(37), inner, self:px(20), "center")
+            Draw.icon(bb, icon, rect.x + math.floor(rect.w / 2), rect.y + self:px(22), self:px(24), ink)
+            self:paint_text(bb, rect.label, BOLD, 13, rect.x + self:px(4), rect.y + self:px(37), inner, self:px(20), "center", ink)
         else
             local box = TextBoxWidget:new{
                 text = rect.label,
                 face = face(BOLD, 15 * self.scale),
                 width = inner,
                 alignment = "center",
-                fgcolor = BLACK,
+                fgcolor = ink,
                 bgcolor = WHITE,
             }
             local measured = box:getSize()
@@ -1538,7 +1540,7 @@ function BoardScreen:onTap(_, ges)
     local x, y = ges.pos.x, ges.pos.y
     for _, rect in ipairs(self:button_rects()) do
         if x >= rect.x and x < rect.x + rect.w and y >= rect.y and y < rect.y + rect.h then
-            if self.on_button then
+            if self.on_button and not rect.disabled then
                 self.on_button(rect.id)
             end
             return true

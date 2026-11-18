@@ -6,6 +6,7 @@
 - The same game always gets the same marks: every position is searched to the same depth, in place of a fixed time for each.
 - Analysis depth: Quick, Normal or Deep, each with about how long a game takes, chosen in the settings, in the offline menu and where the analysis is offered at the end of a game. A deeper analysis makes fewer mistakes and takes longer.
 - Beside each player, the pieces that side has more than the other and "+n" for the side ahead, as on Lichess: in games on Lichess, correspondence, offline games, the review and broadcasts. With the same material nothing shows.
+- Computer's time, in the offline menu: Normal, Long (5 s) or Very long (15 s) for each move of the strongest level, which plays better with more time. While it thinks for long, its plate says so and the buttons that do nothing meanwhile are drawn in gray. A move with no other choice is played at once.
 
 ## [0.7.1]
 

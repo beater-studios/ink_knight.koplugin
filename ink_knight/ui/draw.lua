@@ -37,10 +37,10 @@ function Draw.pill(bb, x, y, w, h, scale, solid)
 end
 
 -- A box with rounded corners and a border: the buttons of the bar.
-function Draw.box(bb, x, y, w, h, scale, solid)
+function Draw.box(bb, x, y, w, h, scale, solid, edge)
     local radius = round(Style.CARD_RADIUS * scale)
     bb:paintRoundedRect(x, y, w, h, solid and Style.BLACK or Style.WHITE, radius)
-    bb:paintBorder(x, y, w, h, math.max(1, round(2 * scale)), Style.BLACK, radius)
+    bb:paintBorder(x, y, w, h, math.max(1, round(2 * scale)), edge or Style.BLACK, radius)
 end
 
 -- Paints color outside the rounded corners of a box of radius r, for shapes drawn in parts, such as a bar split

@@ -48,7 +48,7 @@ local SYMBOLS = "freefont/FreeSerif.ttf"
 local BLACK, WHITE = Style.BLACK, Style.WHITE
 local GRAY = Style.DARK
 local LINE = Style.LIGHT
-local DISABLED = Blitbuffer.Color8(0x99)
+local DISABLED = Style.DISABLED
 local DRAW_GRAY = Style.LIGHT
 
 local FOOTER_H, MARGIN = 58, 16

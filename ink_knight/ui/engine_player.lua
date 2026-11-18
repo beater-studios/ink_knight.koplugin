@@ -19,9 +19,24 @@ EnginePlayer.LEVELS = {
     { skill = 20, milliseconds = 1500 },
 }
 
+-- How long the strongest level may think on a move, by the reader's choice (the option engine_time, whose values are the keys here); normal is the time of the level. Only that level: the others are held by their depth and their weakening, so more time would change nothing in them.
+EnginePlayer.THINK_MILLISECONDS = { normal = EnginePlayer.LEVELS[#EnginePlayer.LEVELS].milliseconds, long = 5000, longer = 15000 }
+
+-- What to ask of the engine for a move at a level: { milliseconds, skill, depth }, the time of the strongest one from the reader's choice.
+function EnginePlayer.level_search(app, index)
+    local level = EnginePlayer.LEVELS[index] or EnginePlayer.LEVELS[#EnginePlayer.LEVELS]
+    local milliseconds = level.milliseconds
+    if level == EnginePlayer.LEVELS[#EnginePlayer.LEVELS] then
+        milliseconds = EnginePlayer.THINK_MILLISECONDS[app:option("engine_time")] or milliseconds
+    end
+    return { milliseconds = milliseconds, skill = level.skill, depth = level.depth }
+end
+
 local POLL_SECONDS = 0.1
 -- Past the time asked for, this long without an answer means the engine is gone.
 local GIVE_UP_SECONDS = 10
+-- A pause this long between two looks at the engine means the device slept in between.
+local STALL_SECONDS = 3
 
 -- nil where the plugin's Stockfish cannot be used. window: the screen whose timers it uses.
 function EnginePlayer.new(app, window)
@@ -69,10 +84,17 @@ function EnginePlayer:best_move(opts, on_done)
     local asked = {}
     self.asked = asked
     local deadline = os.time() + math.ceil(opts.milliseconds / 1000) + GIVE_UP_SECONDS
+    local looked_at = os.time()
     local function step()
         if self.asked ~= asked or self.closed then
             return
         end
+        -- The time the device slept does not count: the engine slept too, and a search of several seconds asked right before the device was put to sleep would otherwise be taken for an engine that stopped.
+        local now = os.time()
+        if now - looked_at > STALL_SECONDS then
+            deadline = deadline + (now - looked_at)
+        end
+        looked_at = now
         local result = self.engine:poll()
         if result then
             self.asked = nil

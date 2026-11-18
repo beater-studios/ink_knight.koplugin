@@ -170,7 +170,7 @@ function ReviewScreen:evaluation_words(move)
         if pawns < 0.3 then
             return s.eval_equal
         end
-        local value = string.format("%.1f", pawns):gsub("%.", s.decimal_separator)
+        local value = Api.decimal("%.1f", pawns, s.decimal_separator)
         return string.format(move.white_score > 0 and s.eval_white or s.eval_black, value)
     end
 end
@@ -258,7 +258,7 @@ function ReviewScreen:evaluation_bar()
         return { white = move.white_mate > 0 and 1 or 0, text = "#" .. math.abs(move.white_mate) }
     elseif move.white_score then
         local chances = 2 / (1 + math.exp(-0.00368208 * move.white_score)) - 1
-        local text = string.format("%.1f", math.abs(move.white_score) / 100):gsub("%.", self.s.decimal_separator)
+        local text = Api.decimal("%.1f", math.abs(move.white_score) / 100, self.s.decimal_separator)
         return { white = 0.5 + 0.5 * chances, text = text }
     end
 end

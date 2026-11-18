@@ -14,7 +14,7 @@ end
 local function buttons_text(buttons)
     local parts = {}
     for index, button in ipairs(buttons or {}) do
-        parts[index] = tostring(button.id) .. "=" .. tostring(button.label) .. (button.pill and "|pill" or "") .. (button.primary and "|primary" or "") .. "|" .. tostring(button.icon)
+        parts[index] = tostring(button.id) .. "=" .. tostring(button.label) .. (button.pill and "|pill" or "") .. (button.primary and "|primary" or "") .. (button.disabled and "|disabled" or "") .. "|" .. tostring(button.icon)
     end
     return table.concat(parts, "|")
 end

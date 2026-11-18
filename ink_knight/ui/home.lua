@@ -1073,6 +1073,23 @@ function Home:analysis_level_row(page)
     })
 end
 
+-- How long the strongest level of the plugin's Stockfish thinks on a move, for who wants a stronger opponent and accepts the wait; nil where it does not run.
+function Home:engine_time_row(page)
+    if not EngineAnalysis.available(self) then
+        return nil
+    end
+    local s = self.strings
+    local details = {}
+    for _, name in ipairs(State.OPTIONS.engine_time[1]) do
+        details[name] = string.format(s.engine_time_detail, Api.decimal("%g", EnginePlayer.THINK_MILLISECONDS[name] / 1000, s.decimal_separator))
+    end
+    return self:choice_row(page, {
+        title = s.engine_time, labels = s.engine_time_names, names = State.OPTIONS.engine_time[1],
+        current = self:option("engine_time"), details = details, note = string.format(s.engine_time_explain, #EnginePlayer.LEVELS),
+        on_pick = function(name) self:save_setting("engine_time", name) end,
+    })
+end
+
 function Home:margin_row(page)
     return {
         text = self.strings.rating_margin, value = self:margin_label(), wide_value = true,
@@ -1586,6 +1603,8 @@ function Home:offline_rows(page)
         self:close_pages()
         OfflineGame.open(self, opts)
     end) }
+    -- Right under the levels it is about; nil, and so no row, where the plugin's Stockfish does not run.
+    rows[#rows + 1] = self:engine_time_row(page)
     rows[#rows + 1] = { text = s.two_players, detail = s.two_players_detail, callback = function()
         self:choose_clock(s.two_players, true, function(preset)
             self:close_pages()

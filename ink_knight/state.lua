@@ -22,6 +22,8 @@ State.OPTIONS = {
     analyze_always = { { true, false }, false },
     -- How deep the plugin's Stockfish analyzes a game (EngineAnalysis.LEVELS): deeper takes longer.
     analysis_level = { { "quick", "normal", "deep" }, "normal" },
+    -- How long the strongest level of the plugin's Stockfish may think on a move (EnginePlayer.THINK_MILLISECONDS).
+    engine_time = { { "normal", "long", "longer" }, "normal" },
     auto_queen = { { true, false }, false },
     variant = { { "standard", "chess960" }, "standard" },
     board_coordinates = { { true, false }, false },

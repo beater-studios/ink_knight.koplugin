@@ -772,6 +772,10 @@ test("the analysis says what it knows, and what it does not", function()
     eq(Analysis.ending(s, ending_position, nil), nil)
 end)
 
+test("numbers take the decimal separator of the language", function()
+    eq(Api.decimal("%.1f", 1.5, ","), "1,5"); eq(Api.decimal("%g", 5, ","), "5"); eq(Api.decimal("%g", 1.5, "."), "1.5")
+end)
+
 test("the material each side has more than the other", function()
     local Material = require("ink_knight/material")
     eq(Material.difference(Chess.parse_fen(Chess.START_FEN)), nil, "the same material shows nothing")
@@ -897,6 +901,10 @@ test("a card over the board, the progress of a search and a tag each redraw what
     eq(#changes.squares, 0)
     local tagged = { position = start, status = "a", top = { name = "x", tag = "engine" }, bottom = plain.bottom }
     eq(BoardDiff.changes(first, BoardDiff.snapshot(tagged)).top, true, "a tag is part of its bar")
+    -- A button drawn as out of use is another bar of buttons.
+    local idle = { position = plain.position, buttons = { { id = "hint", label = "Hint", disabled = true } } }
+    local busy_bar = BoardDiff.changes(BoardDiff.snapshot({ position = plain.position, buttons = { { id = "hint", label = "Hint" } } }), BoardDiff.snapshot(idle))
+    eq(busy_bar.buttons, true, "a button out of use redraws the bar")
 end)
 
 test("the reply also clears the mark of the last move, and nothing else", function()

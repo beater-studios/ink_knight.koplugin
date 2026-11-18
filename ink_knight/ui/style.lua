@@ -8,6 +8,8 @@ Style.WHITE = Blitbuffer.COLOR_WHITE
 Style.DARK = Blitbuffer.Color8(0x44)
 Style.MID = Blitbuffer.Color8(0x88)
 Style.LIGHT = Blitbuffer.Color8(0xBB)
+-- What cannot be used for now: a row of a page, a button of the board.
+Style.DISABLED = Blitbuffer.Color8(0x99)
 Style.PALE = Blitbuffer.Color8(0xDD)
 -- The ground of the pages, under the cards; white where the test on the Kindle says the gray is not clean enough.
 Style.PAPER = Blitbuffer.Color8(0xEE)
