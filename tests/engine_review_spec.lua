@@ -116,5 +116,45 @@ test("a stopped search never answers for the next one, even when Stockfish says 
     os.remove(path)
 end)
 
+test("the search of a move alone is asked with its depth and its time", function()
+    local sent = {}
+    local engine = setmetatable({ send = function(_, line) sent[#sent + 1] = line end }, { __index = Stockfish })
+    engine:search("8/8/8/8/8/8/8/K6k w - - 0 1", 5000, "a1a2", 12, "h1h2")
+    eq(sent[1], "position fen 8/8/8/8/8/8/8/K6k w - - 0 1 moves a1a2")
+    eq(sent[2], "go depth 12 movetime 5000 searchmoves h1h2")
+    engine:search("8/8/8/8/8/8/8/K6k w - - 0 1", 700)
+    eq(sent[4], "go movetime 700")
+end)
+
+test("a move judged against the best one of the same position", function()
+    -- An engine that favors the side to move by 30: every position is +30 for whoever plays, so before against after would cost each move 60.
+    local scores = { [0] = { cp = 30 }, [1] = { cp = 30 }, [2] = { cp = 30 }, [3] = { cp = 330 } }
+    local movers = { "w", "b", "w" }
+    local plain = EngineReview.judge(scores, movers)
+    eq(plain[1].loss, 60, "before against after counts the favor twice")
+    -- With each move searched alone from its position: the first two are the best ones, the third drops three pawns.
+    local played = { { cp = 30 }, { cp = 35 }, { cp = -270 } }
+    local judged, summary = EngineReview.judge(scores, movers, played)
+    eq(judged[1].loss, 0); eq(judged[1].judgment, nil)
+    eq(judged[2].loss, 0, "a move searched alone never counts as better than the best one")
+    eq(judged[3].judgment, "Blunder"); eq(judged[3].loss, 300)
+    eq(summary.w.blunder, 1); eq(summary.b.accuracy, 100)
+    -- The score shown after a move is the middle of the two, where the favor cancels: white played, +30 for white alone and +30 for black after.
+    eq(judged[1].white_score, 0); eq(judged[1].eval_text, "+0.00"); eq(judged[1].white_cp, 0)
+    eq(judged[3].white_score, -300); eq(judged[3].white_cp, -300)
+    -- A move that mates: the position after is mate, and the move alone is a mate in one.
+    local mating = EngineReview.judge({ [0] = { mate = 1 }, [1] = { mate = 0 } }, { "w" }, { { mate = 1 } })
+    eq(mating[1].judgment, nil); eq(mating[1].loss, 0)
+    -- A move that walks into a mate only the position after shows: marked, and counted, as the score shown says.
+    local walked, walked_summary = EngineReview.judge({ [0] = { cp = 20 }, [1] = { mate = 3 } }, { "w" }, { { cp = -30 } })
+    eq(walked[1].judgment, "Blunder"); eq(walked[1].eval_text, "#-3"); eq(walked[1].white_cp, -1000); eq(walked_summary.w.blunder, 1)
+    -- The text and the chart agree, whoever moved and however the middle rounds.
+    local odd = EngineReview.judge({ [0] = { cp = 20 }, [1] = { cp = 15 } }, { "b" }, { { cp = -10 } })
+    eq(odd[1].white_cp, odd[1].white_score); eq(odd[1].eval_text, string.format("%+.2f", odd[1].white_score / 100))
+    -- A mate missed: the best mates in two, the move played only wins a pawn.
+    local missed = EngineReview.judge({ [0] = { mate = 2 }, [1] = { cp = -100 } }, { "w" }, { { cp = 120 } })
+    eq(missed[1].judgment, "Blunder")
+end)
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

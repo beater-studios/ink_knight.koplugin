@@ -377,10 +377,36 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     for _, move in ipairs({ { "e2", "e4" }, { "e7", "e5" }, { "d1", "h5" }, { "b8", "c6" }, { "f1", "c4" }, { "g8", "f6" }, { "h5", "f7" } }) do
         play(deep, move[1], move[2])
     end
+    -- Every search asked of the engine is noted, to see the order of the analysis.
+    local searches = {}
+    local real_search = Stockfish.search
+    Stockfish.search = function(engine, fen, milliseconds, moves, depth, only)
+        searches[#searches + 1] = { moves = moves or "", depth = depth, only = only, milliseconds = milliseconds }
+        return real_search(engine, fen, milliseconds, moves, depth, only)
+    end
     deep.screen.on_button("analyze")
     check(deep.analysis and deep.analysis.runner, "with a Stockfish, it should analyze")
     check(deep.screen.state.status == string.format(s.engine_progress, 1, 8), "the progress counts positions from 1: " .. tostring(deep.screen.state.status))
     wait(function() return deep.review_game ~= nil end)
+    Stockfish.search = real_search
+    -- Each of the 7 positions with a move searched once to the depth of the level, in order; the last one is mate and needs no search. A move searched alone comes right after the search of its position, is the move played from it, and never goes deeper.
+    local played_moves = { "e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7" }
+    local level = EngineAnalysis.LEVELS.normal
+    local full, alone, in_order = 0, 0, true
+    for index, search in ipairs(searches) do
+        if search.only then
+            alone = alone + 1
+            local before = searches[index - 1]
+            in_order = in_order and before ~= nil and not before.only and before.moves == search.moves
+                and search.only == played_moves[full] and search.depth <= level.depth
+        else
+            in_order = in_order and search.moves == table.concat(played_moves, " ", 1, full) and search.depth == level.depth
+            full = full + 1
+        end
+        in_order = in_order and search.milliseconds == level.milliseconds
+    end
+    check(full == 7 and alone <= 7 and in_order, string.format("each position searched once, then its move alone when it is not the best: %d and %d searches", full, alone))
+    print(string.format("analysis: %d positions searched, %d moves searched alone", full, alone))
     local judged = deep.review_game and deep.review_game.moves[6]
     check(judged and judged.judgment == "Blunder" and judged.best ~= nil, "Stockfish should call Nf6 a blunder and name a better move: " .. tostring(judged and judged.judgment))
     check(deep.review_game and deep.review_game.summary and deep.review_game.summary.black.blunder >= 1, "the summary should count black's blunder")
@@ -478,6 +504,37 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
         if line.kind == "toggle" then always = line end
     end
     check(primary and primary.text == s.analyze_plugin and always and always.on == false, "the offer has the engine first and the option off")
+    -- How deep it analyzes is chosen there too, and the time the offer tells follows it.
+    local function offer_line(kind, text)
+        for _, line in ipairs(offer_page.lines) do
+            if (not kind or line.kind == kind) and (not text or line.text == text) then
+                return line
+            end
+        end
+    end
+    local EngineLevels = require("ink_knight/ui/engine_analysis")
+    local function time_line(level)
+        return string.format(s.analyze_plugin_explain, EngineLevels.time_text(s, EngineLevels.seconds_for(home, 7, level)))
+    end
+    local level_row = offer_line(nil, s.analysis_level)
+    check(level_row and level_row.value == s.analysis_level_names.normal and offer_line("text", time_line("normal")), "the offer has the depth of the analysis, normal at first, with its time")
+    level_row.callback()
+    local levels_page = home.pages[#home.pages]
+    local function level_line(level)
+        for _, line in ipairs(levels_page.lines) do
+            if line.text == s.analysis_level_names[level] then
+                return line
+            end
+        end
+    end
+    check(level_line("normal").tag == s.in_use and level_line("quick").tag == nil and level_line("deep").detail ~= nil, "the level in use is marked, and each has its time")
+    levels_page:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/analysis_levels.png")
+    level_line("deep").callback()
+    UIManager:close(levels_page)
+    check(home:option("analysis_level") == "deep" and offer_line(nil, s.analysis_level).value == s.analysis_level_names.deep and offer_line("text", time_line("deep")), "choosing deep changes the option and the time the offer tells")
+    home:save_setting("analysis_level", "normal")
+    offer_page:reload()
     offer_page:paintTo(Screen.bb, 0, 0)
     Screen.bb:writePNG(out_dir .. "/end_offer.png")
     primary.callback()

@@ -1,6 +1,4 @@
--- A game analyzed by Stockfish on the device: each position searched in turn, a little at a time between the frames
--- of the screen, then each move judged as Lichess judges it (engine_review.lua). Only where the plugin has a Stockfish
--- for the device (stockfish.lua) and it runs there; elsewhere the offline games keep the small engine.
+-- A game analyzed by Stockfish on the device: each position searched in turn, and the move played from it searched alone when it is not the best one, a little at a time between the frames of the screen, then each move judged as Lichess judges it (engine_review.lua). Only where the plugin has a Stockfish for the device (stockfish.lua) and it runs there; elsewhere the offline games keep the small engine.
 local lfs = require("libs/libkoreader-lfs")
 local UIManager = require("ui/uimanager")
 local logger = require("logger")
@@ -14,9 +12,31 @@ local Stockfish = require("ink_knight/stockfish")
 local EngineAnalysis = {}
 EngineAnalysis.__index = EngineAnalysis
 
--- Each position gets this long: depth 11 to 13 on the Kindle, a game of 40 moves in about a minute.
-EngineAnalysis.MILLISECONDS = 700
-local POLL_SECONDS = 0.15
+-- How deep each position is searched, by the level the reader chose (the option analysis_level, whose values are the keys here); how long a move takes at each on the Kindle, its two searches counted (measured on 2026-11-18: 32, 67 and 109 s for a game of 53 moves, both sides counted, and 1.27 s a move at normal over 6 games); and the longest a search may take, a few times what the Kindle needs, so a slower device is held to a few seconds for each move instead of to a depth it cannot reach in time. A depth and not a time, so every position is searched alike and the same game gets the same marks; with 0.7 s for each, as before, two analyses of a game differed.
+EngineAnalysis.LEVELS = {
+    quick = { depth = 10, seconds = 0.6, milliseconds = 2500 },
+    normal = { depth = 12, seconds = 1.25, milliseconds = 5000 },
+    deep = { depth = 14, seconds = 2, milliseconds = 8000 },
+}
+
+function EngineAnalysis.level(app)
+    return EngineAnalysis.LEVELS[app:option("analysis_level")]
+end
+
+-- A length of time in words: "about 35 seconds", "about 2 minutes".
+function EngineAnalysis.time_text(s, seconds)
+    if seconds < 55 then
+        return string.format(s.about_seconds, math.max(5, math.floor(seconds / 5 + 0.5) * 5))
+    end
+    local minutes = math.floor(seconds / 60 + 0.5)
+    return minutes <= 1 and s.about_minute or string.format(s.about_minutes, minutes)
+end
+
+-- About how long the analysis of a game of so many moves (of both sides) takes, in seconds, at a level (the reader's by default).
+function EngineAnalysis.seconds_for(app, moves, level)
+    return (moves + 1) * (level and EngineAnalysis.LEVELS[level] or EngineAnalysis.level(app)).seconds
+end
+local POLL_SECONDS = 0.1
 -- A search with no answer after this long is looked into: an engine that stopped (killed for memory, or never started)
 -- ends the analysis, checked every few seconds; past the last limit it ends anyway, so it never waits forever.
 local CHECK_AFTER_SECONDS, CHECK_EVERY_SECONDS, GIVE_UP_SECONDS = 15, 2, 60
@@ -161,7 +181,7 @@ function EngineAnalysis.start(opts)
     if not engine then
         return nil
     end
-    local self = setmetatable({ opts = opts, engine = engine, positions = {}, movers = {}, scores = {}, best = {}, index = 0 }, EngineAnalysis)
+    local self = setmetatable({ opts = opts, engine = engine, positions = {}, movers = {}, scores = {}, played = {}, best = {}, index = 0, level = EngineAnalysis.level(opts.app) }, EngineAnalysis)
     local position = Chess.start_position(opts.initial_fen)
     self.positions[0] = position
     self.start_fen = Chess.to_fen(position)
@@ -197,8 +217,13 @@ function EngineAnalysis:next_position()
         Sleep.schedule(self.opts.window, 0, self.tick)
         return
     end
-    -- From the start with the moves played, so the engine sees the repetitions.
-    self.engine:search(self.start_fen, EngineAnalysis.MILLISECONDS, table.concat(self.opts.moves, " ", 1, self.index))
+    self:search(nil, self.level.depth)
+end
+
+-- Searches the position of now: all its moves, or only one, the move played from it, to the depth the search of all reached, so the two scores compare even when the time cut that one short. From the start with the moves played, so the engine sees the repetitions.
+function EngineAnalysis:search(only, depth)
+    self.only = only
+    self.engine:search(self.start_fen, self.level.milliseconds, table.concat(self.opts.moves, " ", 1, self.index), depth, only)
     self.searched_at = os.time()
     Sleep.schedule(self.opts.window, POLL_SECONDS, self.tick)
 end
@@ -226,8 +251,21 @@ function EngineAnalysis:step()
             Sleep.schedule(self.opts.window, POLL_SECONDS, self.tick)
             return
         end
-        self.scores[self.index] = { cp = result.cp, mate = result.mate }
-        self.best[self.index + 1] = result.best
+        local score = { cp = result.cp, mate = result.mate }
+        local move = self.movers[self.index + 1] and self.opts.moves[self.index + 1]
+        if self.only then
+            -- The move played, searched alone: its score from the same position and depth as the best one.
+            self.played[self.index + 1] = score
+        else
+            self.scores[self.index] = score
+            self.best[self.index + 1] = result.best
+            if move and result.best == move then
+                self.played[self.index + 1] = score
+            elseif move then
+                self:search(move, math.max(1, math.min(self.level.depth, tonumber(result.depth) or self.level.depth)))
+                return
+            end
+        end
         self.index = self.index + 1
     end
     self:next_position()
@@ -235,7 +273,7 @@ end
 
 function EngineAnalysis:finish()
     self.engine:stop()
-    local judged, summary = EngineReview.judge(self.scores, self.movers)
+    local judged, summary = EngineReview.judge(self.scores, self.movers, self.played)
     local moves = {}
     for i = 1, #self.movers do
         local entry = judged[i] or {}

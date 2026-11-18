@@ -392,19 +392,13 @@ end
 
 -- How long the plugin's engine takes for this game, about.
 function ReviewScreen:analysis_time_text()
-    local s = self.s
-    local seconds = (self.available + 1) * (EngineAnalysis.MILLISECONDS + 300) / 1000
-    if seconds < 55 then
-        return string.format(s.about_seconds, math.max(5, math.floor(seconds / 5 + 0.5) * 5))
-    end
-    local minutes = math.floor(seconds / 60 + 0.5)
-    return minutes <= 1 and s.about_minute or string.format(s.about_minutes, minutes)
+    return EngineAnalysis.time_text(self.s, EngineAnalysis.seconds_for(self.app, self.available))
 end
 
 function ReviewScreen:offer_analysis()
     local s = self.s
     self.app:open_page{ title = s.review_game, build = function(page)
-        return {
+        local rows = {
             { kind = "hero", icon = "\226\153\158", text = s.review_no_analysis, detail = s.review_no_analysis_detail },
             { kind = "primary", text = s.analyze_plugin, callback = function()
                 UIManager:close(page)
@@ -412,8 +406,11 @@ function ReviewScreen:offer_analysis()
             end },
             { kind = "text", text = string.format(s.analyze_plugin_explain, self:analysis_time_text()) },
             { kind = "secondary", text = s.review_without_analysis, callback = function() UIManager:close(page) end },
-            self:analyze_always_row(page),
         }
+        -- Either can be missing, so they are added one at a time.
+        rows[#rows + 1] = self.app:analysis_level_row(page)
+        rows[#rows + 1] = self:analyze_always_row(page)
+        return rows
     end }
 end
 

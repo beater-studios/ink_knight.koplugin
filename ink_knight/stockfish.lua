@@ -116,14 +116,14 @@ function Stockfish:read_lines()
     return lines
 end
 
--- Starts a search of the position after moves (UCI, separated by spaces) from fen, for so many milliseconds; with the
--- moves Stockfish sees the repetitions. poll() gives the result.
--- depth, optional: a limit of depth besides the time, for the weaker levels of the opponent; whichever comes first ends the search.
-function Stockfish:search(fen, milliseconds, moves, depth)
+-- Starts a search of the position after moves (UCI, separated by spaces) from fen, for so many milliseconds; with the moves Stockfish sees the repetitions. poll() gives the result.
+-- depth, optional: a limit of depth besides the time, for the weaker levels of the opponent and for the analysis of a game; whichever comes first ends the search.
+-- only, optional: a move (UCI) of the position, the only one searched, for the score of a move played from the same position and depth as its best one.
+function Stockfish:search(fen, milliseconds, moves, depth, only)
     self.result = { depth = 0 }
     self.searching = true
     self:send("position fen " .. fen .. (moves and moves ~= "" and (" moves " .. moves) or ""))
-    self:send("go " .. (depth and ("depth " .. math.floor(depth) .. " ") or "") .. "movetime " .. math.floor(milliseconds))
+    self:send("go " .. (depth and ("depth " .. math.floor(depth) .. " ") or "") .. "movetime " .. math.floor(milliseconds) .. (only and (" searchmoves " .. only) or ""))
 end
 
 -- Whether the process still runs, asked of the system only when a search takes too long.

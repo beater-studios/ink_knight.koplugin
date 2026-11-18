@@ -412,6 +412,16 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         check_page(top_page(), language .. " " .. open)
         UIManager:close(top_page())
     end
+    -- The choice of how deep the plugin's Stockfish analyzes a game, with the time of each level.
+    -- The row only exists where the plugin's Stockfish runs, which is not here, so it is asked as if it did.
+    local EngineAnalysis = require("ink_knight/ui/engine_analysis")
+    local real_available = EngineAnalysis.available
+    EngineAnalysis.available = function() return true end
+    local level_row = home:analysis_level_row(home.hub)
+    EngineAnalysis.available = real_available
+    level_row.callback()
+    check_page(top_page(), language .. " analysis depth")
+    UIManager:close(top_page())
     -- The preferences of the site brought into the options, and what they now are.
     home:settings_menu()
     local settings_page = top_page()

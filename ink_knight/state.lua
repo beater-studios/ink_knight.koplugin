@@ -20,6 +20,8 @@ State.OPTIONS = {
     confirm_moves = { { true, false }, false },
     -- The plugin's engine analyzing a game of Lichess the site did not, as soon as the reader reviews it at its end.
     analyze_always = { { true, false }, false },
+    -- How deep the plugin's Stockfish analyzes a game (EngineAnalysis.LEVELS): deeper takes longer.
+    analysis_level = { { "quick", "normal", "deep" }, "normal" },
     auto_queen = { { true, false }, false },
     variant = { { "standard", "chess960" }, "standard" },
     board_coordinates = { { true, false }, false },

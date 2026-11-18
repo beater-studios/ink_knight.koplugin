@@ -1056,6 +1056,23 @@ function Home:choose_margin(after)
     self:choose(self.strings.rating_margin, rows, { close_on_tap = true })
 end
 
+-- How deep the plugin's Stockfish analyzes a game, chosen by who accepts waiting longer: each level with about how long a game of 40 moves takes (measured on a Kindle), the one in use marked. nil where it does not run.
+function Home:analysis_level_row(page)
+    if not EngineAnalysis.available(self) then
+        return nil
+    end
+    local s = self.strings
+    local details = {}
+    for _, level in ipairs(State.OPTIONS.analysis_level[1]) do
+        details[level] = string.format(s.analysis_level_time, EngineAnalysis.time_text(s, EngineAnalysis.seconds_for(self, 80, level)))
+    end
+    return self:choice_row(page, {
+        title = s.analysis_level, labels = s.analysis_level_names, names = State.OPTIONS.analysis_level[1],
+        current = self:option("analysis_level"), details = details, note = s.analysis_level_explain,
+        on_pick = function(level) self:save_setting("analysis_level", level) end,
+    })
+end
+
 function Home:margin_row(page)
     return {
         text = self.strings.rating_margin, value = self:margin_label(), wide_value = true,
@@ -1487,7 +1504,7 @@ function Home:choice_row(page, opts)
             rows[1] = { kind = "text", text = opts.note }
         end
         for _, name in ipairs(opts.names) do
-            local row = { text = opts.labels[name], tag = name == opts.current and self.strings.in_use or nil, callback = function()
+            local row = { text = opts.labels[name], detail = opts.details and opts.details[name] or nil, tag = name == opts.current and self.strings.in_use or nil, callback = function()
                 opts.on_pick(name)
                 page:reload()
             end }
@@ -1630,6 +1647,12 @@ function Home:offline_rows(page)
     rows[#rows + 1] = { kind = "section", text = s.board_section }
     for _, row in ipairs(self:board_look_rows(page)) do
         rows[#rows + 1] = row
+    end
+    -- The analysis of the games played here, where the plugin's Stockfish makes it.
+    local level_row = self:analysis_level_row(page)
+    if level_row then
+        rows[#rows + 1] = { kind = "section", text = s.analysis_section }
+        rows[#rows + 1] = level_row
     end
     return rows
 end
@@ -2819,6 +2842,8 @@ function Home:settings_menu()
             end },
             { text = s.refresh_interval, value = self:refresh_label(), wide_value = true, callback = function() self:choose_refresh(function() page:reload(); self:refresh_list() end) end },
             self:margin_row(page),
+            -- Spliced, since it is nil where the plugin's Stockfish does not run.
+            { splice = { self:analysis_level_row(page) } },
             { kind = "section", text = s.board_section },
             { splice = self:board_look_rows(page) },
             { kind = "section", text = s.account_section },
