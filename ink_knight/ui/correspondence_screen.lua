@@ -14,6 +14,7 @@ function CorrespondenceScreen.open(app, id)
     local self = setmetatable({ app = app, s = app.strings, id = id }, CorrespondenceScreen)
     self.screen = BoardScreen:new{
         state = {},
+        material = true,
         -- What happens is said in the plates, so the board takes the room of the line of text.
         status_line = false,
         on_square = function(square) self:on_square(square) end,

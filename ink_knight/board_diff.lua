@@ -1,4 +1,6 @@
 -- What changed on the board between two states, so only that part of an e-ink screen gets redrawn.
+local Material = require("ink_knight/material")
+
 local BoardDiff = {}
 
 local function bar_text(info)
@@ -48,7 +50,11 @@ local function overlay_text(state)
     return table.concat(parts, "|")
 end
 
-function BoardDiff.snapshot(state)
+-- material: what each side has more than the other (Material.difference), where the screen shows it. Each plate has the one of its side, black on top unless the board is turned; the band of a review has both.
+function BoardDiff.snapshot(state, material)
+    local top_side = state.flipped and "w" or "b"
+    local top_material = state.band and (Material.text(material, "w") .. "/" .. Material.text(material, "b")) or Material.text(material, top_side)
+    local bottom_material = state.band and "" or Material.text(material, top_side == "w" and "b" or "w")
     local squares = {}
     for square = 1, 64 do
         squares[square] = square_text(state, square)
@@ -57,12 +63,12 @@ function BoardDiff.snapshot(state)
         squares = squares,
         flipped = state.flipped == true,
         has_position = state.position ~= nil,
-        top = bar_text(state.top) .. "|" .. tostring(state.banner) .. "|" .. tostring(state.banner_title) .. "|" .. tostring(state.banner_more) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
+        top = bar_text(state.top) .. "|" .. top_material .. "|" .. tostring(state.banner) .. "|" .. tostring(state.banner_title) .. "|" .. tostring(state.banner_more) .. "|" .. (state.band and table.concat({ tostring(state.band.white), tostring(state.band.black), tostring(state.band.result), tostring(state.band.live) }, "|") or ""),
         palette = state.palette and tostring(state.palette.selected) or "",
         header = state.header and (tostring(state.header.title) .. "|" .. tostring(state.header.subtitle)) or "",
         eval = state.eval and (string.format("%.3f", state.eval.white or 0) .. "|" .. tostring(state.eval.text)) or "",
         overlay = overlay_text(state),
-        bottom = bar_text(state.bottom),
+        bottom = bar_text(state.bottom) .. "|" .. bottom_material,
         status = tostring(state.status) .. "|" .. (state.progress and (tostring(state.progress.done) .. "/" .. tostring(state.progress.total)) or "")
             .. "|" .. (state.panel and table.concat({ tostring(state.panel.move), tostring(state.panel.tag), tostring(state.panel.detail), tostring(state.panel.evaluation), tostring(state.panel.title), tostring(state.panel.source), clocks_text(state.panel.clocks) }, "|") or ""),
         buttons = buttons_text(state.buttons),

@@ -65,6 +65,7 @@ function OfflineGame.open(app, opts)
     self.wake_callback = function() self:start_clock() end
     self.screen = BoardScreen:new{
         state = { flipped = self.flipped },
+        material = true,
         -- What happens is said in the plates, so the board takes the room of the line of text.
         status_line = false,
         on_square = function(square) self:on_square(square) end,

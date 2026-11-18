@@ -808,6 +808,37 @@ if os.getenv("INK_KNIGHT_STOCKFISH") then
     check(engines_running() == 0, "no Stockfish left after the endgames: " .. engines_running())
 end
 
+-- What each side has more than the other, in the band of the review: drawn without a fault, with the longest names, changing with the position and never the size of the names.
+do
+    local logger = require("logger")
+    local faults = 0
+    local real_warn = logger.warn
+    logger.warn = function(...)
+        if tostring((...)):find("could not draw", 1, true) then
+            faults = faults + 1
+        end
+        return real_warn(...)
+    end
+    local uneven = ReviewScreen.open(home, { initial_fen = "r4rk1/pp3ppp/2n1p3/3p4/3P4/2N2N2/PP3PPP/R4RK1 w - - 0 20",
+        moves = { { uci = "c3d5", san = "Nxd5" }, { uci = "e6d5", san = "exd5" } }, white = "Alessandra_Vasconcel", black = "Maximiliana_Hortensia", score = "1-0" })
+    local function shown()
+        local material = uneven.screen:shown_material()
+        return material and (material.w.pieces .. "+" .. tostring(material.w.lead) .. " " .. material.b.pieces .. "+" .. tostring(material.b.lead)) or "level"
+    end
+    check(shown() == "n+2 p+nil", "at the start white has a knight more and black a pawn more: " .. shown())
+    uneven.screen:paintTo(Screen.bb, 0, 0)
+    uneven:go(1)
+    check(shown() == "n+3 +nil", "after the knight takes the pawn white leads by a knight: " .. shown())
+    uneven.screen:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/review_material.png")
+    uneven:go(2)
+    check(shown() == "level", "with the knight taken back nothing shows: " .. shown())
+    uneven.screen:paintTo(Screen.bb, 0, 0)
+    check(faults == 0, "the band with the material should draw without a fault: " .. faults)
+    logger.warn = real_warn
+    UIManager:close(uneven.screen)
+end
+
 home.settings:delSetting("two_player_game")
 home.settings:delSetting("offline_game")
 home.settings:delSetting("analyze_always")

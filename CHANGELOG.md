@@ -5,6 +5,7 @@
 - The analysis by the plugin's Stockfish marks far fewer good moves as mistakes. Each move is now judged against the best move of its own position, since the engine on the e-reader favors the side to move, and comparing the position before a move with the one after it made almost every move look like a loss, opening moves included. On 6 games compared with the analysis of Lichess, the moves marked by mistake went from 66 to 15.
 - The same game always gets the same marks: every position is searched to the same depth, in place of a fixed time for each.
 - Analysis depth: Quick, Normal or Deep, each with about how long a game takes, chosen in the settings, in the offline menu and where the analysis is offered at the end of a game. A deeper analysis makes fewer mistakes and takes longer.
+- Beside each player, the pieces that side has more than the other and "+n" for the side ahead, as on Lichess: in games on Lichess, correspondence, offline games, the review and broadcasts. With the same material nothing shows.
 
 ## [0.7.1]
 

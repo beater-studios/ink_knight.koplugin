@@ -449,6 +449,24 @@ do
     home.settings:delSetting("two_player_game")
 end
 
+-- What each side has more than the other shows beside the players, and goes when the material is level again.
+do
+    local uneven = OfflineGame.open(home, { two_players = true, initial_fen = "r4rk1/pp3ppp/2n1p3/3p4/3P4/2N2N2/PP3PPP/R4RK1 w - - 0 20" })
+    local function shown()
+        local material = uneven.screen:shown_material()
+        return material and (material.w.pieces .. "+" .. tostring(material.w.lead) .. " " .. material.b.pieces .. "+" .. tostring(material.b.lead)) or "level"
+    end
+    check(shown() == "n+2 p+nil", "white a knight more and black a pawn more: " .. shown())
+    uneven.screen:paintTo(Screen.bb, 0, 0)
+    Screen.bb:writePNG(out_dir .. "/material.png")
+    play(uneven, "c3", "d5")
+    check(shown() == "n+3 +nil", "after the knight takes the pawn, white leads by a knight: " .. shown())
+    play(uneven, "e6", "d5")
+    check(shown() == "level", "with the knight taken back, nothing shows: " .. shown())
+    UIManager:close(uneven.screen)
+    home.settings:delSetting("two_player_game")
+end
+
 home.settings:delSetting("offline_game")
 UIManager:close(home)
 if failures > 0 then

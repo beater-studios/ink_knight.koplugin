@@ -38,6 +38,7 @@ function ReviewScreen.open(app, game, opts)
     self.index = opts.refresh and self.available or 0
     self.screen = BoardScreen:new{
         state = { flipped = self.flipped },
+        material = true,
         -- The review names squares, in the moves and the better ones, so they are always on its board.
         coordinates = true,
         band = true,

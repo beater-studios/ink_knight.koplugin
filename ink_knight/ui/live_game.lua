@@ -22,6 +22,7 @@ function LiveGame.open(app, id)
     local self = setmetatable({ app = app, id = id, s = app.strings, game = Game.new(id, app.my_id), backoff = RECONNECT_MIN }, LiveGame)
     self.screen = BoardScreen:new{
         state = { status = self.s.loading, buttons = { { id = "back", label = self.s.back } } },
+        material = true,
         -- What happens is said in the plates, so the board takes the room of the line of text.
         status_line = false,
         on_square = function(square) self:on_square(square) end,

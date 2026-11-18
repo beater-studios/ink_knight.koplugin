@@ -12,6 +12,7 @@ local ffi = require("ffi")
 local logger = require("logger")
 
 local BoardDiff = require("ink_knight/board_diff")
+local Material = require("ink_knight/material")
 local Draw = require("ink_knight/ui/draw")
 local MoveText = require("ink_knight/ui/move_text")
 local Page = require("ink_knight/ui/page")
@@ -91,6 +92,8 @@ local BoardScreen = InputContainer:extend{
     banner_tap = nil,
     -- The layout of the editor: the title in a black band (state.header: title, subtitle), and the pieces to put under the board (state.palette: selected, a piece letter or "erase"), whose taps press "tool:<letter>" and "tool:erase".
     palette = false,
+    -- Beside each player, what that side has more than the other, and "+n" for the side ahead, as on Lichess: where a game is played or read. Worked out from the position shown (shown_material).
+    material = false,
 }
 
 -- The arrows and circles of the lessons in two inks: black for the ones that warn, dark gray for the others.
@@ -634,12 +637,18 @@ function BoardScreen:paint_bar(bb, rect, info, piece)
     end
     -- A tag says where what the screen shows comes from, beside the clock or in its place.
     if info.tag then
-        local h = self:px(26)
         local w = math.min(self:px(170), MoveText.width(info.tag, BOLD, 13 * self.scale) + self:px(20))
-        local x, y = right - w, rect.y + math.floor((rect.h - h) / 2)
-        Draw.pill(bb, x, y, w, h, self.scale * 0.6, info.tag_solid)
-        self:paint_text(bb, info.tag, BOLD, 13, x + self:px(6), y, w - self:px(12), h, "center", info.tag_solid and WHITE or BLACK)
-        right = x - self:px(10)
+        self:paint_small_pill(bb, info.tag, right - w, cy, w, self:px(26), info.tag_solid)
+        right = right - w - self:px(10)
+    end
+    -- What this side has more than the other, between the name and the clock.
+    -- The side comes from where the plate is, not from its picture, which a screen may change.
+    local difference = self:shown_material()
+    local material = difference and difference[piece == "K" and "w" or "b"]
+    local material_w = self:material_width(material)
+    if material_w > 0 then
+        self:paint_material(bb, right - material_w, cy, material)
+        right = right - material_w - self:px(10)
     end
     local text_w = right - text_x
     if info.note then
@@ -656,6 +665,83 @@ function BoardScreen:paint_bar(bb, rect, info, piece)
     else
         self:paint_text(bb, info.name, BOLD, 18, text_x, rect.y, text_w, rect.h, "left")
     end
+end
+
+-- A short text in a small pill, black or outlined, centered on cy: the tag of a plate, the "+n" of the material.
+function BoardScreen:paint_small_pill(bb, text, x, cy, w, h, solid)
+    local y = cy - math.floor(h / 2)
+    Draw.pill(bb, x, y, w, h, self.scale * 0.6, solid)
+    self:paint_text(bb, text, BOLD, 13, x + self:px(6), y, w - self:px(12), h, "center", solid and WHITE or BLACK)
+end
+
+-- At most this many pieces show. With more, the last place says so with "…", since only the side ahead has a "+n" to say the rest.
+local MATERIAL_PIECES = 6
+local MORE = "\226\128\166"
+
+-- The pieces of a material to draw, and whether "…" follows them.
+local function material_pieces(material)
+    if #material.pieces > MATERIAL_PIECES then
+        return material.pieces:sub(1, MATERIAL_PIECES - 1), true
+    end
+    return material.pieces, false
+end
+
+-- The room the material of a side takes: its pieces, a little over each other, and the "+n". on_band: in the white pill of the band of a review, where the "+n" is plain text. A side with nothing more than the other takes none.
+function BoardScreen:material_width(material, on_band)
+    if not material or material.pieces == "" then
+        return 0
+    end
+    local pieces, more = material_pieces(material)
+    local w = self:px(20) + (#pieces - 1) * self:px(14)
+    if more then
+        w = w + self:px(2) + MoveText.width(MORE, BOLD, 13 * self.scale)
+    end
+    if material.lead then
+        w = w + self:px(5) + MoveText.width("+" .. material.lead, BOLD, 13 * self.scale) + (on_band and self:px(2) or self:px(14))
+    end
+    return w + (on_band and self:px(16) or 0)
+end
+
+-- The pieces a side has more of, all in black as on Lichess, then "+n" for the side ahead: in a black pill on a plate, and the whole in a white pill on the black band of a review.
+function BoardScreen:paint_material(bb, x, cy, material, on_band)
+    if on_band then
+        local w, h = self:material_width(material, true), self:px(28)
+        bb:paintRoundedRect(x, cy - math.floor(h / 2), w, h, WHITE, math.floor(h / 2))
+        x = x + self:px(8)
+    end
+    local size, step = self:px(20), self:px(14)
+    local pieces, more = material_pieces(material)
+    for index = 1, #pieces do
+        BoardScreen.paint_piece_fit(bb, self.piece_set, pieces:sub(index, index), x + math.floor(size / 2) + (index - 1) * step, cy, size)
+    end
+    x = x + size + (#pieces - 1) * step
+    if more then
+        local w = MoveText.width(MORE, BOLD, 13 * self.scale)
+        self:paint_text(bb, MORE, BOLD, 13, x + self:px(2), cy - self:px(12), w + self:px(2), self:px(24), "left")
+        x = x + self:px(2) + w
+    end
+    if not material.lead then
+        return
+    end
+    local text = "+" .. material.lead
+    local text_w = MoveText.width(text, BOLD, 13 * self.scale)
+    if on_band then
+        self:paint_text(bb, text, BOLD, 13, x + self:px(5), cy - self:px(12), text_w + self:px(2), self:px(24), "left")
+    else
+        self:paint_small_pill(bb, text, x + self:px(5), cy, text_w + self:px(14), self:px(22), true)
+    end
+end
+
+-- What each side has more than the other in the position shown, or nil where the screen does not show it or the material is level. Counted again only when the position is another, so a clock that ticks does not count the pieces every second.
+function BoardScreen:shown_material()
+    if not self.material then
+        return nil
+    end
+    local position = self.state.position
+    if self.material_position ~= position then
+        self.material_position, self.material_difference = position, Material.difference(position)
+    end
+    return self.material_difference
 end
 
 -- The piece of the side at the top or the bottom, as the board faces.
@@ -1114,11 +1200,26 @@ function BoardScreen:paint_band(bb, band)
     for _, side in ipairs({ { band.white, "K", m + radius, m + 2 * radius + self:px(8), "left" }, { band.black, "k", rect.w - m - radius, rect.w - m - 2 * radius - self:px(8) - side_w, "right" } }) do
         bb:paintCircle(side[3], cy, radius, WHITE)
         BoardScreen.paint_piece_fit(bb, self.piece_set, side[2], side[3], cy, math.floor(radius * 1.45))
+        -- What the side has more than the other, in a white pill at the end of its room next to the middle; the name takes what is left.
+        local difference = self:shown_material()
+        local material = difference and difference[side[2] == "K" and "w" or "b"]
+        local material_w = self:material_width(material, true)
+        local name_x, name_w = side[4], side_w
+        if material_w > 0 then
+            name_w = side_w - material_w - self:px(8)
+            if side[5] == "left" then
+                self:paint_material(bb, side[4] + side_w - material_w, cy, material, true)
+            else
+                self:paint_material(bb, side[4], cy, material, true)
+                name_x = side[4] + material_w + self:px(8)
+            end
+        end
+        -- The size of the name leaves room for a usual pill (a piece or two and the "+n") whether there is one or not, so it does not change from a move to the next as the material does; only a larger pill cuts the name shorter.
         local size = 17
-        while size > 12 and MoveText.width(side[1], BOLD, size * self.scale) > side_w do
+        while size > 12 and MoveText.width(side[1], BOLD, size * self.scale) > side_w - self:px(84) do
             size = size - 1
         end
-        self:paint_text(bb, side[1], BOLD, size, side[4], rect.y, side_w, rect.h, side[5], WHITE)
+        self:paint_text(bb, side[1], BOLD, size, name_x, rect.y, name_w, rect.h, side[5], WHITE)
     end
     local cx = math.floor((rect.w - center_w) / 2)
     if band.live then
@@ -1388,7 +1489,7 @@ end
 -- Sends to the screen only what changed: each square on its own, so a move does not redraw what lies between.
 -- The clock changes every second when it is short, so it stays out of the count, with "fast" on its bars.
 function BoardScreen:refresh(what)
-    local shown = BoardDiff.snapshot(self.state)
+    local shown = BoardDiff.snapshot(self.state, self:shown_material())
     local changes = BoardDiff.changes(self.shown, shown)
     self.shown = shown
     if what == "clock" then
@@ -1501,7 +1602,7 @@ end
 -- The whole screen once when it opens, with a flash, since it comes over a page. Only after that does it send
 -- what changed.
 function BoardScreen:onShow()
-    self.shown = BoardDiff.snapshot(self.state)
+    self.shown = BoardDiff.snapshot(self.state, self:shown_material())
     local mode = self.refresh_count:mode("cells")
     Sleep.dirty(self, function() return mode, self.dimen end)
     return true

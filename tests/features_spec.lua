@@ -772,6 +772,36 @@ test("the analysis says what it knows, and what it does not", function()
     eq(Analysis.ending(s, ending_position, nil), nil)
 end)
 
+test("the material each side has more than the other", function()
+    local Material = require("ink_knight/material")
+    eq(Material.difference(Chess.parse_fen(Chess.START_FEN)), nil, "the same material shows nothing")
+    -- White has a knight more and black a pawn more: white leads by 2.
+    local ahead = Material.difference(Chess.parse_fen("r4rk1/pp3ppp/2n1p3/3p4/3P4/2N2N2/PP3PPP/R4RK1 w - - 0 20"))
+    eq(ahead.w.pieces, "n"); eq(ahead.w.lead, 2); eq(ahead.b.pieces, "p"); eq(ahead.b.lead, nil)
+    eq(Material.text(ahead, "w"), "n+2"); eq(Material.text(ahead, "b"), "p+0"); eq(Material.text(nil, "w"), "")
+    -- A bishop for a knight: the pieces show, with no side ahead.
+    local traded = Material.difference(Chess.parse_fen("4k3/8/8/8/8/8/8/2B1K1n1 w - - 0 1"))
+    eq(traded.w.pieces, "b"); eq(traded.b.pieces, "n"); eq(traded.w.lead, nil); eq(traded.b.lead, nil)
+    -- Black with a queen and two pawns more, the most valuable first; a promoted pawn counts as what it became.
+    local black = Material.difference(Chess.parse_fen("3qk3/pp6/8/8/8/8/8/4K3 w - - 0 1"))
+    eq(black.b.pieces, "qpp"); eq(black.b.lead, 11); eq(black.w.pieces, "")
+    eq(Material.difference(nil), nil)
+    -- Each plate is drawn again only when what its own side shows changes: black on top, white below, unless the board is turned.
+    local level = Chess.parse_fen("4k3/4p3/8/8/8/8/4P3/3QK3 w - - 0 1")
+    local queen_up = Material.difference(level)
+    local state = { position = level, top = { name = "x" }, bottom = { name = "y" } }
+    local plain = BoardDiff.snapshot(state)
+    local changes = BoardDiff.changes(plain, BoardDiff.snapshot(state, queen_up))
+    eq(changes.bottom, true, "white's plate, below, shows its queen"); eq(changes.top, false, "black's plate has nothing new")
+    local turned = { position = level, flipped = true, top = { name = "x" }, bottom = { name = "y" } }
+    changes = BoardDiff.changes(BoardDiff.snapshot(turned), BoardDiff.snapshot(turned, queen_up))
+    eq(changes.top, true, "with the board turned white is on top"); eq(changes.bottom, false)
+    -- In a review both show in the band, on top, and nothing below.
+    local band = { position = level, band = { white = "a", black = "b" } }
+    changes = BoardDiff.changes(BoardDiff.snapshot(band), BoardDiff.snapshot(band, queen_up))
+    eq(changes.top, true); eq(changes.bottom, false)
+end)
+
 test("what a token may do comes from the scopes Lichess states", function()
     local scopes = TokenScopes.parse("board:play,puzzle:read")
     eq(TokenScopes.allows(scopes, "play"), true)
