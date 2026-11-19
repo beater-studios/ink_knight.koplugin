@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/brand/banner.png" alt="Ink Knight: xadrez em e-ink, offline e no Lichess">
+  <img src="docs/brand/banner_pt.png" alt="Ink Knight: xadrez em e-ink, offline e no Lichess">
 </p>
 
 <p align="center">

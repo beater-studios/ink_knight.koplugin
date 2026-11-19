@@ -1,4 +1,4 @@
-"""Draws the icon, the README banner and the GitHub social preview, or with `screensaver` the full-screen sleep screen cover in assets/.
+"""Draws the icon, the README banner and the GitHub social preview, in English and Portuguese, or with `screensaver` the full-screen sleep screen cover in assets/.
 
 Usage: KOREADER_DIR=<desktop KOReader> python3 -I tools/make_brand_art.py [screensaver]
 Run tools/koreader/render_readme_screens.lua first. Needs Pillow, and the fonts that come with KOReader.
@@ -14,8 +14,21 @@ BLACK, WHITE, FOLD = 0, 255, 170
 ICON_SIZE = 1024
 SUPERSAMPLE = 3
 KNIGHT = "♞"
-TAGLINE = "Chess on e-ink, offline and on Lichess."
-DETAILS = ["An engine, puzzles, lessons and a clock with no internet,", "and live and correspondence games on Lichess.", "A KOReader plugin, not an official Lichess product."]
+# The texts and screenshots of each language: English for README.md and GitHub, Portuguese for README_pt.md and posts in Portuguese.
+TEXTS = {
+    "en": {
+        "tagline": "Chess on e-ink, offline and on Lichess.",
+        "details": ["An engine, puzzles, lessons and a clock with no internet,", "and live and correspondence games on Lichess.", "A KOReader plugin, not an official Lichess product."],
+        "screenshots": os.path.join("docs", "screenshots"),
+        "suffix": "",
+    },
+    "pt": {
+        "tagline": "Xadrez em e-ink, offline e no Lichess.",
+        "details": ["Motor, táticas, lições e relógio sem internet,", "e partidas ao vivo e por correspondência no Lichess.", "Um plugin do KOReader, não um produto oficial do Lichess."],
+        "screenshots": os.path.join("docs", "screenshots", "pt"),
+        "suffix": "_pt",
+    },
+}
 # The sheet of paper, in icon coordinates.
 PAGE_LEFT, PAGE_TOP, PAGE_RIGHT, PAGE_BOTTOM, EAR = 222, 130, 802, 894, 170
 
@@ -58,8 +71,8 @@ def halftone(image, cx, cy, radius, spacing):
         row += 1
 
 
-def place_screen(image, name, center, height, angle):
-    screen = Image.open(os.path.join(ROOT, "docs", "screenshots", name + ".png")).convert("L")
+def place_screen(image, folder, name, center, height, angle):
+    screen = Image.open(os.path.join(ROOT, folder, name + ".png")).convert("L")
     screen = screen.resize((round(height * screen.width / screen.height), height), Image.LANCZOS)
     framed = Image.new("L", (screen.width + 12, screen.height + 12), WHITE)
     framed.paste(screen, (6, 6))
@@ -67,20 +80,20 @@ def place_screen(image, name, center, height, angle):
     image.paste(rotated.getchannel("L"), (round(center[0] - rotated.width / 2), round(center[1] - rotated.height / 2)), rotated.getchannel("A"))
 
 
-def draw_header(width, height, fonts, icon, layout):
+def draw_header(width, height, fonts, icon, layout, texts):
     k = 2
     image = Image.new("L", (width * k, height * k), BLACK)
     middle, screen_height, offset, text = layout["middle"], layout["screen_height"], layout["offset"], layout["text"]
     halftone(image, middle * k, height // 2 * k, round(layout["halftone"] * k), 26 * k)
     # The first screen, with both ways to play, beside a game, as the plugin is both offline and on Lichess.
-    place_screen(image, "start", ((middle - offset) * k, (height // 2 + 8) * k), screen_height * k, 6)
-    place_screen(image, "game", ((middle + offset) * k, (height // 2 - 8) * k), screen_height * k, -5)
+    place_screen(image, texts["screenshots"], "start", ((middle - offset) * k, (height // 2 + 8) * k), screen_height * k, 6)
+    place_screen(image, texts["screenshots"], "game", ((middle + offset) * k, (height // 2 - 8) * k), screen_height * k, -5)
     margin = 58
     icon_size = round(112 * text)
     title_size = round(68 * text)
     tagline_size = round(24 * text)
     details_size = round(18 * text)
-    details = layout.get("details")
+    details = layout.get("details") and texts["details"]
     block = icon_size + title_size + tagline_size + round(44 * text)
     if details:
         block += round(details_size * 1.45 * len(details)) + round(22 * text)
@@ -93,7 +106,7 @@ def draw_header(width, height, fonts, icon, layout):
     d = ImageDraw.Draw(image)
     d.text((margin * k, y * k), "Ink Knight", font=ImageFont.truetype(fonts["bold"], title_size * k), fill=WHITE)
     y += title_size + round(26 * text)
-    d.text((margin * k, y * k), TAGLINE, font=ImageFont.truetype(fonts["italic"], tagline_size * k), fill=WHITE)
+    d.text((margin * k, y * k), texts["tagline"], font=ImageFont.truetype(fonts["italic"], tagline_size * k), fill=WHITE)
     y += tagline_size + round(30 * text)
     if details:
         font = ImageFont.truetype(fonts["regular"], details_size * k)
@@ -141,9 +154,11 @@ def main():
         print("Image generated in assets/screensaver.png")
         return
     icon.save(os.path.join(brand, "icon.png"), optimize=True)
-    draw_header(1280, 400, fonts, icon, {"middle": 1000, "screen_height": 330, "offset": 110, "text": 1, "halftone": 280}).save(os.path.join(brand, "banner.png"), optimize=True)
-    draw_header(1280, 640, fonts, icon, {"middle": 960, "screen_height": 430, "offset": 112, "text": 1.02, "halftone": 360, "details": DETAILS}).save(os.path.join(ROOT, "docs", "social-preview.png"), optimize=True)
-    print("Images generated in docs/brand and docs/social-preview.png")
+    for texts in TEXTS.values():
+        suffix = texts["suffix"]
+        draw_header(1280, 400, fonts, icon, {"middle": 1000, "screen_height": 330, "offset": 110, "text": 1, "halftone": 280}, texts).save(os.path.join(brand, "banner" + suffix + ".png"), optimize=True)
+        draw_header(1280, 640, fonts, icon, {"middle": 960, "screen_height": 430, "offset": 112, "text": 1.02, "halftone": 360, "details": True}, texts).save(os.path.join(ROOT, "docs", "social-preview" + suffix + ".png"), optimize=True)
+    print("Images generated in docs/brand and docs/social-preview.png, with the Portuguese copies ending in _pt")
 
 
 main()
