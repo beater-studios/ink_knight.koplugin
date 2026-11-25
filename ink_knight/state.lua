@@ -27,7 +27,8 @@ State.OPTIONS = {
     auto_queen = { { true, false }, false },
     variant = { { "standard", "chess960" }, "standard" },
     board_coordinates = { { true, false }, false },
-    board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast" }, "plain" },
+    -- The last three are in color, only for a color screen (State.board_style).
+    board_style = { { "plain", "newspaper", "crosshatch", "dotted", "contrast", "wood", "green", "blue" }, "plain" },
     piece_set = { { "classic", "cburnett", "merida", "chessnut", "mpchess", "kiwen-suwi", "shapes" }, "classic" },
     puzzle_difficulty = { { "easiest", "easier", "normal", "harder", "hardest" }, "normal" },
     puzzle_color = { { "any", "white", "black" }, "any" },
@@ -81,6 +82,22 @@ end
 function State.option(key, saved)
     local option = assert(State.OPTIONS[key], "state: unknown option " .. tostring(key))
     return SavedState.one_of(saved, option[1], option[2])
+end
+
+-- The board styles drawn in color, and the one a color screen starts with.
+State.COLOR_STYLES = { wood = true, green = true, blue = true }
+State.COLOR_DEFAULT = "wood"
+
+-- The style a board is drawn in, from the saved option and whether the screen shows color now. On a color screen, whoever never chose a style (or has one this version does not know) gets wood; a style chosen, gray or not, stays. A color style on a screen without color, as when the reader turns color off in KOReader, is drawn plain and stays saved for when color comes back.
+function State.board_style(saved, color)
+    local style = State.option("board_style", saved)
+    if style ~= saved and color then
+        style = State.COLOR_DEFAULT
+    end
+    if State.COLOR_STYLES[style] and not color then
+        return "plain"
+    end
+    return style
 end
 
 -- Moves as Lichess writes them, "e2e4 e7e5 e7e8q", separated by single spaces.

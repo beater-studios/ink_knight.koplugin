@@ -37,9 +37,13 @@ local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
 -- The solid chess symbols give the shape of a piece, and the hollow ones draw its outline.
 local SOLID = { k = "\226\153\154", q = "\226\153\155", r = "\226\153\156", b = "\226\153\157", n = "\226\153\158", p = "\226\153\159" }
 local HOLLOW = { k = "\226\153\148", q = "\226\153\149", r = "\226\153\150", b = "\226\153\151", n = "\226\153\152", p = "\226\153\153" }
+local function rgb(r, g, b)
+    return Blitbuffer.ColorRGB32(r, g, b, 0xFF)
+end
 -- Only black and white, or the plain gray, so the board stays clean on e-ink. On a pattern or a darker gray,
 -- a piece needs a white edge to stand out.
 -- spacing and thickness grow with the screen, so a pattern looks the same on a sharper one.
+-- The colored styles (color) are only drawn on a screen that shows color (State.board_style). Color e-ink washes colors out, so they are lighter on the light squares and of a stronger hue on the dark ones than the boards of Lichess, whose colors turn almost gray there.
 local STYLES = {
     plain = { dark = DARK_SQUARE },
     newspaper = { halo = true, spacing = 5, ink = function(x, y, spacing, thickness)
@@ -53,7 +57,20 @@ local STYLES = {
         return (x + shift) % spacing < 2 * thickness and y % spacing < 2 * thickness
     end },
     contrast = { halo = true, dark = Blitbuffer.Color8(0x55) },
+    wood = { color = true, light = rgb(0xF8, 0xE6, 0xC4), dark = rgb(0xD0, 0x8F, 0x50) },
+    green = { color = true, light = rgb(0xF1, 0xF4, 0xD6), dark = rgb(0x6D, 0xB0, 0x4A) },
+    blue = { color = true, light = rgb(0xE8, 0xF0, 0xF6), dark = rgb(0x6F, 0xA2, 0xD0) },
 }
+
+-- A square of a style. paintRect draws any color in gray, even on a color screen, so a colored style goes through paintRectRGB32.
+local function paint_square(bb, style, x, y, w, h, dark)
+    local color = dark and (style.dark or DARK_SQUARE) or (style.light or LIGHT_SQUARE)
+    if style.color then
+        bb:paintRectRGB32(x, y, w, h, color)
+    else
+        bb:paintRect(x, y, w, h, color)
+    end
+end
 -- The same names the saved options accept, so a saved style always has a drawing.
 local STYLE_NAMES = State.OPTIONS.board_style[1]
 -- "classic" is drawn from FreeSerif. The others are pictures in ink_knight/pieces, see NOTICE for their authors.
@@ -272,6 +289,11 @@ function BoardScreen.style_names()
     return STYLE_NAMES
 end
 
+-- Whether the boards are drawn in color now, a colored style being in use, which Home:apply_board_look only sets on a screen that shows color. KOReader uses the color modes of the panel only for what is marked as dithered.
+function BoardScreen.in_color()
+    return (STYLES[BoardScreen.style] or STYLES.plain).color == true
+end
+
 -- Called when the plugin closes, so the pieces do not stay in memory after it. The next board draws them again.
 function BoardScreen.clear_art_cache()
     for _, art in pairs(art_cache) do
@@ -290,8 +312,8 @@ function BoardScreen.clear_art_cache()
 end
 
 -- For the list of styles and the row of the settings: a light and a dark square of the style, apart, each framed,
--- two elements large enough to tell on e-ink.
-function BoardScreen.paint_style_sample(bb, name, x, y, size, with_pieces)
+-- two elements large enough to tell on e-ink. dim: faded, for a style that cannot be chosen here.
+function BoardScreen.paint_style_sample(bb, name, x, y, size, with_pieces, dim)
     local style = STYLES[name] or STYLES.plain
     local scale = math.min(Screen:getWidth() / 600, Screen:getHeight() / 800)
     local gap = math.max(2, math.floor(size / 6))
@@ -299,13 +321,13 @@ function BoardScreen.paint_style_sample(bb, name, x, y, size, with_pieces)
     local border = math.max(1, math.floor(2 * scale + 0.5))
     local top = y + math.floor((size - side) / 2)
     local dark_x = x + side + gap
-    bb:paintRect(x, top, side, side, LIGHT_SQUARE)
+    paint_square(bb, style, x, top, side, side, false)
     if style.ink then
         local tile = make_pattern(style, side, scale)
         bb:blitFrom(tile, dark_x, top, 0, 0, side, side)
         tile:free()
     else
-        bb:paintRect(dark_x, top, side, side, style.dark or DARK_SQUARE)
+        paint_square(bb, style, dark_x, top, side, side, true)
     end
     bb:paintBorder(x, top, side, side, border, BLACK)
     bb:paintBorder(dark_x, top, side, side, border, BLACK)
@@ -323,6 +345,9 @@ function BoardScreen.paint_style_sample(bb, name, x, y, size, with_pieces)
                 blit_piece(bb, art, sample[1], px, py)
             end
         end
+    end
+    if dim then
+        bb:lightenRect(x, top, dark_x + side - x, side, 0.6)
     end
 end
 
@@ -356,7 +381,7 @@ function BoardScreen.paint_board_at(bb, position, x, y, size, flipped)
         if (file + rank) % 2 == 0 and pattern then
             bb:blitFrom(pattern, sx, sy, 0, 0, square, square)
         else
-            bb:paintRect(sx, sy, square, square, (file + rank) % 2 == 0 and (style.dark or DARK_SQUARE) or LIGHT_SQUARE)
+            paint_square(bb, style, sx, sy, square, square, (file + rank) % 2 == 0)
         end
     end
     if pattern then
@@ -454,6 +479,7 @@ function BoardScreen:setup()
     self.tiles = {}
     self.labels = {}
     self.state = self.state or {}
+    self.dithered = BoardScreen.in_color() or nil
     -- Not "refresh", which is the method that sends a change to the screen.
     self.refresh_count = Refresh.new(FULL_REFRESH_EVERY)
 end
@@ -842,7 +868,7 @@ function BoardScreen:paint_board(bb)
         if dark and pattern then
             bb:blitFrom(pattern, x, y, 0, 0, self.square, self.square)
         else
-            bb:paintRect(x, y, self.square, self.square, dark and (style.dark or DARK_SQUARE) or LIGHT_SQUARE)
+            paint_square(bb, style, x, y, self.square, self.square, dark)
         end
     end
     -- The piece picked stands on a white disc in a black square.

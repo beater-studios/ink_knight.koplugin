@@ -120,6 +120,24 @@ test("a save of 0.2.0 opens with everything it had", function()
     eq(#read.results, 1); eq(read.results[1].id, "p0009"); eq(read.results[1].win, false)
 end)
 
+test("a color screen starts with wood, a style chosen stays, and color styles draw plain without color", function()
+    eq(State.board_style(nil, true), "wood")
+    eq(State.board_style(nil, false), "plain")
+    eq(State.board_style("marble", true), "wood")
+    eq(State.board_style("plain", true), "plain")
+    eq(State.board_style("newspaper", true), "newspaper")
+    eq(State.board_style("blue", true), "blue")
+    eq(State.board_style("green", false), "plain")
+    eq(State.board_style("contrast", false), "contrast")
+    for name in pairs(State.COLOR_STYLES) do
+        local known = false
+        for _, option in ipairs(State.OPTIONS.board_style[1]) do
+            known = known or option == name
+        end
+        assert(known, name .. " should be a board style")
+    end
+end)
+
 test("every save kept in tests/saves opens", function()
     local listing = io.popen("ls tests/saves/*.lua")
     local count = 0

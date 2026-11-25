@@ -922,7 +922,7 @@ end
 -- the card goes back to; for a few tiles, such as the promotion.
 function Home:choose(title, rows, opts)
     opts = opts or {}
-    return self:open_page{ title = title, rows = rows, close_on_tap = opts.close_on_tap, dialog = opts.rise and "bottom" or nil, hint = opts.rise and self.strings.tap_outside_to_cancel or nil }
+    return self:open_page{ title = title, rows = rows, close_on_tap = opts.close_on_tap, dialog = opts.rise and "bottom" or nil, hint = opts.rise and self.strings.tap_outside_to_cancel or nil, dithered = opts.dithered }
 end
 
 -- What ends a path through several pages, such as starting a game, closes them all.
@@ -1500,7 +1500,7 @@ end
 
 -- Every board screen reads these when it paints, so a change shows in the next game without reopening anything.
 function Home:apply_board_look()
-    BoardScreen.style = self:option("board_style")
+    BoardScreen.style = State.board_style(self.settings:readSetting("board_style"), self:shows_color())
     -- The pictures of the set left are let go, so trying sets does not keep them all in memory.
     if BoardScreen.piece_set ~= self:option("piece_set") then
         BoardScreen.clear_art_cache()
@@ -1511,7 +1511,7 @@ end
 
 -- A row that opens a choice among names, with the current one marked, and reloads page after the pick.
 -- opts: title, labels (by name), names, current and on_pick(name); note, a text above the choices; sample(bb, name,
--- x, y, size), drawn before each name, two sizes wide, so the drawings line up.
+-- x, y, size, with_pieces, dim), drawn before each name, two sizes wide, so the drawings line up; unavailable(name), the reason a name cannot be chosen here, shown under it in gray with its sample faded, or nil; dithered, for samples in color.
 function Home:choice_row(page, opts)
     -- With a sample, the row shows the current choice before its name, and changes with it.
     local preview = opts.sample and function(bb, x, y, size) opts.sample(bb, opts.current, x, y, size) end
@@ -1521,25 +1521,30 @@ function Home:choice_row(page, opts)
             rows[1] = { kind = "text", text = opts.note }
         end
         for _, name in ipairs(opts.names) do
-            local row = { text = opts.labels[name], detail = opts.details and opts.details[name] or nil, tag = name == opts.current and self.strings.in_use or nil, callback = function()
+            local unavailable = opts.unavailable and opts.unavailable(name)
+            local row = { text = opts.labels[name], detail = unavailable or (opts.details and opts.details[name]) or nil, tag = name == opts.current and self.strings.in_use or nil, callback = function()
                 opts.on_pick(name)
                 page:reload()
             end }
+            if unavailable then
+                Page.disable_rows({ row })
+            end
             if opts.sample then
                 -- Larger than in the row of the settings, with pieces on the squares, to choose by how they look.
-                row.preview = function(bb, x, y, size) opts.sample(bb, name, x, y, size, true) end
+                row.preview = function(bb, x, y, size) opts.sample(bb, name, x, y, size, true, unavailable ~= nil) end
                 row.preview_columns = 2
                 row.preview_size = 56
             end
             rows[#rows + 1] = row
         end
-        self:choose(opts.title, rows, { close_on_tap = true })
+        self:choose(opts.title, rows, { close_on_tap = true, dithered = opts.dithered })
     end }
 end
 
-function Home:look_choice_row(page, title, labels, names, key, current, sample)
+function Home:look_choice_row(page, title, labels, names, key, current, sample, extra)
     return self:choice_row(page, {
         title = title, labels = labels, names = names, current = current, sample = sample,
+        unavailable = extra and extra.unavailable, dithered = extra and extra.dithered,
         on_pick = function(name)
             self:save_setting(key, name)
             self:apply_board_look()
@@ -1547,10 +1552,31 @@ function Home:look_choice_row(page, title, labels, names, key, current, sample)
     })
 end
 
+-- Whether the screen shows color now. KOReader answers isColorEnabled from its setting whenever the setting exists, even on a gray screen that got it from a copied settings file, so the screen itself is asked too.
+function Home:shows_color()
+    return Device:hasColorScreen() and Device.screen:isColorEnabled() or false
+end
+
+-- The colored board styles show on every screen, so a reader with color e-ink finds them, and can be chosen only where the screen shows color now: on a screen with color turned off in KOReader, the reason says where to turn it on.
+function Home:board_style_unavailable(name)
+    if not State.COLOR_STYLES[name] or self:shows_color() then
+        return nil
+    end
+    return Device:hasColorScreen() and self.strings.color_turned_off or self.strings.color_screens_only
+end
+
 function Home:board_look_rows(page)
     local s = self.strings
+    local color = self:shows_color()
+    -- The sample of the style in use is drawn in color on this page.
+    if page then
+        page.dithered = BoardScreen.in_color() or nil
+    end
     return {
-        self:look_choice_row(page, s.board_style, s.board_styles, BoardScreen.style_names(), "board_style", BoardScreen.style, BoardScreen.paint_style_sample),
+        self:look_choice_row(page, s.board_style, s.board_styles, BoardScreen.style_names(), "board_style", BoardScreen.style, BoardScreen.paint_style_sample, {
+            unavailable = function(name) return self:board_style_unavailable(name) end,
+            dithered = color or nil,
+        }),
         self:look_choice_row(page, s.piece_style, s.piece_styles, BoardScreen.piece_set_names(), "piece_set", BoardScreen.piece_set, BoardScreen.paint_piece_sample),
         { kind = "toggle", text = s.show_coordinates, on = BoardScreen.coordinates, on_text = s.yes, off_text = s.no, callback = function()
             self:save_setting("board_coordinates", not BoardScreen.coordinates)

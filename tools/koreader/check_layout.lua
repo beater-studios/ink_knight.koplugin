@@ -251,7 +251,94 @@ for _, language in ipairs({ "en", "pt", "es" }) do
         UIManager:close(top_page())
     end
     UIManager:close(offline_page)
+    -- The board styles: on a color screen the colored ones can be chosen and wood is the style of whoever never chose one; without color they show disabled, with the reason under them, and the page does not ask for the color modes of the panel.
+    local real_has_color = Device.hasColorScreen
+    local real_enabled = Screen.isColorEnabled
+    -- A color screen, with color on or turned off in KOReader, whatever the emulator runs with.
+    Device.hasColorScreen = function() return true end
+    for _, color in ipairs({ true, false }) do
+        Screen.isColorEnabled = function() return color end
+        home:apply_board_look()
+        local expected = color and "wood" or "plain"
+        if BoardScreen.style ~= expected then
+            problem(string.format("%s: with color %s the board style should be %s, not %s", language, tostring(color), expected, tostring(BoardScreen.style)))
+        end
+        home:offline_menu()
+        local menu = top_page()
+        local style_row
+        for _, line in ipairs(menu.lines) do
+            style_row = style_row or (line.text == home.strings.board_style and line)
+        end
+        if not style_row then
+            problem(language .. " offline menu: no row to choose the board style")
+        else
+            style_row.callback()
+            local styles = top_page()
+            check_page(styles, language .. (color and " board styles in color" or " board styles without color"))
+            local disabled = 0
+            for _, line in ipairs(styles.lines) do
+                if line.disabled then
+                    disabled = disabled + 1
+                    if line.detail ~= home.strings.color_turned_off then
+                        problem(language .. " a colored style without color should say how to turn color on")
+                    end
+                end
+            end
+            if disabled ~= (color and 0 or 3) then
+                problem(string.format("%s: %d board styles disabled with color %s", language, disabled, tostring(color)))
+            end
+            if (styles.dithered == true) ~= color then
+                problem(language .. " the page of board styles should ask for the color modes of the panel only on a color screen")
+            end
+            if not color then
+                -- A tap on a style that cannot be chosen keeps the style in use.
+                local before = home.settings:readSetting("board_style")
+                for _, line in ipairs(styles.lines) do
+                    if line.disabled and line.callback then
+                        problem(language .. " a disabled board style should not answer a tap")
+                    end
+                end
+                if home.settings:readSetting("board_style") ~= before then
+                    problem(language .. " the board style changed")
+                end
+            end
+            UIManager:close(styles)
+        end
+        UIManager:close(menu)
+    end
+    Device.hasColorScreen = function() return false end
+    Screen.isColorEnabled = function() return false end
+    if home:board_style_unavailable("wood") ~= home.strings.color_screens_only or home:board_style_unavailable("plain") ~= nil then
+        problem(language .. " on a screen without color the colored styles should say they are for color screens only")
+    end
+    -- A gray screen whose settings say color is on, as a settings file copied from a color e-reader would: still gray.
+    Screen.isColorEnabled = function() return true end
+    home:apply_board_look()
+    if BoardScreen.style ~= "plain" or home:board_style_unavailable("wood") ~= home.strings.color_screens_only then
+        problem(language .. " a gray screen with color rendering on in its settings should keep the gray styles")
+    end
+    Device.hasColorScreen, Screen.isColorEnabled = real_has_color, real_enabled
+    home:apply_board_look()
     if language == "pt" then
+        -- A board in wood, the style of a color screen for whoever never chose one: its squares in color, and the board marked for the color modes of the panel.
+        Device.hasColorScreen = function() return true end
+        Screen.isColorEnabled = function() return true end
+        home:apply_board_look()
+        local colored = OfflineGame.open(home, { two_players = true })
+        check_board(colored.screen, "board in color")
+        colored.screen:paintTo(Screen.bb, 0, 0)
+        local x, y = colored.screen:square_position(Chess.square_from_name("a1"))
+        local pixel = Screen.bb:getPixel(x + 2, y + 2):getColorRGB32()
+        if pixel.r == pixel.g and pixel.g == pixel.b then
+            problem("the dark squares of wood should be drawn in color")
+        end
+        if not colored.screen.dithered then
+            problem("a board in color should ask for the color modes of the panel")
+        end
+        UIManager:close(colored.screen)
+        home.settings:delSetting("two_player_game")
+        Device.hasColorScreen, Screen.isColorEnabled = real_has_color, real_enabled
+        home:apply_board_look()
         -- A picture that does not load falls back to the classic pieces without a word, so each one is drawn here.
         local RenderImage = require("ui/renderimage")
         for _, set in ipairs(BoardScreen.piece_set_names()) do

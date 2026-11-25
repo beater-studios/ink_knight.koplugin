@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.0]
+
+- Boards in color on color e-ink screens: Wood, Green and Blue, with colors made lighter and of a stronger hue than on Lichess, since color e-ink washes them out. On a color screen, Wood is the board of whoever never chose a style; a style you chose stays, gray or not. On a black and white screen they show in the list in gray, as they would only repeat Plain there. If color is turned off in KOReader, a colored board is drawn plain until it is turned on again.
+
 ## [0.7.2]
 
 - The analysis by the plugin's Stockfish marks far fewer good moves as mistakes. Each move is now judged against the best move of its own position, since the engine on the e-reader favors the side to move, and comparing the position before a move with the one after it made almost every move look like a loss, opening moves included. On 6 games compared with the analysis of Lichess, the moves marked by mistake went from 66 to 15.
